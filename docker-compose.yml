@@ -1,4 +1,5 @@
 # MOTMVoice — Production Compose
+# Database: Supabase Cloud (no local postgres needed)
 # Hostinger hPanel Caddy handles HTTPS and reverse proxy.
 #
 # Deploy:  docker compose up -d --build
@@ -24,8 +25,6 @@ services:
     networks:
       - motm
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       minio:
@@ -58,8 +57,6 @@ services:
       --loglevel info
       --queues calls,campaigns,exports,default
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -116,30 +113,6 @@ services:
           memory: 512m
           cpus: "1.0"
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: motm-postgres
-    restart: always
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-motmvoice}
-      POSTGRES_USER: ${POSTGRES_USER:-motm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - motm
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-motm} -d ${POSTGRES_DB:-motmvoice}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-
   # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -195,6 +168,5 @@ networks:
         - subnet: 10.60.0.0/24
 
 volumes:
-  postgres_data:
   redis_data:
   minio_data:
