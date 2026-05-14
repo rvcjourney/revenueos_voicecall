@@ -1,0 +1,40 @@
+# Caddyfile — development (HTTP only on port 80)
+#
+# For production with automatic HTTPS, replace ":80" with your domain:
+#
+#   api.motmvoice.com {
+#       reverse_proxy api:8000 { ... }
+#       encode gzip zstd
+#       log { format json }
+#   }
+#
+# Caddy will automatically obtain and renew a Let's Encrypt certificate.
+# Remove "auto_https off" from the global block when using a real domain.
+
+{
+    admin off
+    auto_https off
+}
+
+:80 {
+    reverse_proxy api:8000 {
+        health_uri     /health
+        health_interval 10s
+        health_timeout  5s
+        health_status   2xx
+    }
+
+    encode gzip zstd
+
+    header {
+        X-Content-Type-Options  nosniff
+        X-Frame-Options         DENY
+        Referrer-Policy         strict-origin-when-cross-origin
+        -Server
+    }
+
+    log {
+        format json
+        output stdout
+    }
+}

@@ -1,0 +1,42 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "B", "UP", "S", "ANN001"]
+ignore = [
+    "S101",   # assert usage is fine in tests
+    "S105",   # hardcoded passwords in test fixtures are intentional
+    "S106",
+    "ANN001", # missing type annotations — enforced gradually
+]
+
+[tool.ruff.isort]
+known-first-party = ["app"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+env = [
+    "ENVIRONMENT=development",
+    "SECRET_KEY=test-secret-key-that-is-at-least-32-chars-long",
+    "AGENT_WEBHOOK_SECRET=test-webhook-secret-also-at-least-32-chars",
+    "DATABASE_URL=postgresql://motm:test@localhost:5432/motmvoice_test",
+    "LIVEKIT_URL=wss://test.livekit.cloud",
+    "LIVEKIT_API_KEY=test_key",
+    "LIVEKIT_API_SECRET=test_secret_padded_to_32_characters_x",
+    "DEEPGRAM_API_KEY=test_deepgram",
+    "ELEVENLABS_API_KEY=test_elevenlabs",
+    "GROQ_API_KEY=test_groq",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "alembic/*", "scripts/*"]
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+fail_under = 70

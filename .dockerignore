@@ -1,0 +1,16 @@
+myenv311/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+!.env.example
+.git/
+.gitignore
+*.log
+dashboard/node_modules/
+dashboard/.next/
+test_*.py
+list_*.py
+README.md

@@ -1,0 +1,306 @@
+"""
+app/main.py — FastAPI application factory, middleware stack, and exception handlers.
+"""
+from __future__ import annotations
+
+import uuid
+from contextlib import asynccontextmanager
+from typing import Any
+
+import sentry_sdk
+import structlog
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+
+from app.config import settings
+from app.core.exceptions import (
+    AppError,
+    AuthenticationError,
+    CampaignStateError,
+    ConflictError,
+    DNCBlockedError,
+    NotFoundError,
+    PermissionDeniedError,
+    QuotaExceededError,
+    RateLimitError,
+    StorageError,
+    ValidationError as AppValidationError,
+    WebhookAuthError,
+)
+from app.core.logging import RequestIDMiddleware, configure_logging
+from app.database import check_db_health, dispose_engine
+
+log = structlog.get_logger(__name__)
+
+
+# ── Sentry ────────────────────────────────────────────────────────────────────
+
+def _init_sentry() -> None:
+    if not settings.SENTRY_DSN:
+        return
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENVIRONMENT,
+        release=settings.APP_VERSION,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,
+        integrations=[FastApiIntegration(), StarletteIntegration()],
+    )
+    log.info("sentry_initialized", environment=settings.ENVIRONMENT)
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Logging must be configured before any log calls
+    configure_logging()
+    log.info(
+        "startup",
+        app=settings.APP_NAME,
+        version=settings.APP_VERSION,
+        environment=settings.ENVIRONMENT,
+    )
+    _init_sentry()
+
+    # Storage: ensure all buckets exist (non-fatal — MinIO/S3 may not be running locally)
+    try:
+        from app.storage import get_storage
+        await get_storage().ensure_buckets()
+        log.info("storage_ready", backend=settings.STORAGE_BACKEND)
+    except Exception as exc:
+        log.warning("storage_unavailable", error=str(exc), note="file uploads disabled until storage is reachable")
+
+    # Redis: verify connectivity (non-fatal — caching/queues degrade gracefully)
+    try:
+        from app.core.redis import get_redis
+        redis = await get_redis()
+        await redis.ping()
+        log.info("redis_ready")
+    except Exception as exc:
+        log.warning("redis_unavailable", error=str(exc), note="caching and Celery tasks disabled")
+
+    yield  # ── application running ─────────────────────────────────────────────
+
+    log.info("shutdown_started")
+    from app.core.redis import close_redis
+    await close_redis()
+    await dispose_engine()
+    log.info("shutdown_complete")
+
+
+# ── Application factory ───────────────────────────────────────────────────────
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title=settings.APP_NAME,
+        version=settings.APP_VERSION,
+        docs_url="/docs" if settings.DOCS_ENABLED else None,
+        redoc_url="/redoc" if settings.DOCS_ENABLED else None,
+        openapi_url="/openapi.json" if settings.DOCS_ENABLED else None,
+        lifespan=lifespan,
+    )
+
+    # ── Middleware (outermost runs first on request, last on response) ─────────
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-Total-Count"],
+    )
+    # RequestIDMiddleware must come after CORS so CORS headers are set before ID
+    app.add_middleware(RequestIDMiddleware)
+
+    # ── Prometheus metrics ─────────────────────────────────────────────────────
+    Instrumentator(
+        should_group_status_codes=False,
+        excluded_handlers=["/health", "/health/ready", "/metrics"],
+    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+    _register_exception_handlers(app)
+    _register_routers(app)
+
+    return app
+
+
+# ── Exception handlers ────────────────────────────────────────────────────────
+
+def _register_exception_handlers(app: FastAPI) -> None:
+
+    @app.exception_handler(RequestValidationError)
+    async def pydantic_validation_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "detail": "Request validation failed.",
+                "code": "VALIDATION_ERROR",
+                "errors": exc.errors(),
+            },
+        )
+
+    @app.exception_handler(AuthenticationError)
+    async def authentication_handler(request: Request, exc: AuthenticationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": exc.message, "code": exc.code},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(WebhookAuthError)
+    async def webhook_auth_handler(request: Request, exc: WebhookAuthError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(PermissionDeniedError)
+    async def permission_denied_handler(
+        request: Request, exc: PermissionDeniedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(ConflictError)
+    async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(CampaignStateError)
+    async def campaign_state_handler(
+        request: Request, exc: CampaignStateError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(AppValidationError)
+    async def app_validation_handler(
+        request: Request, exc: AppValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": exc.message, "code": exc.code, "errors": exc.errors},
+        )
+
+    @app.exception_handler(DNCBlockedError)
+    async def dnc_handler(request: Request, exc: DNCBlockedError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(QuotaExceededError)
+    async def quota_handler(request: Request, exc: QuotaExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(RateLimitError)
+    async def rate_limit_handler(request: Request, exc: RateLimitError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": exc.message, "code": exc.code},
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
+    @app.exception_handler(StorageError)
+    async def storage_handler(request: Request, exc: StorageError) -> JSONResponse:
+        log.error("storage_error", message=exc.message)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    # Catch-all for AppError subclasses not mapped above
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        log.error("unhandled_app_error", code=exc.code, message=exc.message)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
+        log.exception("unhandled_exception", exc_info=exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "An internal error occurred.", "code": "INTERNAL_ERROR"},
+        )
+
+
+# ── Routers ───────────────────────────────────────────────────────────────────
+
+def _register_routers(app: FastAPI) -> None:
+    # System endpoints — no auth, not versioned
+    @app.get("/health", tags=["system"], include_in_schema=False)
+    async def liveness() -> dict[str, str]:
+        """Kubernetes/Docker liveness probe — always returns 200 if process is up."""
+        return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["system"], include_in_schema=False)
+    async def readiness() -> JSONResponse:
+        """Readiness probe — checks DB and Redis. Returns 503 if either is down."""
+        from app.core.redis import get_redis
+        checks: dict[str, bool] = {}
+
+        checks["database"] = await check_db_health()
+        try:
+            r = await get_redis()
+            await r.ping()
+            checks["redis"] = True
+        except Exception:
+            checks["redis"] = False
+
+        ok = all(checks.values())
+        return JSONResponse(
+            status_code=status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "ready" if ok else "degraded", "checks": checks},
+        )
+
+    @app.get("/version", tags=["system"], include_in_schema=False)
+    async def version() -> dict[str, str]:
+        return {
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "environment": settings.ENVIRONMENT,
+        }
+
+    from app.api.auth import router as auth_router
+    from app.api.agents import router as agents_router
+    from app.api.campaigns import router as campaigns_router
+    from app.api.calls import router as calls_router
+    from app.api.analytics import router as analytics_router
+    from app.api.webhooks import router as webhooks_router
+
+    app.include_router(auth_router,      prefix="/api/auth",      tags=["auth"])
+    app.include_router(agents_router,    prefix="/api/agents",    tags=["agents"])
+    app.include_router(campaigns_router, prefix="/api/campaigns", tags=["campaigns"])
+    app.include_router(calls_router,     prefix="/api/calls",     tags=["calls"])
+    app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
+    app.include_router(webhooks_router,  prefix="/webhooks",      tags=["webhooks"])
+
+
+app = create_app()

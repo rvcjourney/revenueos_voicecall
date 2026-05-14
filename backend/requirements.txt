@@ -1,0 +1,57 @@
+# ── Framework ──────────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+gunicorn==23.0.0
+
+# ── Database ───────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# ── Validation ─────────────────────────────────────────────────────────────────
+pydantic==2.10.3
+pydantic-settings==2.6.1
+email-validator==2.2.0
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+PyJWT==2.10.1
+bcrypt==4.2.1
+python-multipart==0.0.18
+
+# ── Cache / Queue ──────────────────────────────────────────────────────────────
+redis[hiredis]==5.2.1
+celery[redis]==5.4.0
+
+# ── Storage (boto3 works with both MinIO and AWS S3 via S3-compatible API) ─────
+boto3==1.35.80
+
+# ── Observability ──────────────────────────────────────────────────────────────
+structlog==24.4.0
+sentry-sdk[fastapi]==2.19.2
+prometheus-fastapi-instrumentator==7.0.0
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+slowapi==0.1.9
+
+# ── CSV / Excel ────────────────────────────────────────────────────────────────
+pandas==2.2.3
+openpyxl==3.1.5
+
+# ── Phone validation ───────────────────────────────────────────────────────────
+phonenumbers==8.13.50
+
+# ── HTTP client (internal agent→backend calls, LiveKit API) ───────────────────
+httpx==0.28.1
+aiohttp==3.11.11
+
+# ── Utilities ──────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+certifi==2024.12.14
+python-slugify==8.0.4
+uuid6==2025.0.1
+
+# ── Testing ────────────────────────────────────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-env==1.1.5
+httpx==0.28.1

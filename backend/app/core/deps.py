@@ -1,0 +1,43 @@
+"""
+app/core/deps.py — FastAPI dependency: extract and validate the JWT Bearer token.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import UUID
+
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
+
+from app.core.exceptions import AuthenticationError
+from app.core.security import decode_token
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True)
+class TokenPayload:
+    user_id: UUID
+    org_id: UUID
+    role: str
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> TokenPayload:
+    if credentials is None:
+        raise AuthenticationError("Missing Bearer token")
+    try:
+        payload = decode_token(credentials.credentials)
+    except InvalidTokenError:
+        raise AuthenticationError("Invalid or expired token")
+
+    if payload.get("type") != "access":
+        raise AuthenticationError("Not an access token")
+
+    return TokenPayload(
+        user_id=UUID(payload["sub"]),
+        org_id=UUID(payload["org_id"]),
+        role=payload["role"],
+    )
