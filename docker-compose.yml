@@ -86,6 +86,7 @@ services:
       celery -A app.workers.celery_app beat
       --loglevel info
       --scheduler celery.beat:PersistentScheduler
+      --schedule /tmp/celerybeat-schedule
     depends_on:
       redis:
         condition: service_healthy
