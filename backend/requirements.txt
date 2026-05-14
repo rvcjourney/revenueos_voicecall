@@ -44,6 +44,9 @@ phonenumbers==8.13.50
 httpx==0.28.1
 aiohttp==3.11.11
 
+# ── LiveKit SDK (client library for LiveKit Cloud API) ────────────────────────
+livekit-api==0.7.1
+
 # ── Utilities ──────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1
 certifi==2024.12.14
