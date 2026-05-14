@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import aiohttp
 import structlog
 from livekit import api as lk_api
-from livekit.api import AgentDispatchService, RoomService, SipService
+from livekit.api import LiveKitAPI
 from livekit.api.twirp_client import TwirpError
 from sqlalchemy import select, update
 
@@ -202,60 +202,58 @@ async def _place_call(
     Returns "placed", "no_answer", or "failed".
     """
     url, key, secret = settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET
-    rooms = RoomService(http, url, key, secret)
 
-    await rooms.create_room(
-        lk_api.CreateRoomRequest(
-            name=room_name,
-            metadata=json.dumps({
-                "call_id": call_id,
-                "campaign_id": campaign_id,
-                "org_id": org_id,
-                "agent_template_id": agent_template_id,
-                "contact_name": contact_name,
-                "system_prompt": system_prompt,
-                "welcome_message": welcome_message,
-                "voice_id": voice_id,
-                "llm_model": llm_model,
-            }),
+    async with LiveKitAPI(url, key, secret) as lk:
+        await lk.room.create_room(
+            lk_api.CreateRoomRequest(
+                name=room_name,
+                metadata=json.dumps({
+                    "call_id": call_id,
+                    "campaign_id": campaign_id,
+                    "org_id": org_id,
+                    "agent_template_id": agent_template_id,
+                    "contact_name": contact_name,
+                    "system_prompt": system_prompt,
+                    "welcome_message": welcome_message,
+                    "voice_id": voice_id,
+                    "llm_model": llm_model,
+                }),
+            )
         )
-    )
 
-    try:
-        await asyncio.gather(
-            AgentDispatchService(http, url, key, secret)
-            .create_dispatch(
-                lk_api.CreateAgentDispatchRequest(
-                    agent_name="voice-call-agent",
-                    room=room_name,
-                    metadata=json.dumps({"agent_template_id": agent_template_id}),
-                )
-            ),
-            SipService(http, url, key, secret)
-            .create_sip_participant(
-                lk_api.CreateSIPParticipantRequest(
-                    sip_trunk_id=livekit_trunk_id,
-                    sip_call_to=phone,
-                    sip_number=settings.DEFAULT_SIP_CALLER_ID,
-                    room_name=room_name,
-                    participant_identity=f"phone-{phone.replace('+', '')}",
-                    participant_name=contact_name,
-                    play_ringtone=True,
-                    wait_until_answered=True,
-                )
-            ),
-        )
-        return "placed"
-
-    except TwirpError as exc:
-        sip_code = str(exc.metadata.get("sip_status_code", ""))
-        outcome = "no_answer" if sip_code in _SIP_NO_ANSWER_CODES else "failed"
-        log.warning("sip_call_not_placed", room=room_name, sip_code=sip_code, outcome=outcome)
         try:
-            await rooms.delete_room(lk_api.DeleteRoomRequest(room=room_name))
-        except Exception:
-            pass
-        return outcome
+            await asyncio.gather(
+                lk.agent_dispatch.create_dispatch(
+                    lk_api.CreateAgentDispatchRequest(
+                        agent_name="voice-call-agent",
+                        room=room_name,
+                        metadata=json.dumps({"agent_template_id": agent_template_id}),
+                    )
+                ),
+                lk.sip.create_sip_participant(
+                    lk_api.CreateSIPParticipantRequest(
+                        sip_trunk_id=livekit_trunk_id,
+                        sip_call_to=phone,
+                        sip_number=settings.DEFAULT_SIP_CALLER_ID,
+                        room_name=room_name,
+                        participant_identity=f"phone-{phone.replace('+', '')}",
+                        participant_name=contact_name,
+                        play_ringtone=True,
+                        wait_until_answered=True,
+                    )
+                ),
+            )
+            return "placed"
+
+        except TwirpError as exc:
+            sip_code = str(exc.metadata.get("sip_status_code", ""))
+            outcome = "no_answer" if sip_code in _SIP_NO_ANSWER_CODES else "failed"
+            log.warning("sip_call_not_placed", room=room_name, sip_code=sip_code, outcome=outcome)
+            try:
+                await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
+            except Exception:
+                pass
+            return outcome
 
 
 async def _wait_for_room_empty(
@@ -279,9 +277,10 @@ async def _wait_for_room_empty(
         await _refresh_lock(campaign_id)  # prevent lock from expiring during long calls
 
         try:
-            resp = await RoomService(http, url, key, secret).list_participants(
-                lk_api.ListParticipantsRequest(room=room_name)
-            )
+            async with LiveKitAPI(url, key, secret) as lk:
+                resp = await lk.room.list_participants(
+                    lk_api.ListParticipantsRequest(room=room_name)
+                )
             if len(resp.participants) == 0:
                 log.info("room_empty_call_done", room=room_name)
                 return "done"
@@ -295,9 +294,8 @@ async def _wait_for_room_empty(
     # Exceeded max duration — force-kill the room
     log.warning("call_timeout_force_close", room=room_name, timeout=timeout_seconds)
     try:
-        await RoomService(http, url, key, secret).delete_room(
-            lk_api.DeleteRoomRequest(room=room_name)
-        )
+        async with LiveKitAPI(url, key, secret) as lk:
+            await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
     except Exception:
         pass
     return "timeout"
