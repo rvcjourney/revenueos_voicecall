@@ -94,6 +94,25 @@ services:
           memory: 256m
           cpus: "0.5"
 
+  # ── Frontend (TanStack Start / React) ───────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend/motmvoice-main
+      dockerfile: Dockerfile
+    container_name: motm-frontend
+    restart: always
+    environment:
+      - VITE_API_URL=http://72.60.99.90:6000
+    ports:
+      - "6001:6001"
+    networks:
+      - motm
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+
   # ── Voice Agent (LiveKit) ────────────────────────────────────────────────────
   agent:
     build:
