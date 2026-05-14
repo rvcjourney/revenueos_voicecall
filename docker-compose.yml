@@ -21,7 +21,7 @@ services:
       - DOCS_ENABLED=false
       - DEBUG=false
     ports:
-      - "6000:8000"
+      - "7000:8000"
     networks:
       - motm
     depends_on:
@@ -102,7 +102,7 @@ services:
     container_name: motm-frontend
     restart: always
     environment:
-      - VITE_API_URL=http://72.60.99.90:6000
+      - VITE_API_URL=http://72.60.99.90:7000
     ports:
       - "6001:6001"
     networks:
