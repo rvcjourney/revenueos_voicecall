@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import aiohttp
 import structlog
 from livekit import api as lk_api
-from livekit.api import agent_dispatch_service, room_service, sip_service
+from livekit.api import AgentDispatchService, RoomService, SipService
 from livekit.api.twirp_client import TwirpError
 from sqlalchemy import select, update
 
@@ -202,7 +202,7 @@ async def _place_call(
     Returns "placed", "no_answer", or "failed".
     """
     url, key, secret = settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET
-    rooms = room_service.RoomService(http, url, key, secret)
+    rooms = RoomService(http, url, key, secret)
 
     await rooms.create_room(
         lk_api.CreateRoomRequest(
@@ -223,7 +223,7 @@ async def _place_call(
 
     try:
         await asyncio.gather(
-            agent_dispatch_service.AgentDispatchService(http, url, key, secret)
+            AgentDispatchService(http, url, key, secret)
             .create_dispatch(
                 lk_api.CreateAgentDispatchRequest(
                     agent_name="voice-call-agent",
@@ -231,7 +231,7 @@ async def _place_call(
                     metadata=json.dumps({"agent_template_id": agent_template_id}),
                 )
             ),
-            sip_service.SipService(http, url, key, secret)
+            SipService(http, url, key, secret)
             .create_sip_participant(
                 lk_api.CreateSIPParticipantRequest(
                     sip_trunk_id=livekit_trunk_id,
@@ -279,7 +279,7 @@ async def _wait_for_room_empty(
         await _refresh_lock(campaign_id)  # prevent lock from expiring during long calls
 
         try:
-            resp = await room_service.RoomService(http, url, key, secret).list_participants(
+            resp = await RoomService(http, url, key, secret).list_participants(
                 lk_api.ListParticipantsRequest(room=room_name)
             )
             if len(resp.participants) == 0:
@@ -295,7 +295,7 @@ async def _wait_for_room_empty(
     # Exceeded max duration — force-kill the room
     log.warning("call_timeout_force_close", room=room_name, timeout=timeout_seconds)
     try:
-        await room_service.RoomService(http, url, key, secret).delete_room(
+        await RoomService(http, url, key, secret).delete_room(
             lk_api.DeleteRoomRequest(room=room_name)
         )
     except Exception:
