@@ -20,7 +20,7 @@ services:
       - ENVIRONMENT=production
       - DOCS_ENABLED=false
       - DEBUG=false
-      - CORS_ORIGINS=http://72.60.99.90:6001
+      - 'CORS_ORIGINS=["http://72.60.99.90:6001"]'
     ports:
       - "7000:8000"
     networks:
