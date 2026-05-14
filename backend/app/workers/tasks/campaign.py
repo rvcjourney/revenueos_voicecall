@@ -202,8 +202,8 @@ async def _place_call(
     Returns "placed", "no_answer", or "failed".
     """
     url, key, secret = settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET
-
-    async with LiveKitAPI(url, key, secret) as lk:
+    lk = LiveKitAPI(url, key, secret)
+    try:
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
                 name=room_name,
@@ -254,6 +254,8 @@ async def _place_call(
             except Exception:
                 pass
             return outcome
+    finally:
+        await lk.aclose()
 
 
 async def _wait_for_room_empty(
@@ -276,11 +278,11 @@ async def _wait_for_room_empty(
         await asyncio.sleep(poll_interval)
         await _refresh_lock(campaign_id)  # prevent lock from expiring during long calls
 
+        lk = LiveKitAPI(url, key, secret)
         try:
-            async with LiveKitAPI(url, key, secret) as lk:
-                resp = await lk.room.list_participants(
-                    lk_api.ListParticipantsRequest(room=room_name)
-                )
+            resp = await lk.room.list_participants(
+                lk_api.ListParticipantsRequest(room=room_name)
+            )
             if len(resp.participants) == 0:
                 log.info("room_empty_call_done", room=room_name)
                 return "done"
@@ -290,14 +292,18 @@ async def _wait_for_room_empty(
             return "done"
         except Exception as exc:
             log.warning("room_poll_error", room=room_name, error=str(exc))
+        finally:
+            await lk.aclose()
 
     # Exceeded max duration — force-kill the room
     log.warning("call_timeout_force_close", room=room_name, timeout=timeout_seconds)
+    lk = LiveKitAPI(url, key, secret)
     try:
-        async with LiveKitAPI(url, key, secret) as lk:
-            await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
+        await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
     except Exception:
         pass
+    finally:
+        await lk.aclose()
     return "timeout"
 
 
