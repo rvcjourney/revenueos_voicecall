@@ -22,6 +22,8 @@ services:
       - DEBUG=false
       - 'CORS_ORIGINS=["http://72.60.99.90:6001"]'
       - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
     ports:
       - "7000:8000"
     networks:
@@ -53,6 +55,8 @@ services:
     env_file: ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
     networks:
       - motm
     command: >
@@ -85,6 +89,8 @@ services:
     env_file: ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
     networks:
       - motm
     command: >
