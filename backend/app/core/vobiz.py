@@ -53,27 +53,35 @@ async def find_vobiz_call_uuid(
                 return None
             data = await resp.json(content_type=None)
 
-        records = data.get("objects") or data.get("calls") or data.get("data") or []
+        records = data.get("data") or data.get("objects") or data.get("calls") or []
         for rec in records:
-            to = (rec.get("to_number") or rec.get("to") or "").lstrip("+")
+            # Vobiz CDR uses "destination_number" for the called party
+            to = (
+                rec.get("destination_number")
+                or rec.get("to_number")
+                or rec.get("to")
+                or ""
+            ).lstrip("+")
             direction = rec.get("call_direction") or rec.get("direction") or ""
             if direction and "outbound" not in direction.lower():
                 continue
-            if norm_to in to or to in norm_to:
-                init_time_str = rec.get("initiation_time") or rec.get("start_time") or ""
-                if init_time_str:
-                    try:
-                        # Vobiz returns "yyyy-MM-dd HH:mm:ss" format
-                        init_time = datetime.strptime(init_time_str[:19], "%Y-%m-%d %H:%M:%S").replace(
-                            tzinfo=timezone.utc
-                        )
-                        if init_time < called_after - timedelta(minutes=5):
-                            continue  # too old — not our call
-                    except ValueError:
-                        pass
-                call_uuid = rec.get("call_uuid") or rec.get("uuid") or ""
-                if call_uuid:
-                    return call_uuid
+            if not to or not (norm_to in to or to in norm_to):
+                continue
+            init_time_str = rec.get("start_time") or rec.get("initiation_time") or ""
+            if init_time_str:
+                try:
+                    # Vobiz returns ISO format: "2026-05-17T18:54:52Z"
+                    init_time = datetime.fromisoformat(
+                        init_time_str.replace("Z", "+00:00")
+                    )
+                    if init_time < called_after - timedelta(minutes=5):
+                        continue  # too old — not our call
+                except ValueError:
+                    pass
+            # Recording API uses sip_call_id as the recording identifier
+            call_uuid = rec.get("sip_call_id") or rec.get("call_uuid") or rec.get("uuid") or ""
+            if call_uuid:
+                return call_uuid
 
     except asyncio.TimeoutError:
         log.warning("vobiz_cdr_timeout")
