@@ -1,8 +1,9 @@
 """
-app/core/vobiz.py — Vobiz CDR and Recording API helpers.
+app/core/vobiz.py — Vobiz Recording API helper.
 
-Used after each outbound call to fetch the recording URL so it can be
-stored in the Call record and shown in the UI.
+Queries the Recording API directly by to_number — skips CDR lookup because
+Vobiz recordings appear in the Recording list ~1-2 minutes after the call ends
+but CDR records can lag longer.
 
 Auth: X-Auth-ID + X-Auth-Token headers (from Vobiz console → dashboard).
 """
@@ -27,116 +28,6 @@ def _headers(auth_id: str, auth_token: str) -> dict[str, str]:
     }
 
 
-async def find_vobiz_call_uuid(
-    http: aiohttp.ClientSession,
-    *,
-    auth_id: str,
-    auth_token: str,
-    to_number: str,
-    called_after: datetime,
-) -> str | None:
-    """
-    Search recent CDR for an outbound call to `to_number` placed after
-    `called_after`. Returns the Vobiz call_uuid, or None if not found.
-    """
-    hdrs = _headers(auth_id, auth_token)
-    norm_to = to_number.lstrip("+")
-
-    try:
-        async with http.get(
-            f"{_BASE}/Account/{auth_id}/cdr/recent",
-            headers=hdrs,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                log.warning("vobiz_cdr_error", status=resp.status)
-                return None
-            data = await resp.json(content_type=None)
-
-        records = data.get("data") or data.get("objects") or data.get("calls") or []
-        for rec in records:
-            # Vobiz CDR uses "destination_number" for the called party
-            to = (
-                rec.get("destination_number")
-                or rec.get("to_number")
-                or rec.get("to")
-                or ""
-            ).lstrip("+")
-            direction = rec.get("call_direction") or rec.get("direction") or ""
-            if direction and "outbound" not in direction.lower():
-                continue
-            if not to or not (norm_to in to or to in norm_to):
-                continue
-            init_time_str = rec.get("start_time") or rec.get("initiation_time") or ""
-            if init_time_str:
-                try:
-                    # Vobiz returns ISO format: "2026-05-17T18:54:52Z"
-                    init_time = datetime.fromisoformat(
-                        init_time_str.replace("Z", "+00:00")
-                    )
-                    if init_time < called_after - timedelta(minutes=5):
-                        continue  # too old — not our call
-                except ValueError:
-                    pass
-            # Recording API uses sip_call_id as the recording identifier
-            call_uuid = rec.get("sip_call_id") or rec.get("call_uuid") or rec.get("uuid") or ""
-            if call_uuid:
-                return call_uuid
-
-    except asyncio.TimeoutError:
-        log.warning("vobiz_cdr_timeout")
-    except Exception as exc:
-        log.warning("vobiz_cdr_failed", error=str(exc))
-
-    return None
-
-
-async def get_recording_url_for_call(
-    http: aiohttp.ClientSession,
-    *,
-    auth_id: str,
-    auth_token: str,
-    call_uuid: str,
-) -> str | None:
-    """
-    Fetch the recording download URL for a specific Vobiz call_uuid.
-    Returns the direct HTTPS URL to the MP3, or None.
-    """
-    hdrs = _headers(auth_id, auth_token)
-
-    try:
-        async with http.get(
-            f"{_BASE}/Account/{auth_id}/Recording/",
-            headers=hdrs,
-            params={"call_uuid": call_uuid},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                log.warning("vobiz_recording_error", status=resp.status, call_uuid=call_uuid)
-                return None
-            data = await resp.json(content_type=None)
-
-        recordings = data.get("objects") or data.get("recordings") or data.get("data") or []
-        if not recordings:
-            return None
-
-        rec = recordings[0]
-        url = (
-            rec.get("record_url")
-            or rec.get("recording_url")
-            or rec.get("url")
-            or rec.get("download_url")
-        )
-        return url or None
-
-    except asyncio.TimeoutError:
-        log.warning("vobiz_recording_timeout", call_uuid=call_uuid)
-    except Exception as exc:
-        log.warning("vobiz_recording_failed", call_uuid=call_uuid, error=str(exc))
-
-    return None
-
-
 async def fetch_recording_for_call(
     http: aiohttp.ClientSession,
     *,
@@ -148,34 +39,58 @@ async def fetch_recording_for_call(
     retry_delay: float = 5.0,
 ) -> str | None:
     """
-    High-level helper: find Vobiz call_uuid via CDR, then get recording URL.
-    Retries a few times because recordings take a few seconds to process.
+    Query Vobiz Recording API directly by to_number.
+    Recordings appear ~1-2 min after the call — call this from a background
+    task with an initial delay rather than immediately after the call ends.
     """
+    hdrs = _headers(auth_id, auth_token)
+    norm_to = to_number.lstrip("+")
+
     for attempt in range(retries):
         if attempt > 0:
             await asyncio.sleep(retry_delay)
 
-        call_uuid = await find_vobiz_call_uuid(
-            http,
-            auth_id=auth_id,
-            auth_token=auth_token,
-            to_number=to_number,
-            called_after=called_after,
-        )
-        if not call_uuid:
-            log.debug("vobiz_cdr_no_match", attempt=attempt, to=to_number)
-            continue
+        try:
+            async with http.get(
+                f"{_BASE}/Account/{auth_id}/Recording/",
+                headers=hdrs,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    log.warning("vobiz_recording_list_error", status=resp.status, attempt=attempt)
+                    continue
+                data = await resp.json(content_type=None)
 
-        url = await get_recording_url_for_call(
-            http,
-            auth_id=auth_id,
-            auth_token=auth_token,
-            call_uuid=call_uuid,
-        )
-        if url:
-            log.info("vobiz_recording_found", call_uuid=call_uuid, attempt=attempt)
-            return url
+            recordings = data.get("objects") or data.get("recordings") or data.get("data") or []
 
-        log.debug("vobiz_recording_not_ready_yet", call_uuid=call_uuid, attempt=attempt)
+            for rec in recordings:
+                rec_to = (rec.get("to_number") or "").lstrip("+")
+                if not rec_to or not (norm_to in rec_to or rec_to in norm_to):
+                    continue
+
+                # Confirm this recording is from our call (not an older one)
+                add_time_str = rec.get("add_time") or ""
+                if add_time_str:
+                    try:
+                        add_time = datetime.fromisoformat(add_time_str)
+                        if add_time.tzinfo is None:
+                            add_time = add_time.replace(tzinfo=timezone.utc)
+                        add_time_utc = add_time.astimezone(timezone.utc)
+                        if add_time_utc < called_after - timedelta(minutes=5):
+                            continue  # too old — not our call
+                    except ValueError:
+                        pass
+
+                url = rec.get("recording_url") or rec.get("record_url") or rec.get("url")
+                if url:
+                    log.info("vobiz_recording_found", to=to_number, attempt=attempt)
+                    return url
+
+            log.debug("vobiz_recording_not_ready_yet", to=to_number, attempt=attempt)
+
+        except asyncio.TimeoutError:
+            log.warning("vobiz_recording_timeout", to=to_number, attempt=attempt)
+        except Exception as exc:
+            log.warning("vobiz_recording_failed", error=str(exc), to=to_number)
 
     return None

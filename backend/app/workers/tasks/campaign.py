@@ -378,6 +378,51 @@ async def _finalize(
         )
 
 
+# ── Background recording fetch ────────────────────────────────────────────────
+
+async def _save_recording_async(
+    *,
+    call_id: uuid.UUID,
+    to_number: str,
+    called_after: datetime,
+    auth_id: str,
+    auth_token: str,
+    initial_delay: float = 90.0,
+    max_attempts: int = 6,
+    attempt_interval: float = 30.0,
+) -> None:
+    """
+    Wait for Vobiz to process the recording (~2 min), then save the URL.
+    Runs as a fire-and-forget asyncio task so the call loop is not blocked.
+    """
+    await asyncio.sleep(initial_delay)
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                await asyncio.sleep(attempt_interval)
+            try:
+                url = await fetch_recording_for_call(
+                    http,
+                    auth_id=auth_id,
+                    auth_token=auth_token,
+                    to_number=to_number,
+                    called_after=called_after,
+                    retries=1,
+                    retry_delay=0,
+                )
+                if url:
+                    async with AsyncSessionLocal() as session:
+                        async with session.begin():
+                            await session.execute(
+                                update(Call).where(Call.id == call_id).values(recording_url=url)
+                            )
+                    log.info("recording_url_saved", call_id=str(call_id), url=url[:60])
+                    return
+            except Exception as exc:
+                log.warning("recording_save_error", call_id=str(call_id), error=str(exc))
+    log.warning("recording_fetch_gave_up", call_id=str(call_id), to=to_number)
+
+
 # ── Main dispatcher loop ───────────────────────────────────────────────────────
 
 async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
@@ -539,27 +584,15 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     wait_result=wait_result,
                 )
 
-        # ── Fetch recording URL from Vobiz (best-effort, non-blocking) ────────
+        # ── Fetch recording URL from Vobiz (background — recordings take ~2 min) ──
         if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
-            try:
-                recording_url = await fetch_recording_for_call(
-                    http,
-                    auth_id=settings.VOBIZ_AUTH_ID,
-                    auth_token=settings.VOBIZ_AUTH_TOKEN,
-                    to_number=contact_phone,
-                    called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
-                )
-                if recording_url:
-                    async with AsyncSessionLocal() as session:
-                        async with session.begin():
-                            await session.execute(
-                                update(Call)
-                                .where(Call.id == call_id)
-                                .values(recording_url=recording_url)
-                            )
-                    log.info("recording_url_saved", call_id=str(call_id), url=recording_url[:60])
-            except Exception as exc:
-                log.warning("recording_fetch_failed", call_id=str(call_id), error=str(exc))
+            asyncio.create_task(_save_recording_async(
+                call_id=call_id,
+                to_number=contact_phone,
+                called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
+                auth_id=settings.VOBIZ_AUTH_ID,
+                auth_token=settings.VOBIZ_AUTH_TOKEN,
+            ))
 
         # Loop: next contact starts immediately after previous room is empty
 
