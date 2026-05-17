@@ -337,21 +337,24 @@ async def _finalize(
         call_outcome = CallOutcome.PENDING
         contact_status = ContactStatus.FAILED
     else:
-        # Call was placed and connected. The agent will POST the real outcome
-        # via /api/calls/{id}/agent-report within ~15s of the call ending.
-        # Set PENDING now; it will be overwritten by the agent callback.
+        # Call was placed and connected. The agent already POSTed the real outcome
+        # via /api/calls/{id}/agent-report before disconnecting — do NOT touch outcome here.
         call_status = CallStatus.COMPLETED
-        call_outcome = CallOutcome.PENDING
+        call_outcome = None  # sentinel: skip outcome update
         contact_status = ContactStatus.COMPLETED
 
     duration = (
         int((now - call.started_at).total_seconds()) if call.started_at else None
     )
 
+    call_values: dict = dict(status=call_status, ended_at=now, duration_seconds=duration)
+    if call_outcome is not None:
+        call_values["outcome"] = call_outcome
+
     await session.execute(
         update(Call)
         .where(Call.id == call.id)
-        .values(status=call_status, outcome=call_outcome, ended_at=now, duration_seconds=duration)
+        .values(**call_values)
     )
 
     await session.execute(
