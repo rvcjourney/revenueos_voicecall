@@ -84,7 +84,7 @@ _HANGUP_RE = re.compile(
     r")\b",
     re.IGNORECASE | re.UNICODE,
 )
-_FAREWELL = "Shukriya sir, take care!"
+_FAREWELL = "Thank you, take care!"
 
 # Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
 _END_CALL_STRIP_RE = re.compile(
@@ -124,17 +124,15 @@ def _build_prompt(raw: str) -> str:
     guardrails = (
         "[ABSOLUTE RULES — never break these]\n"
         "1. MAX 2 SHORT SENTENCES per reply. Never more.\n"
-        "2. Never invent product grades, prices, or specs not in this prompt.\n"
+        "2. Never invent product grades, prices, or specs not in your instructions.\n"
         "3. Never reveal you are an AI, chatbot, or language model.\n"
         "4. Never use bullet points, lists, or markdown — this is spoken audio.\n"
-        "5. If unsure about anything: say \"Main confirm karke batata hoon sir\" only.\n"
+        "5. If unsure about anything: politely say you will confirm and get back.\n"
         "6. Never ask more than ONE question per reply.\n"
-        "7. Stay in character as Aniket at ALL times.\n"
-        "8. Respond ONLY in natural spoken Hinglish.\n"
-        "9. ONLY discuss Baba Valve India products and this sales call. "
-        "Off-topic: \"Sir main sirf Baba Valve India ke products ke baare mein baat kar sakta hoon.\"\n"
-        "10. If asked for info not in this prompt: "
-        "\"Iske liye aap hamare website par ja sakte hain: www dot babavalveindia dot com\"\n"
+        "7. Stay in character at ALL times as described in your instructions.\n"
+        "8. Use the language specified in your instructions. Match the customer's language if not specified.\n"
+        "9. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
+        "10. If asked for info not in your instructions: politely say you will check and confirm.\n"
         "11. NEVER say the words 'end_call' or 'end call' out loud — the system ends the call automatically.\n"
         "12. When the conversation is naturally over (customer not interested, info collected, or they said goodbye), "
         "call the end_call tool immediately after your final sentence. Do NOT keep talking.\n"
@@ -192,7 +190,7 @@ class VoiceAgent(Agent):
 
         end_call_tool = EndCallTool(
             delete_room=True,
-            end_instructions="Say ONE short goodbye in Hindi/Hinglish, then the call will end.",
+            end_instructions="Say ONE short polite goodbye, then the call will end.",
             on_tool_called=self._on_end_call_tool_called,
         )
         super().__init__(
@@ -409,6 +407,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     voice_id        = meta.get("voice_id") or ELEVENLABS_VOICE_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     call_id         = meta.get("call_id", "")
+    stt_language    = meta.get("stt_language") or "hi"
+    stt_keyterms    = meta.get("stt_keyterms") or []
 
     system_prompt = _build_prompt(raw_prompt)
     logger.info("template | voice=%s llm=%s", voice_id, llm_model)
@@ -446,11 +446,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = AgentSession(
         stt=deepgram.STT(
             model          = "nova-3",
-            language       = "hi",
+            language       = stt_language,
             interim_results= True,
             endpointing_ms = 50,
             smart_format   = False,
-            keyterms       = ["Baba Valve", "butterfly", "ball valve", "globe valve"],
+            keyterms       = stt_keyterms,
         ),
         llm=llm,
         tts=tts,
