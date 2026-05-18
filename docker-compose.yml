@@ -20,7 +20,7 @@ services:
       - ENVIRONMENT=production
       - DOCS_ENABLED=false
       - DEBUG=false
-      - 'CORS_ORIGINS=["http://72.60.99.90:6001"]'
+      - 'CORS_ORIGINS=["https://motmvoice.b2botix.ai","http://72.60.99.90:6001"]'
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -115,7 +115,7 @@ services:
     container_name: motm-frontend
     restart: always
     environment:
-      - VITE_API_URL=http://72.60.99.90:7000
+      - VITE_API_URL=https://api.motmvoice.b2botix.ai
     ports:
       - "6001:6001"
     networks:
