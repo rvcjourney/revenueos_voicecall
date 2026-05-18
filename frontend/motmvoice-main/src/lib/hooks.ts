@@ -20,10 +20,16 @@ export function useDashboard() {
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
 export function useCampaigns(status?: string) {
-  return useQuery({
+  const result = useQuery({
     queryKey: ["campaigns", status],
     queryFn: () => campaignsApi.list(status).then((r) => r.data),
+    refetchInterval: (query) => {
+      const items = (query.state.data as any)?.items ?? [];
+      const hasRunning = items.some((c: any) => c.status === "running");
+      return hasRunning ? 5_000 : 30_000;
+    },
   });
+  return result;
 }
 
 export function useCampaign(id: string) {
@@ -31,6 +37,10 @@ export function useCampaign(id: string) {
     queryKey: ["campaigns", id],
     queryFn: () => campaignsApi.get(id).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const data = query.state.data as any;
+      return data?.status === "running" ? 5_000 : 30_000;
+    },
   });
 }
 
@@ -67,6 +77,12 @@ export function useCalls(params?: { campaign_id?: string; outcome?: string; limi
   return useQuery({
     queryKey: ["calls", params],
     queryFn: () => callsApi.list(params).then((r) => r.data),
+    refetchInterval: (query) => {
+      const items = (query.state.data as any)?.items ?? [];
+      // Refresh faster if any call is still pending outcome or recording
+      const hasPending = items.some((c: any) => c.outcome === "pending" || !c.recording_url);
+      return hasPending ? 8_000 : 30_000;
+    },
   });
 }
 
@@ -75,6 +91,12 @@ export function useCall(id: string) {
     queryKey: ["calls", id],
     queryFn: () => callsApi.get(id).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const data = query.state.data as any;
+      // Stop polling once outcome is set and recording is available
+      const settled = data && data.outcome !== "pending" && data.recording_url;
+      return settled ? false : 8_000;
+    },
   });
 }
 
