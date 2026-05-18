@@ -159,9 +159,9 @@ async def _warmup_llm(llm: _CappedGroqLLM) -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.22,
-        activation_threshold   = 0.75,
-        deactivation_threshold = 0.40,
+        min_silence_duration   = 0.40,   # wait longer before treating silence as end of speech
+        activation_threshold   = 0.88,   # only trigger on confident speech, ignore background noise
+        deactivation_threshold = 0.60,   # stay active longer, don't drop on brief noise gaps
         sample_rate            = 16000,
     )
     logger.info("VAD loaded in prewarm ✓")
@@ -447,7 +447,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model          = "nova-3",
             language       = "multi",
             interim_results= True,
-            endpointing_ms = 50,
+            endpointing_ms = 200,  # wait 200ms of silence before cutting off speech
             smart_format   = False,
             keyterms       = stt_keyterms,
         ),
@@ -456,8 +456,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.0,
-            min_interruption_words= 5,
+            min_endpointing_delay = 0.2,   # small pause before agent responds
+            min_interruption_words= 8,     # need 8 real words to interrupt, blocks noise bursts
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
