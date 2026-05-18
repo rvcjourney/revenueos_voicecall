@@ -445,6 +445,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = AgentSession(
         stt=deepgram.STT(
             model          = "nova-3",
+            language       = "multi",
             interim_results= True,
             endpointing_ms = 50,
             smart_format   = False,
