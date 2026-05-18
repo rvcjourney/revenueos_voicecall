@@ -126,16 +126,12 @@ async def reclassify() -> None:
     print("  MOTMVoice — Reclassify All Calls with Transcripts")
     print("=" * 62)
 
-    # Load all completed calls that have a non-empty transcript
+    # Load all completed calls that have a transcript (full_text OR segments)
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(
             select(Call, CallTranscript)
             .join(CallTranscript, CallTranscript.call_id == Call.id)
-            .where(
-                Call.status == CallStatus.COMPLETED,
-                CallTranscript.full_text.isnot(None),
-                CallTranscript.full_text != "",
-            )
+            .where(Call.status == CallStatus.COMPLETED)
             .order_by(Call.started_at.desc())
         )).all()
 
@@ -154,7 +150,23 @@ async def reclassify() -> None:
             old_outcome = str(call.outcome)
             print(f"[{idx:>3}/{total}] {call.phone_number}  {call.started_at or 'unknown'}  old={old_outcome}", end="  ")
 
-            new_outcome, new_summary = await _classify(http, transcript.full_text)
+            # Use full_text if available; otherwise rebuild from segments JSON
+            text = transcript.full_text or ""
+            if not text and transcript.segments:
+                try:
+                    segs = transcript.segments if isinstance(transcript.segments, list) else []
+                    text = "\n".join(
+                        f"{'CUSTOMER' if s.get('speaker') in ('user', 'customer') else 'AGENT'}: {s.get('text', '')}"
+                        for s in segs if s.get('text')
+                    )
+                except Exception:
+                    pass
+
+            if not text.strip():
+                print("→ skip (no text)")
+                continue
+
+            new_outcome, new_summary = await _classify(http, text)
 
             if new_outcome != old_outcome:
                 print(f"→ {new_outcome}  CHANGED")
