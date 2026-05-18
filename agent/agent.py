@@ -407,7 +407,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     voice_id        = meta.get("voice_id") or ELEVENLABS_VOICE_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     call_id         = meta.get("call_id", "")
-    stt_language    = meta.get("stt_language") or "hi"
     stt_keyterms    = meta.get("stt_keyterms") or []
 
     system_prompt = _build_prompt(raw_prompt)
@@ -446,7 +445,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session = AgentSession(
         stt=deepgram.STT(
             model          = "nova-3",
-            language       = stt_language,
             interim_results= True,
             endpointing_ms = 50,
             smart_format   = False,
