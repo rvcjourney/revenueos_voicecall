@@ -159,9 +159,9 @@ async def _warmup_llm(llm: _CappedGroqLLM) -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.22,   # original — no latency added
-        activation_threshold   = 0.88,   # high confidence, ignores background noise, zero latency cost
-        deactivation_threshold = 0.60,   # stay active through brief noise gaps, zero latency cost
+        min_silence_duration   = 0.22,
+        activation_threshold   = 0.92,   # very high — only clear speech triggers, ignores background noise
+        deactivation_threshold = 0.60,
         sample_rate            = 16000,
     )
     logger.info("VAD loaded in prewarm ✓")
@@ -459,6 +459,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_left(participant):
+        # Customer hung up — ensure post-call report is always sent
+        if not voice_agent._reported:
+            logger.info("Participant disconnected — triggering post-call report")
+            _safe_task(voice_agent._post_call_report(), "post-call-on-disconnect")
 
     try:
         await session.start(
