@@ -375,7 +375,7 @@ class VoiceAgent(Agent):
         try:
             await asyncio.wait_for(
                 self.session.say(_FAREWELL, allow_interruptions=False),
-                timeout=2.5,
+                timeout=5.0,
             )
         except asyncio.TimeoutError:
             logger.warning("Farewell TTS timed out — disconnecting anyway")
