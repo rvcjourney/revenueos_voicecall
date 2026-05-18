@@ -191,18 +191,23 @@ async def _classify(http: aiohttp.ClientSession, segments: list[dict]) -> tuple[
                         "role": "system",
                         "content": (
                             "You analyze Indian sales call transcripts (Hinglish/Hindi/English). "
+                            "Transcripts may have speech-to-text errors — read the intent, not exact words. "
                             "Reply ONLY with valid JSON — no explanation, no markdown.\n"
                             'Format: {"outcome": "...", "summary": "..."}\n'
                             "outcome must be exactly one of:\n"
-                            "  interested         - ANY positive signal: asked for WhatsApp/email/catalogue/price,\n"
-                            "                       mentioned boss/team/decision-maker, said 'will think about it'\n"
-                            "                       or 'send details', asked any question about the product.\n"
-                            "                       WHEN IN DOUBT, choose interested.\n"
-                            "  callback_requested - customer explicitly asked to be called at a specific later time\n"
-                            "  not_interested     - FIRM, CLEAR rejection with zero curiosity\n"
-                            "  wrong_number       - wrong person or wrong business\n"
-                            "  do_not_call        - customer demanded to never be called again\n"
-                            "summary: 2-3 clear English sentences describing what happened."
+                            "  interested         - Use this when ANY of these are true:\n"
+                            "                       • Customer shared or confirmed WhatsApp/phone/email\n"
+                            "                       • Customer agreed to receive catalogue, quote, or details\n"
+                            "                       • Customer said they will send an inquiry or think about it\n"
+                            "                       • Customer asked about price, availability, or product specs\n"
+                            "                       • Customer mentioned they purchase similar products\n"
+                            "                       • Conversation lasted more than 3 exchanges without rejection\n"
+                            "                       WHEN IN DOUBT → use interested\n"
+                            "  callback_requested - Customer explicitly asked to be called at a specific later time\n"
+                            "  not_interested     - Customer gave FIRM rejection with no engagement at all\n"
+                            "  wrong_number       - Wrong person or wrong business\n"
+                            "  do_not_call        - Customer demanded to never be called again\n"
+                            "summary: 2-3 sentences. Mention what products customer needs and what was agreed."
                         ),
                     },
                     {"role": "user", "content": f"Call transcript:\n{transcript_text}"},

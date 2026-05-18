@@ -325,18 +325,23 @@ class VoiceAgent(Agent):
                     {
                         "role": "system",
                         "content": (
-                            "You analyze sales call transcripts. Reply ONLY with valid JSON, no extra text.\n"
+                            "You analyze sales call transcripts (may contain speech-to-text errors — read intent, not exact words). "
+                            "Reply ONLY with valid JSON, no extra text.\n"
                             'Format: {"outcome": "...", "summary": "..."}\n'
                             "outcome must be exactly one of:\n"
-                            "  interested          - ANY positive signal, no matter how small: asked for WhatsApp/email/catalogue/price,\n"
-                            "                        mentioned boss/team/decision-maker, said 'will think about it' or 'send details',\n"
-                            "                        asked questions about the product, did not immediately refuse — WHEN IN DOUBT, use interested\n"
-                            "  callback_requested  - customer explicitly asked to be called back at a specific later time\n"
-                            "  not_interested      - customer gave a FIRM, CLEAR rejection with no curiosity at all (e.g. 'nahi chahiye', 'mat karo call')\n"
-                            "  wrong_number        - wrong person or wrong business entirely\n"
-                            "  do_not_call         - customer explicitly demanded to never be called again\n"
-                            "IMPORTANT: If customer engaged for more than 2 exchanges OR asked anything about the product, always use 'interested'.\n"
-                            "summary: 1-2 English sentences describing what happened."
+                            "  interested          - Use this when ANY of these are true:\n"
+                            "                        • Customer shared or confirmed WhatsApp/phone/email\n"
+                            "                        • Customer agreed to receive catalogue, quote, or details\n"
+                            "                        • Customer said they will send an inquiry or think about it\n"
+                            "                        • Customer asked about price, availability, or product specs\n"
+                            "                        • Customer mentioned they purchase similar products\n"
+                            "                        • Conversation lasted more than 3 exchanges without rejection\n"
+                            "                        WHEN IN DOUBT → use interested\n"
+                            "  callback_requested  - Customer explicitly asked to be called at a specific later time\n"
+                            "  not_interested      - Customer gave FIRM rejection: 'nahi chahiye', 'mat karo call', 'not needed', hung up immediately\n"
+                            "  wrong_number        - Wrong person or wrong business\n"
+                            "  do_not_call         - Customer demanded to never be called again\n"
+                            "summary: 1-2 sentences. Focus on what the customer said they need and what was agreed (catalogue sent, inquiry planned, etc.)."
                         ),
                     },
                     {"role": "user", "content": f"Call transcript:\n{transcript_text}"},
