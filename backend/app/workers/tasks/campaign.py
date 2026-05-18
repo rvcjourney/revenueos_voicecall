@@ -326,7 +326,7 @@ async def _finalize(
 
     if place_result == "no_answer":
         call_status = CallStatus.NO_ANSWER
-        call_outcome = CallOutcome.PENDING  # agent never connected, nothing to classify
+        call_outcome = CallOutcome.NO_ANSWER  # phone not picked up
         contact_status = (
             ContactStatus.NO_ANSWER
             if (contact.attempt_count + 1) < campaign.max_retries

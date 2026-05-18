@@ -44,6 +44,7 @@ class CallOutcome(StrEnum):
     WRONG_NUMBER = "wrong_number"
     DO_NOT_CALL = "do_not_call"
     VOICEMAIL = "voicemail"
+    NO_ANSWER = "no_answer"     # phone not picked up
     PENDING = "pending"         # AI summary not yet generated
 
 

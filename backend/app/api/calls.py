@@ -98,15 +98,27 @@ async def agent_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Called by the voice agent after each call to set the real outcome and summary."""
+    from app.models.campaign import Campaign
 
     valid_outcomes = {e.value for e in CallOutcome}
     outcome = body.outcome if body.outcome in valid_outcomes else "not_interested"
+
+    # Fetch the call to get campaign_id before updating
+    call_row = (await db.execute(select(Call).where(Call.id == call_id))).scalar_one_or_none()
 
     await db.execute(
         update(Call)
         .where(Call.id == call_id)
         .values(outcome=outcome, summary=body.summary or None)
     )
+
+    # Atomically increment campaign interested_count when outcome is interested
+    if outcome == "interested" and call_row and call_row.campaign_id:
+        await db.execute(
+            update(Campaign)
+            .where(Campaign.id == call_row.campaign_id)
+            .values(interested_count=Campaign.interested_count + 1)
+        )
 
     if body.transcript:
         full_text = "\n".join(

@@ -328,11 +328,14 @@ class VoiceAgent(Agent):
                             "You analyze sales call transcripts. Reply ONLY with valid JSON, no extra text.\n"
                             'Format: {"outcome": "...", "summary": "..."}\n'
                             "outcome must be exactly one of:\n"
-                            "  interested          - customer asked for catalogue/pricing or showed clear interest\n"
-                            "  not_interested      - customer declined, showed no interest, or barely spoke\n"
-                            "  callback_requested  - customer asked to be called back later\n"
-                            "  wrong_number        - wrong person or wrong business\n"
-                            "  do_not_call         - customer explicitly said do not call again\n"
+                            "  interested          - ANY positive signal, no matter how small: asked for WhatsApp/email/catalogue/price,\n"
+                            "                        mentioned boss/team/decision-maker, said 'will think about it' or 'send details',\n"
+                            "                        asked questions about the product, did not immediately refuse — WHEN IN DOUBT, use interested\n"
+                            "  callback_requested  - customer explicitly asked to be called back at a specific later time\n"
+                            "  not_interested      - customer gave a FIRM, CLEAR rejection with no curiosity at all (e.g. 'nahi chahiye', 'mat karo call')\n"
+                            "  wrong_number        - wrong person or wrong business entirely\n"
+                            "  do_not_call         - customer explicitly demanded to never be called again\n"
+                            "IMPORTANT: If customer engaged for more than 2 exchanges OR asked anything about the product, always use 'interested'.\n"
                             "summary: 1-2 English sentences describing what happened."
                         ),
                     },

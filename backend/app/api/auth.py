@@ -26,6 +26,7 @@ router = APIRouter()
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    raise ConflictError("Registration is currently closed. Contact the administrator.")
     existing = await db.scalar(select(User.id).where(User.email == body.email))
     if existing:
         raise ConflictError("Email already registered")
