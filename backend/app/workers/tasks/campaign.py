@@ -600,11 +600,30 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
         # Loop: next contact starts immediately after previous room is empty
 
 
+async def _reset_stale_dialing(campaign_id: str) -> None:
+    """Reset any DIALING contacts to PENDING on dispatcher start (crash recovery)."""
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(
+                update(CampaignContact)
+                .where(
+                    CampaignContact.campaign_id == uuid.UUID(campaign_id),
+                    CampaignContact.status == ContactStatus.DIALING,
+                )
+                .values(status=ContactStatus.PENDING)
+            )
+            if result.rowcount:
+                log.warning("reset_stale_dialing_contacts", campaign_id=campaign_id, count=result.rowcount)
+
+
 async def _run_campaign_async(campaign_id: str) -> None:
     """Outer wrapper: acquire lock, run the loop, release lock."""
     if not await _acquire_lock(campaign_id):
         log.info("campaign_already_running", campaign_id=campaign_id)
         return
+
+    # Reset any contacts stuck in DIALING from a previous crashed run
+    await _reset_stale_dialing(campaign_id)
 
     log.info("campaign_dispatcher_start", campaign_id=campaign_id)
     try:
