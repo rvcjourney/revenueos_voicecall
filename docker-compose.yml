@@ -115,7 +115,7 @@ services:
     container_name: motm-frontend
     restart: always
     environment:
-      - VITE_API_URL=https://api.motmvoice.b2botix.ai
+      - VITE_API_URL=https://motmvoice.b2botix.ai
     ports:
       - "6001:6001"
     networks:
