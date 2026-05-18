@@ -407,7 +407,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     voice_id        = meta.get("voice_id") or ELEVENLABS_VOICE_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     call_id         = meta.get("call_id", "")
-    stt_keyterms    = meta.get("stt_keyterms") or []
 
     system_prompt = _build_prompt(raw_prompt)
     logger.info("template | voice=%s llm=%s", voice_id, llm_model)
@@ -449,7 +448,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             interim_results= True,
             endpointing_ms = 50,
             smart_format   = False,
-            keyterms       = stt_keyterms,
         ),
         llm=llm,
         tts=tts,
