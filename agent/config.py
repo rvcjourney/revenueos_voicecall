@@ -29,10 +29,10 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "9BWtsMINqrJLrRacOk9x")
 
 # Model — choose based on latency vs quality tradeoff:
-#   eleven_flash_v2_5      : ~75–150ms TTFB, English-only — DO NOT use for Hindi/Hinglish
-#   eleven_turbo_v2_5      : ~200–300ms TTFB, 32 languages incl. Hindi (RECOMMENDED)
+#   eleven_flash_v2_5    : ~75–150ms TTFB, fastest, good quality
+#   eleven_turbo_v2_5    : ~200–300ms TTFB, better quality (RECOMMENDED for calls)
 #   eleven_multilingual_v2 : ~400ms TTFB, highest quality, best for Hinglish
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
