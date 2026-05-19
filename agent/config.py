@@ -26,7 +26,7 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 #   - Rachel       : 21m00Tcm4TlvDq8ikWAM  (neutral US female)
 #   - Priya (custom Indian female voice if you clone one)
 # For Indian languages, eleven_turbo_v2_5 handles Hinglish well.
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "9BWtsMINqrJLrRacOk9x")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "C8R8ahkE5XosZ8qPpSPy")
 
 # Model — choose based on latency vs quality tradeoff:
 #   eleven_flash_v2_5    : ~75–150ms TTFB, fastest, good quality
