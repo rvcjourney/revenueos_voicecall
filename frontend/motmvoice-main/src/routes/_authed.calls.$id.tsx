@@ -48,6 +48,8 @@ function fmtDur(s: number | null | undefined) {
 function CallDetail() {
   const { id } = useParams({ from: "/_authed/calls/$id" });
   const { data, isLoading, isError } = useCall(id);
+  // Must be called before any early returns — Rules of Hooks
+  const { blobUrl, loading: recordingLoading } = useRecordingBlob(id, !!data?.recording_url);
 
   if (isLoading) {
     return (
@@ -68,7 +70,6 @@ function CallDetail() {
 
   const c = data;
   const segments = c.transcript_segments ?? [];
-  const { blobUrl, loading: recordingLoading } = useRecordingBlob(c.id, !!c.recording_url);
 
   return (
     <div className="space-y-6 max-w-7xl">
