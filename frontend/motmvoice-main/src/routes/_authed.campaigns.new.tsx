@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,15 +46,37 @@ function NewCampaign() {
   const [contactFile, setContactFile] = useState<File | null>(null);
   const [fileInfo, setFileInfo] = useState<{ name: string; size: number; rows: number } | null>(null);
   const [agent, setAgent] = useState({
-    name: "Aniket — Sales Agent",
-    voiceId: "9BWtsMINqrJLrRacOk9x",
+    name: "Sales Agent",
+    voiceId: "C8R8ahkE5XosZ8qPpSPy",
     language: "Hinglish",
-    welcome: "Namaste! Main Aniket bol raha hu Baba Valves se. Kya aap 2 minute baat kar sakte hain?",
-    prompt: `You are Aniket, a friendly sales agent from Baba Valves.\n\nGoal:\n1. Greet in Hinglish\n2. Introduce product range\n3. Qualify lead\n4. Schedule demo if interested\n\nKeep responses short and conversational.`,
+    welcome: "",
+    prompt: "",
     maxDuration: 10,
     model: "llama-3.3-70b-versatile",
     temperature: 0.7,
   });
+
+  // Pre-fill agent fields from the most recently created agent template
+  useEffect(() => {
+    agentsApi.list().then(({ data }) => {
+      if (data.items.length > 0) {
+        const last = data.items[0];
+        setAgent(prev => ({
+          ...prev,
+          name:        last.name              || prev.name,
+          voiceId:     last.voice_id          || prev.voiceId,
+          language:    last.language          || prev.language,
+          welcome:     last.welcome_message   ?? prev.welcome,
+          prompt:      last.system_prompt     ?? prev.prompt,
+          maxDuration: last.max_call_duration_seconds
+                         ? Math.round(last.max_call_duration_seconds / 60)
+                         : prev.maxDuration,
+          model:       last.llm_model         || prev.model,
+          temperature: last.llm_temperature   ?? prev.temperature,
+        }));
+      }
+    }).catch(() => {});
+  }, []);
   const [advanced, setAdvanced] = useState(false);
   const [schedule, setSchedule] = useState({
     start: "10:00", end: "19:00",
