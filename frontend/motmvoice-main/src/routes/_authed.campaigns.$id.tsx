@@ -3,7 +3,7 @@ import { CampaignBadge, OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download } from "lucide-react";
+import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed } from "lucide-react";
 import { toast } from "sonner";
 import { useCampaign, useCalls } from "@/lib/hooks";
 import { campaignsApi, type CallOut } from "@/lib/api";
@@ -34,6 +34,7 @@ function CampaignDetail() {
   const notInterestedCalls = calls.filter((c) =>
     ["not_interested", "do_not_call", "wrong_number"].includes(c.outcome)
   );
+  const noAnswerCalls = calls.filter((c) => c.outcome === "no_answer");
 
   async function handlePause() {
     try {
@@ -143,6 +144,10 @@ function CampaignDetail() {
             <XCircle className="h-3 w-3 mr-1 text-destructive" />
             Not Interested ({notInterestedCalls.length})
           </TabsTrigger>
+          <TabsTrigger value="no_answer">
+            <PhoneMissed className="h-3 w-3 mr-1 text-muted-foreground" />
+            No Answer ({noAnswerCalls.length})
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="calls" className="mt-4">
@@ -171,6 +176,26 @@ function CampaignDetail() {
 
         <TabsContent value="not_interested" className="mt-4">
           <CallTable calls={notInterestedCalls} emptyText="No not-interested calls yet" highlightPhone="text-muted-foreground" />
+        </TabsContent>
+
+        <TabsContent value="no_answer" className="mt-4">
+          {noAnswerCalls.length > 0 && (
+            <div className="flex justify-end mb-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  campaignsApi.exportNoAnswerCalls(
+                    id,
+                    `${campaign.name.replace(/\s+/g, "_")}_no_answer.csv`
+                  ).catch(() => toast.error("Export failed"))
+                }
+              >
+                <Download className="h-4 w-4 mr-1" /> Download CSV
+              </Button>
+            </div>
+          )}
+          <CallTable calls={noAnswerCalls} emptyText="No unanswered calls yet" highlightPhone="text-muted-foreground" />
         </TabsContent>
       </Tabs>
     </div>

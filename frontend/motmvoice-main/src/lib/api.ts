@@ -54,6 +54,20 @@ export const campaignsApi = {
     api.get<{ items: ContactOut[]; total: number }>(`/api/campaigns/${id}/contacts`, { params }),
   launch: (id: string) => api.post<CampaignOut>(`/api/campaigns/${id}/launch`),
   pause: (id: string) => api.post<CampaignOut>(`/api/campaigns/${id}/pause`),
+  exportNoAnswerCalls: async (id: string, filename: string) => {
+    const token = localStorage.getItem("motm_token");
+    const res = await fetch(`${BASE}/api/campaigns/${id}/export/no_answer`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   exportInterestedLeads: async (id: string, filename: string) => {
     const token = localStorage.getItem("motm_token");
     const res = await fetch(`${BASE}/api/campaigns/${id}/export/interested`, {
