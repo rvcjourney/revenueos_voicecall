@@ -36,7 +36,7 @@ ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # ── SIP / Outbound ────────────────────────────────────────────────────────────
 SIP_TRUNK_ID     = os.getenv("SIP_TRUNK_ID", "")
