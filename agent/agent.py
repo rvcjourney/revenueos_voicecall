@@ -447,7 +447,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model          = "nova-2",
             language       = "hi",   # Hindi model handles English words naturally (Hinglish)
             interim_results= True,
-            endpointing_ms = 50,
+            endpointing_ms = 300,    # wait 300ms of silence before finalising (was 50) — prevents "ha"/"hmm" from being sent as final transcripts mid-agent-speech
             smart_format   = False,
         ),
         llm=llm,
@@ -455,8 +455,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.0,   # original — no added delay
-            min_interruption_words= 8,     # need 8 real words to interrupt, blocks noise bursts
+            min_endpointing_delay = 0.5,   # wait 500ms after user stops before processing — filters backchannel sounds
+            min_interruption_words= 20,    # need 20 words to interrupt agent mid-speech (was 8)
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
