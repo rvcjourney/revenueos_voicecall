@@ -47,7 +47,7 @@ _LLM_MAX_TOKENS = 80  # ~2 short Hinglish sentences; lower = faster first TTS by
 
 # Characters buffered before ElevenLabs starts generating audio.
 # 30 = aggressive low-latency; ElevenLabs default is [120, 160, 250, 290].
-_CHUNK_LENGTH_SCHEDULE = [50, 100, 150, 250]
+_CHUNK_LENGTH_SCHEDULE = [25, 70, 130, 200]
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
