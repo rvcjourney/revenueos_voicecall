@@ -3,7 +3,7 @@ import { CampaignBadge, OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2 } from "lucide-react";
+import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useCampaign, useCalls } from "@/lib/hooks";
 import { campaignsApi, type CallOut } from "@/lib/api";
@@ -150,6 +150,22 @@ function CampaignDetail() {
         </TabsContent>
 
         <TabsContent value="interested" className="mt-4">
+          {interestedCalls.length > 0 && (
+            <div className="flex justify-end mb-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  campaignsApi.exportInterestedLeads(
+                    id,
+                    `${campaign.name.replace(/\s+/g, "_")}_interested_leads.csv`
+                  ).catch(() => toast.error("Export failed"))
+                }
+              >
+                <Download className="h-4 w-4 mr-1" /> Download CSV
+              </Button>
+            </div>
+          )}
           <CallTable calls={interestedCalls} emptyText="No interested leads yet" highlightPhone="text-success" />
         </TabsContent>
 
