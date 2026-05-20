@@ -49,7 +49,7 @@ jobs:
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
           set -e
-          cd /opt/motmvoice
+          cd ~/motmvoice/motmvoice
           git pull origin main
 
           BUILD_AGENT=${{ steps.changes.outputs.agent }}
