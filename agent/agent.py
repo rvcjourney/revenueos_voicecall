@@ -134,9 +134,11 @@ def _build_prompt(raw: str) -> str:
         "9. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "10. If asked for info not in your instructions: politely say you will check and confirm.\n"
         "11. NEVER say the words 'end_call' or 'end call' out loud — the system ends the call automatically.\n"
-        "12. Only call end_call AFTER you have said a complete goodbye sentence. "
-        "Triggers: customer says bye/goodbye/alvida/band karo, OR customer clearly refuses and you close warmly. "
-        "Never end the call just because info was collected — always say a proper farewell first, THEN call end_call.\n"
+        "12. end_call is ONLY allowed when the customer explicitly says one of these: "
+        "bye / goodbye / alvida / ok bye / band karo / khatam karo / rakhta hoon / rakhti hoon / call khatam / disconnect. "
+        "These words are NOT goodbyes — never call end_call for them: ok / theek hai / accha / haan / ha / suno / suno na / ek second / ruko / hmm / ji / bilkul. "
+        "Two 'Ok' replies in a row is NOT a goodbye — always ask if there is anything else. "
+        "Call end_call ONLY AFTER you have spoken a full farewell sentence. If unsure, keep talking.\n"
     )
     return guardrails + "\n" + p
 
