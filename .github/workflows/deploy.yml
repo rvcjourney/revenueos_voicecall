@@ -1,0 +1,70 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed services
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "$CHANGED"
+
+          if echo "$CHANGED" | grep -q '^agent/'; then
+            echo "agent=1" >> $GITHUB_OUTPUT
+          else
+            echo "agent=0" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q '^backend/'; then
+            echo "backend=1" >> $GITHUB_OUTPUT
+          else
+            echo "backend=0" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED" | grep -q '^frontend/'; then
+            echo "frontend=1" >> $GITHUB_OUTPUT
+          else
+            echo "frontend=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          BUILD_AGENT:    ${{ steps.changes.outputs.agent }}
+          BUILD_BACKEND:  ${{ steps.changes.outputs.backend }}
+          BUILD_FRONTEND: ${{ steps.changes.outputs.frontend }}
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          port:     22
+          envs:     BUILD_AGENT,BUILD_BACKEND,BUILD_FRONTEND
+          script: |
+            set -e
+            cd /opt/motmvoice
+            git pull origin main
+
+            SERVICES=""
+            [ "$BUILD_AGENT"    = "1" ] && SERVICES="$SERVICES agent"
+            [ "$BUILD_BACKEND"  = "1" ] && SERVICES="$SERVICES api"
+            [ "$BUILD_FRONTEND" = "1" ] && SERVICES="$SERVICES frontend"
+
+            if [ -n "$SERVICES" ]; then
+              echo "Rebuilding:$SERVICES"
+              docker compose up -d --build $SERVICES
+            else
+              echo "No service code changed — restarting containers"
+              docker compose up -d
+            fi
+
+            echo "Deploy complete ✓"
