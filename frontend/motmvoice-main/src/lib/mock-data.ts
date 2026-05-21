@@ -173,12 +173,9 @@ export const outcomeBreakdown = [
 ];
 
 export const voices = [
-  { id: "C8R8ahkE5XosZ8qPpSPy", name: "Arjun", lang: "Hinglish", gender: "M", desc: "Energetic & persuasive" },
-  { id: "9BWtsMINqrJLrRacOk9x", name: "Suyash", lang: "English", gender: "M", desc: "Warm & professional" },
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", lang: "English", gender: "F", desc: "Confident sales tone" },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Priya", lang: "Hinglish", gender: "F", desc: "Friendly Indian accent" },
-  { id: "ErXwobaYiN019PkySvjV", name: "Raj", lang: "Hindi", gender: "M", desc: "Authoritative & calm" },
-  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Kavya", lang: "Hindi", gender: "F", desc: "Native Hindi speaker" },
+  { id: "C8R8ahkE5XosZ8qPpSPy", name: "Suyash", lang: "Hinglish", gender: "M", desc: "Warm & professional" },
+  { id: "codoBx1vrQVwrVQylqGj", name: "Nitesh", lang: "Hinglish", gender: "M", desc: "Energetic & persuasive" },
+  { id: "6h2Hja4LgQR8wIIv3XXW", name: "Anandu", lang: "Hinglish", gender: "M", desc: "Friendly & natural" },
 ];
 
 export const promptTemplates = [
