@@ -1,7 +1,6 @@
 """
-agent.py — Hinglish Voice Sales Agent (Baba Valve India)
+agent.py — Hinglish Voice Sales Agent
 Pipeline: Deepgram STT → Groq LLM → ElevenLabs TTS (via livekit-plugins-elevenlabs)
-Target latency: 300–600ms (STT final → first TTS audio byte)
 """
 
 import os
