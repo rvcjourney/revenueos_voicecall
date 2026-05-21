@@ -73,18 +73,23 @@ class _CappedGroqLLM(groq.LLM):
 # ── Hangup detection ──────────────────────────────────────────────────────────
 _HANGUP_RE = re.compile(
     r"\b("
+    # Universal — these words are ONLY ever used to end a call
     r"bye|goodbye|alvida"
-    r"|ok\s*bye|chalo\s*bye|theek\s*hai\s*bye"
-    r"|phir\s+milenge|phir\s+baat\s+karte"
-    r"|phone\s+rakhna|phone\s+rakh|band\s+karo"
-    r"|call\s+khatam|khatam\s+karte|khatam\s+karte\s+hain"
+    # Hinglish bye combos
+    r"|ok\s*bye|chalo\s*bye|theek\s*hai\s*bye|ok\s+ji\s+bye|accha\s+bye"
+    # "I'm heading off" — very unambiguous phone-enders
+    r"|chalta\s+hoon|chalti\s+hoon|nikalta\s+hoon|nikalti\s+hoon"
+    r"|chalta\s+hu|chalti\s+hu|nikalta\s+hu|nikalti\s+hu"
+    # Putting down the phone — only said when actually ending
+    r"|phone\s+rakhna|phone\s+rakh|band\s+karo|rakho\s+phone|rakh\s+do"
+    r"|call\s+khatam|khatam\s+karte\s+hain"
     r"|rakhta\s+hoon|rakhti\s+hoon|rakh\s+rahi\s+hoon"
-    r"|dhanyavaad|shukriya|take\s+care|have\s+a\s+good\s+day"
+    # System-level
     r"|disconnect|hang\s*up|call\s+end"
     r")\b",
     re.IGNORECASE | re.UNICODE,
 )
-_FAREWELL = "Thank you, take care!"
+_FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, namaste!"
 
 # Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
 _END_CALL_STRIP_RE = re.compile(
@@ -136,11 +141,21 @@ def _build_prompt(raw: str) -> str:
         "9. Use the language specified in your instructions. Match the customer's language if not specified.\n"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "11. NEVER say the words 'end_call' or 'end call' out loud — the system ends the call automatically.\n"
-        "12. end_call is ONLY allowed when the customer explicitly says one of these: "
-        "bye / goodbye / alvida / ok bye / band karo / khatam karo / rakhta hoon / rakhti hoon / call khatam / disconnect. "
-        "These words are NOT goodbyes — never call end_call for them: ok / theek hai / accha / haan / ha / suno / suno na / ek second / ruko / hmm / ji / bilkul. "
-        "Two 'Ok' replies in a row is NOT a goodbye — always ask if there is anything else. "
-        "Call end_call ONLY AFTER you have spoken a full farewell sentence. If unsure, keep talking.\n"
+        "12. Before you are EVER allowed to call end_call, ALL of these conditions must be true:\n"
+        "    (A) You have had at least 5 back-and-forth exchanges with the customer.\n"
+        "    (B) If the customer showed ANY interest, you have already asked for their WhatsApp number or email.\n"
+        "    (C) The customer has EXPLICITLY said one of these clear goodbyes: "
+        "bye / goodbye / alvida / ok bye / chalo bye / theek hai bye / "
+        "band karo / call khatam / rakhta hoon / rakhti hoon / "
+        "chalta hoon / chalti hoon / nikalta hoon / nikalti hoon / disconnect.\n"
+        "    (D) You have spoken a complete warm farewell BEFORE calling end_call.\n"
+        "These are NOT goodbyes — NEVER end the call for them: "
+        "ok / theek hai / accha / haan / ha / hmm / ji / bilkul / suno / suno na / ek second / ruko / "
+        "shukriya / dhanyavaad / phir milenge / phir baat karte / dekh lenge / sochta hoon / samjha / samjhi. "
+        "If ANY condition (A-D) is not met — keep the conversation going. "
+        "If the customer has not given contact info yet, ALWAYS ask: "
+        "'Ek kaam karo sir, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
+        "If unsure whether the customer is leaving, ask one more question. Never end early.\n"
     )
     return guardrails + "\n" + p
 
@@ -192,10 +207,15 @@ class VoiceAgent(Agent):
         self._backend_url     = backend_url
         self._webhook_secret  = webhook_secret
         self._user_messages: list[str] = []
+        self._turn_count      = 0  # exchanges so far; end_call blocked until >= 4
 
         end_call_tool = EndCallTool(
             delete_room=True,
-            end_instructions="Say ONE short polite goodbye, then the call will end.",
+            end_instructions=(
+                "Say one warm, natural Hinglish farewell — e.g. 'Bahut shukriya sir, "
+                "koi zaroorat ho toh zaroor call karein. Take care, namaste!' "
+                "Then the call will end automatically. Do NOT say the words end_call."
+            ),
             on_tool_called=self._on_end_call_tool_called,
         )
         super().__init__(
@@ -204,9 +224,14 @@ class VoiceAgent(Agent):
         )
 
     async def _on_end_call_tool_called(self, ev) -> None:
-        logger.info("EndCallTool triggered by LLM — disconnecting")
+        if self._turn_count < 4:
+            # LLM called end_call too early — ignore and let the conversation continue
+            logger.warning("EndCallTool fired at turn %d (<4) — suppressing early hangup", self._turn_count)
+            self._ending = False
+            return
+        logger.info("EndCallTool triggered by LLM at turn %d — disconnecting", self._turn_count)
         self._ending = True
-        await asyncio.sleep(5.0)  # wait for farewell TTS to finish generating + playing
+        await asyncio.sleep(6.0)  # wait for farewell TTS to finish playing
         await self._post_call_report()
         await self._disconnect()
 
@@ -251,12 +276,14 @@ class VoiceAgent(Agent):
             return
 
         text = (getattr(new_message, "text_content", "") or "").strip()
-        logger.info("Turn: %r", text[:80])
+        self._turn_count += 1
+        logger.info("Turn %d: %r", self._turn_count, text[:80])
 
         if text:
             self._user_messages.append(text)
 
-        if _HANGUP_RE.search(text):
+        # Only allow hangup-by-keyword after at least 3 customer turns
+        if self._turn_count >= 3 and _HANGUP_RE.search(text):
             self._ending = True
             _safe_task(self._do_hangup(), "hangup-from-keyword")
             return
