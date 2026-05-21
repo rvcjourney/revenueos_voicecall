@@ -20,8 +20,9 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "6h2Hja4LgQR8wIIv3XXW")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
 
 # ── Agent behaviour ───────────────────────────────────────────────────────────
 # Default fallback — system prompt and welcome message are set via the UI (agent template).

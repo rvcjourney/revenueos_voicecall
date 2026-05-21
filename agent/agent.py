@@ -24,6 +24,7 @@ from config import (
     AGENT_SYSTEM_PROMPT,
     AGENT_WELCOME_MESSAGE,
     GROQ_MODEL,
+    GROQ_LLM_TEMPERATURE,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL_ID,
@@ -410,12 +411,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     welcome_message = meta.get("welcome_message") or AGENT_WELCOME_MESSAGE
     voice_id        = meta.get("voice_id") or ELEVENLABS_VOICE_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
+    llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
 
     system_prompt = _build_prompt(raw_prompt)
-    logger.info("template | voice=%s llm=%s", voice_id, llm_model)
+    logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
 
-    llm = _CappedGroqLLM(model=llm_model)
+    llm = _CappedGroqLLM(model=llm_model, temperature=llm_temperature)
     warmup_task = _safe_task(_warmup_llm(llm), "llm-warmup")
 
     try:

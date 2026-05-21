@@ -196,6 +196,7 @@ async def _place_call(
     welcome_message: str = "",
     voice_id: str = "",
     llm_model: str = "",
+    llm_temperature: float = 0.7,
 ) -> str:
     """
     Create room → dispatch AI agent + initiate SIP call (both in parallel).
@@ -217,6 +218,7 @@ async def _place_call(
                     "welcome_message": welcome_message,
                     "voice_id": voice_id,
                     "llm_model": llm_model,
+                    "llm_temperature": llm_temperature,
                 }),
             )
         )
@@ -524,6 +526,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 tmpl_welcome_message = tmpl.welcome_message if tmpl else ""
                 tmpl_voice_id = tmpl.voice_id if tmpl else ""
                 tmpl_llm_model = tmpl.llm_model if tmpl else ""
+                tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
 
         if not livekit_trunk_id:
             log.error("no_sip_trunk_configured", campaign_id=campaign_id)
@@ -554,6 +557,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
             welcome_message=tmpl_welcome_message,
             voice_id=tmpl_voice_id,
             llm_model=tmpl_llm_model,
+            llm_temperature=tmpl_llm_temperature,
         )
 
         # ── Wait for the call to end before dialling the next contact ──────
