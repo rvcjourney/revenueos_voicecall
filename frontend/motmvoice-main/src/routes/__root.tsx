@@ -1,12 +1,16 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+
+const GA_ID = "G-DKK08XT10J";
 
 import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/auth";
@@ -108,6 +112,12 @@ function RootShell({ children }: { children: React.ReactNode }) {
     <html lang="en" className="dark">
       <head>
         <HeadContent />
+        <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','${GA_ID}',{send_page_view:false});`,
+          }}
+        />
       </head>
       <body className="bg-background text-foreground antialiased">
         {children}
@@ -117,12 +127,24 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+function Analytics() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  useEffect(() => {
+    (window as any).gtag?.("event", "page_view", {
+      page_location: window.location.href,
+      page_path: pathname,
+    });
+  }, [pathname]);
+  return null;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <Analytics />
         <Outlet />
         <Toaster theme="dark" position="top-right" />
       </AuthProvider>
