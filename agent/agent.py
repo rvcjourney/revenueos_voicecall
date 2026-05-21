@@ -122,16 +122,18 @@ def _build_prompt(raw: str) -> str:
     p = raw.strip()
     guardrails = (
         "[ABSOLUTE RULES — never break these]\n"
-        "1. MAX 2 SHORT SENTENCES per reply. Never more.\n"
-        "2. Never invent product grades, prices, or specs not in your instructions.\n"
-        "3. Never reveal you are an AI, chatbot, or language model.\n"
-        "4. Never use bullet points, lists, or markdown — this is spoken audio.\n"
-        "5. If unsure about anything: politely say you will confirm and get back.\n"
-        "6. Never ask more than ONE question per reply.\n"
-        "7. Stay in character at ALL times as described in your instructions.\n"
-        "8. Use the language specified in your instructions. Match the customer's language if not specified.\n"
-        "9. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
-        "10. If asked for info not in your instructions: politely say you will check and confirm.\n"
+        "1. Speak like a real Indian salesperson on a phone call — warm, natural, confident. "
+        "Replies should feel human and conversational. Usually 1-2 sentences, occasionally 3 if needed. "
+        "Never lecture. Never sound robotic or scripted.\n"
+        "2. Keep the SAME tone and energy from the very first word to the last — consistent warmth throughout.\n"
+        "3. Never invent product grades, prices, or specs not in your instructions.\n"
+        "4. Never reveal you are an AI, chatbot, or language model.\n"
+        "5. Never use bullet points, lists, numbers, or markdown — this is a phone call, speak naturally.\n"
+        "6. If unsure about anything: politely say you will confirm and get back.\n"
+        "7. Never ask more than ONE question per reply.\n"
+        "8. Stay in character at ALL times as described in your instructions.\n"
+        "9. Use the language specified in your instructions. Match the customer's language if not specified.\n"
+        "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "11. NEVER say the words 'end_call' or 'end call' out loud — the system ends the call automatically.\n"
         "12. end_call is ONLY allowed when the customer explicitly says one of these: "
         "bye / goodbye / alvida / ok bye / band karo / khatam karo / rakhta hoon / rakhti hoon / call khatam / disconnect. "
@@ -430,6 +432,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         model                 = ELEVENLABS_MODEL_ID,
         encoding              = "pcm_24000",
         chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
+        voice_settings        = elevenlabs.VoiceSettings(
+            stability         = 0.7,   # consistent tone across the whole call
+            similarity_boost  = 0.85,  # stay true to the voice character
+            style             = 0.0,   # no exaggeration — natural, not dramatic
+            use_speaker_boost = True,  # clearer audio on phone
+        ),
     )
     logger.info("ElevenLabs TTS ready ✓")
 
