@@ -23,6 +23,7 @@ from app.schemas.campaign import (
     CampaignOut,
     CampaignUpdate,
 )
+from app.workers.tasks.campaign import _run_campaign_async
 
 router = APIRouter()
 
