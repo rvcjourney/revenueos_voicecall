@@ -164,14 +164,21 @@ def _build_prompt(raw: str) -> str:
 # =============================================================================
 # LLM WARMUP
 # =============================================================================
-async def _warmup_llm(llm: _CappedGroqLLM) -> None:
+async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
+    """
+    Send a real warmup call to Groq using the actual system prompt so Groq
+    pre-loads and caches the full context. Without this, the first real turn
+    is slow because Groq processes a large system prompt cold.
+    """
     try:
         ctx = ChatContext()
+        if system_prompt:
+            ctx.add_message(role="system", content=system_prompt)
         ctx.add_message(role="user", content="Namaste")
-        async with llm.chat(chat_ctx=ctx, extra_kwargs={"max_tokens": 5}) as stream:
+        async with llm.chat(chat_ctx=ctx, extra_kwargs={"max_tokens": 8}) as stream:
             async for _ in stream:
                 break
-        logger.info("LLM pre-warmed ✓")
+        logger.info("LLM pre-warmed with system prompt ✓")
     except Exception as e:
         logger.debug("LLM warmup skipped: %s", e)
 
@@ -447,7 +454,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
 
     llm = _CappedGroqLLM(model=llm_model, temperature=llm_temperature)
-    warmup_task = _safe_task(_warmup_llm(llm), "llm-warmup")
+    # Start warmup immediately with the real system prompt so Groq caches the full context.
+    # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
+    warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
 
     try:
         participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
@@ -456,6 +465,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         logger.error("No participant joined in 30s — exiting")
         warmup_task.cancel()
         return
+
+    # Ensure warmup is complete before the first turn so the first response is fast.
+    # Participant just connected — we have a few seconds while TTS/session setup happens.
+    try:
+        await asyncio.wait_for(asyncio.shield(warmup_task), timeout=6.0)
+        logger.info("LLM warmup confirmed complete ✓")
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
     tts = elevenlabs.TTS(
         api_key               = ELEVENLABS_API_KEY,
