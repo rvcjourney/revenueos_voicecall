@@ -99,6 +99,10 @@ export const agentsApi = {
   update: (id: string, data: Partial<AgentOut>) =>
     api.patch<AgentOut>(`/api/agents/${id}`, data),
   delete: (id: string) => api.delete(`/api/agents/${id}`),
+  optimizePrompt: (rawInput: string) =>
+    api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", {
+      raw_input: rawInput,
+    }),
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────────

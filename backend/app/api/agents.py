@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,38 @@ from app.models.agent import AgentTemplate
 from app.schemas.agent import AgentCreate, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
+
+
+# ── Prompt optimizer ──────────────────────────────────────────────────────────
+
+class PromptOptimizeRequest(BaseModel):
+    raw_input: str   # raw company knowledge + sales goal from the sales team
+
+
+class PromptOptimizeResponse(BaseModel):
+    optimized_prompt: str
+
+
+@router.post("/optimize-prompt", response_model=PromptOptimizeResponse)
+async def optimize_prompt(
+    body: PromptOptimizeRequest,
+    token: TokenPayload = Depends(get_current_user),
+):
+    """
+    Use Groq LLM to transform raw company knowledge into a
+    structured, optimized voice agent system prompt.
+    """
+    if not body.raw_input or len(body.raw_input.strip()) < 20:
+        raise HTTPException(status_code=422, detail="raw_input is too short — provide meaningful company knowledge")
+
+    try:
+        from app.services.prompt_optimizer import optimize_prompt as _optimize
+        result = await _optimize(body.raw_input)
+        return PromptOptimizeResponse(optimized_prompt=result)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prompt generation failed: {e}")
 
 
 def _to_out(a: AgentTemplate) -> AgentOut:
