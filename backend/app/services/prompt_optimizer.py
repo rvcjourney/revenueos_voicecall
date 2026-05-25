@@ -7,10 +7,8 @@ and transforms it into a perfectly structured voice agent system prompt.
 
 from __future__ import annotations
 
-import os
 import httpx
 
-GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_OPTIMIZE_MODEL  = "llama-3.3-70b-versatile"   # best quality for structured generation
 
 # ── Fixed sections (same for every agent, never changes) ─────────────────────
@@ -187,20 +185,25 @@ async def optimize_prompt(raw_input: str) -> str:
     Call Groq LLM to transform raw company knowledge into a structured system prompt.
     Returns the optimized prompt string.
     """
-    if not GROQ_API_KEY:
+    from app.config import settings
+    api_key = settings.GROQ_API_KEY
+    if not api_key:
         raise RuntimeError("GROQ_API_KEY is not set in environment variables")
+
+    # Escape any { } in raw_input so .format() doesn't misinterpret them
+    safe_raw = raw_input.strip().replace("{", "{{").replace("}", "}}")
 
     prompt = _META_PROMPT.format(
         how_you_sound=_FIXED_HOW_YOU_SOUND,
         rules=_FIXED_RULES,
-        raw_input=raw_input.strip(),
+        raw_input=safe_raw,
     )
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         response = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
