@@ -47,7 +47,9 @@ _LLM_MAX_TOKENS = 80  # ~2 short Hinglish sentences; lower = faster first TTS by
 
 # Characters buffered before ElevenLabs starts generating audio.
 # 30 = aggressive low-latency; ElevenLabs default is [120, 160, 250, 290].
-_CHUNK_LENGTH_SCHEDULE = [50, 100, 150, 250]
+_CHUNK_LENGTH_SCHEDULE = [80, 140, 200, 280]
+# 80 chars (~12 words) gives ElevenLabs enough context for natural sentence prosody.
+# 50 was too short — first audio chunk sounded choppy/cut off.
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
@@ -179,9 +181,9 @@ async def _warmup_llm(llm: _CappedGroqLLM) -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.22,
-        activation_threshold   = 0.92,   # very high — only clear speech triggers, ignores background noise
-        deactivation_threshold = 0.60,
+        min_silence_duration   = 0.20,   # slightly quicker silence detection
+        activation_threshold   = 0.85,   # was 0.92 — catches speech onset more reliably (0.92 missed soft/quiet starts)
+        deactivation_threshold = 0.55,   # was 0.60 — smoother deactivation
         sample_rate            = 16000,
     )
     logger.info("VAD loaded in prewarm ✓")
@@ -462,9 +464,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         encoding              = "pcm_24000",
         chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
         voice_settings        = elevenlabs.VoiceSettings(
-            stability         = 0.7,   # consistent tone across the whole call
+            stability         = 0.60,  # was 0.7 — slight variation between sentences feels more human
             similarity_boost  = 0.85,  # stay true to the voice character
-            style             = 0.0,   # no exaggeration — natural, not dramatic
+            style             = 0.10,  # was 0.0 — adds subtle expressiveness, avoids flat robotic delivery
             use_speaker_boost = True,  # clearer audio on phone
         ),
     )
@@ -493,8 +495,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.3,   # wait 300ms after STT finalises before processing — saves ~200ms vs 0.5s, still filters backchannels
-            min_interruption_words= 20,    # need 20 words to interrupt agent mid-speech (was 8)
+            min_endpointing_delay = 0.25,  # 250ms after STT finalises — fast, natural turn-taking
+            min_interruption_words= 10,    # ~1 sentence to interrupt — natural; still blocks "ha"/"hmm" (1-2 words)
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
