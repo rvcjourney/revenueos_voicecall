@@ -89,7 +89,7 @@ _HANGUP_RE = re.compile(
     r")\b",
     re.IGNORECASE | re.UNICODE,
 )
-_FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, namaste!"
+_FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, Bye"
 
 # Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
 _END_CALL_STRIP_RE = re.compile(
@@ -485,7 +485,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model          = "nova-2",
             language       = "hi",   # Hindi model handles English words naturally (Hinglish)
             interim_results= True,
-            endpointing_ms = 300,    # wait 300ms of silence before finalising (was 50) — prevents "ha"/"hmm" from being sent as final transcripts mid-agent-speech
+            endpointing_ms = 200,    # wait 200ms of silence before finalising — balanced: ~100ms faster than 300ms, still safe against "ha"/"hmm" false triggers
             smart_format   = False,
         ),
         llm=llm,
@@ -493,7 +493,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.5,   # wait 500ms after user stops before processing — filters backchannel sounds
+            min_endpointing_delay = 0.3,   # wait 300ms after STT finalises before processing — saves ~200ms vs 0.5s, still filters backchannels
             min_interruption_words= 20,    # need 20 words to interrupt agent mid-speech (was 8)
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
