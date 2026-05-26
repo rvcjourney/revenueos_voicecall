@@ -41,41 +41,44 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  /* Fonts */
+  --font-sans:    "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, monospace;
+  --font-heading: "Lora", Georgia, "Times New Roman", serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DARK THEME (default) — Warm dark #0d0b09 + Deep orange #ea6c0a
+   DARK THEME (default) — Deep navy, inspired by Sarvam's dark nav
+   Primary accent: warm orange (for buttons/highlights on dark bg)
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --radius: 0.75rem;
 
-  /* ── Backgrounds: warm dark, slight golden undertone ─────────────────── */
-  --background:            oklch(0.07 0.010 55);    /* #0d0b09 warm near-black */
-  --foreground:            oklch(0.96 0.006 60);    /* warm white              */
-  --surface-2:             oklch(0.11 0.008 55);    /* #141210 elevated surface*/
-  --surface-3:             oklch(0.15 0.007 55);    /* #1c1a17 higher surface  */
+  /* ── Backgrounds: deep navy ───────────────────────────────────────────── */
+  --background:            oklch(0.09 0.040 265);   /* #0c0d18 deep navy     */
+  --foreground:            oklch(0.96 0.006 265);   /* near-white            */
+  --surface-2:             oklch(0.13 0.038 265);   /* #141625 lifted        */
+  --surface-3:             oklch(0.17 0.035 265);   /* #1a1e30 higher        */
 
   /* ── Cards ────────────────────────────────────────────────────────────── */
-  --card:                  oklch(0.11 0.008 55);
-  --card-foreground:       oklch(0.96 0.006 60);
-  --popover:               oklch(0.14 0.008 55);
-  --popover-foreground:    oklch(0.96 0.006 60);
+  --card:                  oklch(0.13 0.038 265);
+  --card-foreground:       oklch(0.96 0.006 265);
+  --popover:               oklch(0.16 0.036 265);
+  --popover-foreground:    oklch(0.96 0.006 265);
 
-  /* ── Primary: deep warm orange #ea6c0a ───────────────────────────────── */
-  --primary:               oklch(0.66 0.22 42);
+  /* ── Primary: warm orange (accent on dark) ───────────────────────────── */
+  --primary:               oklch(0.70 0.20  45);    /* #e8720c vibrant orange*/
   --primary-foreground:    oklch(0.99 0.005 60);
 
   /* ── Secondary / muted ────────────────────────────────────────────────── */
-  --secondary:             oklch(0.15 0.007 55);
-  --secondary-foreground:  oklch(0.96 0.006 60);
-  --muted:                 oklch(0.15 0.007 55);
-  --muted-foreground:      oklch(0.57 0.006 55);    /* warm gray              */
+  --secondary:             oklch(0.17 0.035 265);
+  --secondary-foreground:  oklch(0.96 0.006 265);
+  --muted:                 oklch(0.17 0.035 265);
+  --muted-foreground:      oklch(0.60 0.018 265);   /* medium navy-gray      */
 
-  /* ── Accent: deep warm orange tint ───────────────────────────────────── */
-  --accent:                oklch(0.15 0.040 50);
-  --accent-foreground:     oklch(0.96 0.006 60);
+  /* ── Accent: orange tint ─────────────────────────────────────────────── */
+  --accent:                oklch(0.17 0.045 50);
+  --accent-foreground:     oklch(0.96 0.006 265);
 
   /* ── States ───────────────────────────────────────────────────────────── */
   --destructive:           oklch(0.62 0.23  25);
@@ -84,118 +87,150 @@
   --warning:               oklch(0.78 0.16  75);
 
   /* ── Borders / inputs ─────────────────────────────────────────────────── */
-  --border:                oklch(0.19 0.006 55);    /* #252220 warm subtle    */
-  --input:                 oklch(0.14 0.007 55);
-  --ring:                  oklch(0.66 0.22  42);
+  --border:                oklch(0.22 0.030 265);   /* subtle navy border    */
+  --input:                 oklch(0.16 0.035 265);
+  --ring:                  oklch(0.70 0.20  45);
 
-  /* ── Sidebar: slightly darker/warmer than background ────────────────── */
-  --sidebar:               oklch(0.06 0.008 55);    /* #0a0806 deepest warm   */
-  --sidebar-foreground:    oklch(0.96 0.006 60);
-  --sidebar-primary:       oklch(0.66 0.22  42);
+  /* ── Sidebar: same deep navy family ─────────────────────────────────── */
+  --sidebar:               oklch(0.08 0.042 265);   /* darkest navy          */
+  --sidebar-foreground:    oklch(0.96 0.006 265);
+  --sidebar-primary:       oklch(0.70 0.20  45);
   --sidebar-primary-foreground: oklch(0.99 0.005 60);
-  --sidebar-accent:        oklch(0.11 0.008 55);
-  --sidebar-accent-foreground: oklch(0.96 0.006 60);
-  --sidebar-border:        oklch(0.13 0.007 55);
-  --sidebar-ring:          oklch(0.66 0.22  42);
+  --sidebar-accent:        oklch(0.13 0.038 265);
+  --sidebar-accent-foreground: oklch(0.96 0.006 265);
+  --sidebar-border:        oklch(0.15 0.035 265);
+  --sidebar-ring:          oklch(0.70 0.20  45);
 
   /* ── Gradients & shadows ──────────────────────────────────────────────── */
-  --gradient-primary: linear-gradient(135deg, oklch(0.66 0.22 42), oklch(0.76 0.18 62));
+  --gradient-primary: linear-gradient(135deg, oklch(0.70 0.20 45), oklch(0.78 0.17 62));
   --gradient-mesh:
-    radial-gradient(at 10% 10%, oklch(0.66 0.22 42 / 0.15) 0, transparent 55%),
-    radial-gradient(at 85% 15%, oklch(0.60 0.22 38 / 0.10) 0, transparent 50%),
-    radial-gradient(at 50% 95%, oklch(0.66 0.22 42 / 0.07) 0, transparent 50%);
-  --shadow-glow:   0 0 32px oklch(0.66 0.22 42 / 0.32);
-  --shadow-card:   0 4px 28px oklch(0.02 0.008 55  / 0.70);
-  --shadow-orange: 0 0 0 1px oklch(0.66 0.22 42 / 0.28), 0 4px 20px oklch(0.66 0.22 42 / 0.20);
+    radial-gradient(at 15% 10%, oklch(0.70 0.20 45 / 0.18) 0, transparent 55%),
+    radial-gradient(at 85% 20%, oklch(0.62 0.22 40 / 0.10) 0, transparent 50%),
+    radial-gradient(at 50% 95%, oklch(0.55 0.18 265 / 0.15) 0, transparent 50%);
+  --shadow-glow:   0 0 32px oklch(0.70 0.20 45 / 0.30);
+  --shadow-card:   0 4px 28px oklch(0.03 0.04 265 / 0.70);
+  --shadow-orange: 0 0 0 1px oklch(0.70 0.20 45 / 0.28), 0 4px 20px oklch(0.70 0.20 45 / 0.20);
 }
 
 html.dark { color-scheme: dark; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LIGHT THEME — Warm white + orange accent
+   LIGHT THEME — Sarvam's exact aesthetic:
+   Soft lavender background + warm orange hero glow + dark navy primary
    ═══════════════════════════════════════════════════════════════════════════ */
 html.light {
   color-scheme: light;
 
-  --background:            oklch(0.98 0.003 60);    /* warm white            */
-  --foreground:            oklch(0.12 0.020 260);
-  --surface-2:             oklch(0.94 0.008 60);
-  --surface-3:             oklch(0.89 0.012 60);
-  --card:                  oklch(1.00 0.000  0);
-  --card-foreground:       oklch(0.12 0.020 260);
-  --popover:               oklch(1.00 0.000  0);
-  --popover-foreground:    oklch(0.12 0.020 260);
-  --primary:               oklch(0.62 0.20  47);
-  --primary-foreground:    oklch(0.99 0.005 250);
-  --secondary:             oklch(0.91 0.010 60);
-  --secondary-foreground:  oklch(0.12 0.020 260);
-  --muted:                 oklch(0.92 0.010 60);
-  --muted-foreground:      oklch(0.44 0.020 260);
-  --accent:                oklch(0.93 0.040 60);
-  --accent-foreground:     oklch(0.12 0.020 260);
+  /* ── Backgrounds: very light lavender (from screenshot) ──────────────── */
+  --background:            oklch(0.94 0.018 270);   /* #e9eaf5 lavender      */
+  --foreground:            oklch(0.10 0.045 265);   /* #0c0d1e dark navy     */
+  --surface-2:             oklch(0.91 0.016 270);   /* slightly deeper       */
+  --surface-3:             oklch(0.87 0.018 270);
+
+  /* ── Cards: near-white with slight lavender ──────────────────────────── */
+  --card:                  oklch(0.98 0.006 270);
+  --card-foreground:       oklch(0.10 0.045 265);
+  --popover:               oklch(0.99 0.004 270);
+  --popover-foreground:    oklch(0.10 0.045 265);
+
+  /* ── Primary: dark navy pill buttons (exactly like Sarvam Log in btn) ── */
+  --primary:               oklch(0.15 0.055 265);   /* #10112a dark navy     */
+  --primary-foreground:    oklch(0.98 0.004 270);
+
+  /* ── Secondary / muted ────────────────────────────────────────────────── */
+  --secondary:             oklch(0.88 0.018 270);
+  --secondary-foreground:  oklch(0.10 0.045 265);
+  --muted:                 oklch(0.90 0.016 270);
+  --muted-foreground:      oklch(0.44 0.030 265);   /* medium navy-gray      */
+
+  /* ── Accent: light lavender tint ─────────────────────────────────────── */
+  --accent:                oklch(0.88 0.030 270);
+  --accent-foreground:     oklch(0.10 0.045 265);
+
+  /* ── States ───────────────────────────────────────────────────────────── */
   --destructive:           oklch(0.54 0.23  25);
-  --destructive-foreground: oklch(0.99 0.005 250);
+  --destructive-foreground: oklch(0.99 0.005 60);
   --success:               oklch(0.48 0.16 160);
   --warning:               oklch(0.54 0.16  75);
-  --border:                oklch(0.86 0.012 60);
-  --input:                 oklch(0.89 0.010 60);
-  --ring:                  oklch(0.62 0.20  47);
-  --sidebar:               oklch(0.96 0.006 60);
-  --sidebar-foreground:    oklch(0.12 0.020 260);
-  --sidebar-primary:       oklch(0.62 0.20  47);
-  --sidebar-primary-foreground: oklch(0.99 0.005 250);
-  --sidebar-accent:        oklch(0.91 0.010 60);
-  --sidebar-accent-foreground: oklch(0.12 0.020 260);
-  --sidebar-border:        oklch(0.88 0.012 60);
-  --sidebar-ring:          oklch(0.62 0.20  47);
-  --gradient-primary:      linear-gradient(135deg, oklch(0.62 0.20 47), oklch(0.69 0.18 65));
+
+  /* ── Borders / inputs ─────────────────────────────────────────────────── */
+  --border:                oklch(0.84 0.018 270);   /* lavender border       */
+  --input:                 oklch(0.90 0.014 270);
+  --ring:                  oklch(0.15 0.055 265);
+
+  /* ── Sidebar: slightly lighter lavender ──────────────────────────────── */
+  --sidebar:               oklch(0.96 0.014 270);
+  --sidebar-foreground:    oklch(0.10 0.045 265);
+  --sidebar-primary:       oklch(0.15 0.055 265);
+  --sidebar-primary-foreground: oklch(0.98 0.004 270);
+  --sidebar-accent:        oklch(0.91 0.016 270);
+  --sidebar-accent-foreground: oklch(0.10 0.045 265);
+  --sidebar-border:        oklch(0.87 0.018 270);
+  --sidebar-ring:          oklch(0.15 0.055 265);
+
+  /* ── Gradients: orange glow (Sarvam hero gradient) ───────────────────── */
+  --gradient-primary: linear-gradient(135deg, oklch(0.15 0.055 265), oklch(0.22 0.060 265));
   --gradient-mesh:
-    radial-gradient(at 20% 20%, oklch(0.62 0.20 47 / 0.10) 0, transparent 50%),
-    radial-gradient(at 80% 30%, oklch(0.65 0.19 40 / 0.07) 0, transparent 50%),
-    radial-gradient(at 50% 90%, oklch(0.62 0.20 47 / 0.06) 0, transparent 50%);
-  --shadow-glow:   0 0 28px oklch(0.62 0.20 47 / 0.18);
-  --shadow-card:   0 4px 24px oklch(0.14 0.03 260 / 0.07);
-  --shadow-orange: 0 0 0 1px oklch(0.62 0.20 47 / 0.20), 0 4px 16px oklch(0.62 0.20 47 / 0.10);
+    radial-gradient(at 50% 0%,   oklch(0.80 0.14 50 / 0.55) 0, transparent 60%),
+    radial-gradient(at 20% 100%, oklch(0.65 0.14 280 / 0.20) 0, transparent 50%),
+    radial-gradient(at 80% 80%,  oklch(0.75 0.10 270 / 0.15) 0, transparent 50%);
+  --shadow-glow:   0 0 32px oklch(0.15 0.055 265 / 0.20);
+  --shadow-card:   0 2px 16px oklch(0.10 0.04 265 / 0.08);
+  --shadow-orange: 0 0 0 1px oklch(0.15 0.055 265 / 0.15), 0 4px 16px oklch(0.15 0.055 265 / 0.10);
 }
 
+/* Light-mode glass override */
 html.light .glass {
-  background: oklch(0.99 0.003 60 / 0.85);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid oklch(0.82 0.015 60 / 0.5);
+  background: oklch(0.97 0.006 270 / 0.80);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(0.82 0.020 270 / 0.60);
 }
 
+/* Light-mode dot grid — very faint navy dots */
+html.light .dot-grid {
+  background-image: radial-gradient(circle, oklch(0.45 0.030 265 / 0.18) 1px, transparent 1px);
+}
+
+/* Light-mode shimmer */
 html.light .shimmer {
   background: linear-gradient(90deg,
-    oklch(0.89 0.010 60) 0%,
-    oklch(0.93 0.008 60) 50%,
-    oklch(0.89 0.010 60) 100%
+    oklch(0.88 0.018 270) 0%,
+    oklch(0.93 0.014 270) 50%,
+    oklch(0.88 0.018 270) 100%
   );
   background-size: 800px 100%;
 }
 
-html.light ::selection { background: oklch(0.62 0.20 47 / 0.22); }
-
-html.light .dot-grid {
-  background-image: radial-gradient(circle, oklch(0.60 0.010 260 / 0.25) 1px, transparent 1px);
-}
+html.light ::selection { background: oklch(0.70 0.20 45 / 0.25); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE LAYER
+   BASE — apply heading font to all h1/h2/h3
    ═══════════════════════════════════════════════════════════════════════════ */
 @layer base {
   html, body { background-color: var(--color-background); color: var(--color-foreground); }
   * { border-color: var(--color-border); }
   body { font-family: var(--font-sans); font-feature-settings: "cv02","cv03","cv04"; }
-  ::selection { background: oklch(0.73 0.19 47 / 0.35); }
+
+  /* Lora for all major headings */
+  h1, h2 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.01em;
+  }
+  h3 { font-family: var(--font-sans); font-weight: 600; }
+
+  ::selection { background: oklch(0.70 0.20 45 / 0.35); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   UTILITY CLASSES
+   UTILITIES
    ═══════════════════════════════════════════════════════════════════════════ */
 @layer utilities {
 
-  /* Gradient text — orange */
+  /* Heading font shortcut */
+  .font-heading { font-family: var(--font-heading); }
+
+  /* Gradient text */
   .text-gradient {
     background: var(--gradient-primary);
     -webkit-background-clip: text;
@@ -203,13 +238,21 @@ html.light .dot-grid {
     color: transparent;
   }
 
-  /* Filled backgrounds */
+  /* Warm orange gradient text (for hero highlights on both themes) */
+  .text-gradient-warm {
+    background: linear-gradient(135deg, oklch(0.70 0.20 45), oklch(0.78 0.17 62));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Backgrounds */
   .bg-gradient-primary { background-image: var(--gradient-primary); }
   .bg-mesh             { background-image: var(--gradient-mesh);    }
 
-  /* Subtle dot-grid pattern (Sarvam-style background texture) */
+  /* Dot-grid (Sarvam-style background texture) */
   .dot-grid {
-    background-image: radial-gradient(circle, oklch(0.42 0.006 55 / 0.55) 1px, transparent 1px);
+    background-image: radial-gradient(circle, oklch(0.50 0.025 265 / 0.40) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 
@@ -218,18 +261,17 @@ html.light .dot-grid {
   .shadow-card   { box-shadow: var(--shadow-card);   }
   .shadow-orange { box-shadow: var(--shadow-orange); }
 
-  /* Glassmorphism */
+  /* Glassmorphism — dark */
   .glass {
-    background: oklch(0.12 0.008 55 / 0.65);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid oklch(0.35 0.008 55 / 0.30);
+    background: oklch(0.14 0.038 265 / 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid oklch(0.35 0.025 265 / 0.30);
   }
 
-  /* Monospace */
   .font-mono { font-family: var(--font-mono); }
 
-  /* Gradient border (1px) */
+  /* 1-px gradient border */
   .gradient-border { position: relative; }
   .gradient-border::before {
     content: "";
@@ -244,14 +286,14 @@ html.light .dot-grid {
     pointer-events: none;
   }
 
-  /* Top-edge accent bar (used on hover cards) */
+  /* Hover top-edge accent */
+  .card-top-accent { position: relative; overflow: hidden; }
   .card-top-accent::before {
     content: "";
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 2px;
     background: var(--gradient-primary);
-    border-radius: inherit;
     opacity: 0;
     transition: opacity 0.2s ease;
   }
@@ -259,7 +301,7 @@ html.light .dot-grid {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   KEYFRAME ANIMATIONS
+   KEYFRAMES
    ═══════════════════════════════════════════════════════════════════════════ */
 @keyframes pulse-ring {
   0%   { box-shadow: 0 0 0 0   oklch(0.70 0.16 160 / 0.7); }
@@ -286,16 +328,16 @@ html.light .dot-grid {
 }
 .shimmer {
   background: linear-gradient(90deg,
-    oklch(0.13 0.007 55) 0%,
-    oklch(0.19 0.008 55) 50%,
-    oklch(0.13 0.007 55) 100%
+    oklch(0.16 0.035 265) 0%,
+    oklch(0.22 0.030 265) 50%,
+    oklch(0.16 0.035 265) 100%
   );
   background-size: 800px 100%;
   animation: shimmer 1.5s infinite;
 }
 
 @keyframes float-glow {
-  0%, 100% { box-shadow: 0 0 24px oklch(0.73 0.19 47 / 0.20); }
-  50%       { box-shadow: 0 0 40px oklch(0.73 0.19 47 / 0.40); }
+  0%, 100% { box-shadow: 0 0 24px oklch(0.70 0.20 45 / 0.22); }
+  50%       { box-shadow: 0 0 40px oklch(0.70 0.20 45 / 0.42); }
 }
 .float-glow { animation: float-glow 3s ease-in-out infinite; }

@@ -45,8 +45,8 @@ export function AuthLayout({
               <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
               Trusted by 200+ Sales Teams
             </div>
-            <h2 className="text-5xl font-bold leading-tight tracking-tight">
-              <span className="text-gradient">Voice</span>
+            <h2 className="text-5xl font-heading font-semibold leading-tight">
+              <span className="text-gradient-warm">Voice</span>
               <br />
               <span className="text-foreground">that converts.</span>
             </h2>

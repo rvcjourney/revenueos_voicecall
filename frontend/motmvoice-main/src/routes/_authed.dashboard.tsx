@@ -33,8 +33,8 @@ function Dashboard() {
   const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
 
   // Chart colours that adapt to theme
-  const axisColor  = theme === "dark" ? "oklch(0.52 0.006 55)"  : "oklch(0.44 0.020 265)";
-  const gridColor  = theme === "dark" ? "oklch(0.17 0.006 55)"  : "oklch(0.86 0.012 60)";
+  const axisColor  = theme === "dark" ? "oklch(0.52 0.020 265)" : "oklch(0.44 0.030 265)";
+  const gridColor  = theme === "dark" ? "oklch(0.20 0.030 265)" : "oklch(0.84 0.018 270)";
 
   const tooltipStyle: React.CSSProperties = {
     background:   "var(--card)",
@@ -73,8 +73,8 @@ function Dashboard() {
               <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
               Live Dashboard
             </div>
-            <h1 className="text-[28px] font-bold leading-tight tracking-tight">
-              <span className="text-gradient">Welcome back,</span>{" "}
+            <h1 className="text-[28px] font-heading font-semibold leading-tight">
+              <span className="text-gradient-warm">Welcome back,</span>{" "}
               <span className="text-foreground">{user?.full_name?.split(" ")[0] ?? "there"} 👋</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-1.5">

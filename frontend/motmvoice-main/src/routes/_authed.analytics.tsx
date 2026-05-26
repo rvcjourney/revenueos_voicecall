@@ -40,8 +40,8 @@ function Analytics() {
   const [activeOutcomeIdx, setActiveOutcomeIdx] = useState<number | null>(null);
 
   // Chart colours that adapt to theme
-  const axisColor = theme === "dark" ? "oklch(0.52 0.006 55)"  : "oklch(0.44 0.04 265)";
-  const gridColor = theme === "dark" ? "oklch(0.17 0.006 55)"  : "oklch(0.83 0.02 265)";
+  const axisColor = theme === "dark" ? "oklch(0.52 0.020 265)" : "oklch(0.44 0.030 265)";
+  const gridColor = theme === "dark" ? "oklch(0.20 0.030 265)" : "oklch(0.84 0.018 270)";
 
   // Tooltip style uses CSS variables → follows theme automatically
   const tooltipStyle: React.CSSProperties = {
