@@ -5,10 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
 import { Progress } from "@/components/ui/progress";
-import { useTheme } from "@/lib/theme";
 import {
-  User, Users, CreditCard, Key, Phone, Bell, Palette,
-  Plus, Copy, Check, Moon, Sun,
+  User, Users, CreditCard, Key, Phone, Bell,
+  Plus, Copy, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,14 +24,12 @@ const TABS = [
   { id: "api",        label: "API Keys",      icon: Key        },
   { id: "phone",      label: "Phone Numbers", icon: Phone      },
   { id: "notif",      label: "Notifications", icon: Bell       },
-  { id: "appearance", label: "Appearance",    icon: Palette    },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 function SettingsPage() {
   const { user }          = useAuth();
-  const { theme, setTheme } = useTheme();
   const [active, setActive] = useState<TabId>("profile");
   const [copied, setCopied] = useState(false);
 
@@ -255,101 +252,6 @@ function SettingsPage() {
             </Panel>
           )}
 
-          {/* Appearance ───────────────────────────────────────────────────── */}
-          {active === "appearance" && (
-            <Panel title="Appearance" subtitle="Personalise how MOTMVoice looks for you">
-              <div className="space-y-6 max-w-md">
-                <div>
-                  <Label className="text-sm font-medium mb-3 block">Theme</Label>
-                  <div className="grid grid-cols-2 gap-4">
-
-                    {/* Dark mode card */}
-                    <button
-                      type="button"
-                      onClick={() => { setTheme("dark"); toast.success("Dark mode enabled"); }}
-                      className={`relative rounded-xl border-2 p-3 text-left transition-all ${
-                        theme === "dark"
-                          ? "border-primary shadow-glow bg-primary/5"
-                          : "border-border hover:border-primary/40 bg-card"
-                      }`}
-                    >
-                      {/* Mini dark UI preview */}
-                      <div className="h-24 rounded-lg overflow-hidden mb-3 bg-[oklch(0.16_0.03_265)]">
-                        <div className="flex h-full">
-                          <div className="w-10 bg-[oklch(0.18_0.03_265)] h-full flex flex-col gap-1.5 px-1.5 pt-2">
-                            {[60, 80, 60, 70].map((w, i) => (
-                              <div key={i} className="h-1.5 rounded-full bg-[oklch(0.32_0.04_265)]" style={{ width: `${w}%` }} />
-                            ))}
-                          </div>
-                          <div className="flex-1 p-2 space-y-1.5">
-                            <div className="h-2 bg-[oklch(0.32_0.04_265)] rounded w-4/5" />
-                            <div className="h-2 bg-[oklch(0.26_0.04_265)] rounded w-3/5" />
-                            <div className="h-5 mt-1 bg-[oklch(0.62_0.21_280)/0.3] rounded-md w-full" />
-                            <div className="h-2 bg-[oklch(0.26_0.04_265)] rounded w-4/5" />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Moon className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-sm font-medium">Dark</span>
-                        </div>
-                        {theme === "dark" && (
-                          <span className="h-4 w-4 rounded-full bg-primary grid place-items-center">
-                            <Check className="h-2.5 w-2.5 text-white" />
-                          </span>
-                        )}
-                      </div>
-                    </button>
-
-                    {/* Light mode card */}
-                    <button
-                      type="button"
-                      onClick={() => { setTheme("light"); toast.success("Light mode enabled"); }}
-                      className={`relative rounded-xl border-2 p-3 text-left transition-all ${
-                        theme === "light"
-                          ? "border-primary shadow-glow bg-primary/5"
-                          : "border-border hover:border-primary/40 bg-card"
-                      }`}
-                    >
-                      {/* Mini light UI preview */}
-                      <div className="h-24 rounded-lg overflow-hidden mb-3 bg-[oklch(0.97_0.005_250)]">
-                        <div className="flex h-full">
-                          <div className="w-10 bg-[oklch(0.95_0.01_250)] h-full flex flex-col gap-1.5 px-1.5 pt-2 border-r border-black/5">
-                            {[60, 80, 60, 70].map((w, i) => (
-                              <div key={i} className="h-1.5 rounded-full bg-[oklch(0.83_0.02_265)]" style={{ width: `${w}%` }} />
-                            ))}
-                          </div>
-                          <div className="flex-1 p-2 space-y-1.5">
-                            <div className="h-2 bg-[oklch(0.83_0.02_265)] rounded w-4/5" />
-                            <div className="h-2 bg-[oklch(0.90_0.01_265)] rounded w-3/5" />
-                            <div className="h-5 mt-1 bg-[oklch(0.54_0.21_280)/0.15] rounded-md w-full" />
-                            <div className="h-2 bg-[oklch(0.90_0.01_265)] rounded w-4/5" />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sun className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-sm font-medium">Light</span>
-                        </div>
-                        {theme === "light" && (
-                          <span className="h-4 w-4 rounded-full bg-primary grid place-items-center">
-                            <Check className="h-2.5 w-2.5 text-white" />
-                          </span>
-                        )}
-                      </div>
-                    </button>
-
-                  </div>
-                </div>
-
-                <div className="rounded-xl bg-surface-2/60 border border-border p-4 text-sm text-muted-foreground">
-                  Your theme preference is saved automatically and will persist across sessions.
-                </div>
-              </div>
-            </Panel>
-          )}
 
         </div>
       </div>

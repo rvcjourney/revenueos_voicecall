@@ -17,8 +17,7 @@ import { AuthProvider } from "@/lib/auth";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider, useTheme } from "@/lib/theme";
 
-// Runs before React hydrates → prevents light/dark flash on page load
-const NO_FLASH_SCRIPT = `(function(){try{var t=localStorage.getItem('motm_theme')||'dark';document.documentElement.classList.remove('dark','light');document.documentElement.classList.add(t);}catch(e){}})();`;
+// Single fixed theme — no flash script needed.
 
 function NotFoundComponent() {
   return (
@@ -110,12 +109,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
-    // "dark" class is the SSR default; NO_FLASH_SCRIPT overrides it client-side
-    // before first paint so there is no theme flash on load.
     <html lang="en" className="dark">
       <head>
-        {/* ① No-flash script — must be first in <head> */}
-        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
         <HeadContent />
         <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} />
         <script
