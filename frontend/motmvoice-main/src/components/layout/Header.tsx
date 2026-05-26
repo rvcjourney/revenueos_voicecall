@@ -22,13 +22,7 @@ export function Header() {
 
   return (
     <header
-      className="sticky top-0 z-40 h-14 flex items-center px-6 gap-4 animate-fade-up"
-      style={{
-        background:          "var(--header-bg)",
-        backdropFilter:      "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
-        borderBottom:        "1px solid var(--border)",
-      }}
+      className="sticky top-0 z-40 h-14 flex items-center px-6 gap-4 animate-fade-up bg-card border-b border-border"
     >
 
       {/* ── Breadcrumb ────────────────────────────────────────────────────── */}
