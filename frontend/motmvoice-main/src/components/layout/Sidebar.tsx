@@ -72,7 +72,7 @@ function NavLink({
       {/* Hover text colour shift */}
       {!active && (
         <style>{`
-          [href="${to}"]:hover span { color: oklch(0.950 0.008 280); }
+          [href="${to}"]:hover span { color: var(--foreground); }
         `}</style>
       )}
     </Link>
@@ -149,7 +149,7 @@ export function Sidebar() {
 
         {/* MENU */}
         <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
-          style={{ color: "oklch(0.40 0.010 270)" }}>
+          style={{ color: "var(--muted-foreground)" }}>
           Menu
         </p>
         <div className="space-y-0.5">
@@ -163,7 +163,7 @@ export function Sidebar() {
 
         {/* ACCOUNT */}
         <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
-          style={{ color: "oklch(0.40 0.010 270)" }}>
+          style={{ color: "var(--muted-foreground)" }}>
           Account
         </p>
         <div className="space-y-0.5">

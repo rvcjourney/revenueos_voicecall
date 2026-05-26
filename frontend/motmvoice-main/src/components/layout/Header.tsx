@@ -24,10 +24,10 @@ export function Header() {
     <header
       className="sticky top-0 z-40 h-14 flex items-center px-6 gap-4 animate-fade-up"
       style={{
-        background: "oklch(0.065 0.008 270 / 0.85)",
-        backdropFilter: "blur(20px)",
+        background:          "var(--header-bg)",
+        backdropFilter:      "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
-        borderBottom: "1px solid oklch(0.165 0.015 270 / 0.70)",
+        borderBottom:        "1px solid var(--border)",
       }}
     >
 
@@ -38,21 +38,12 @@ export function Header() {
           return (
             <span key={i} className="flex items-center gap-1 min-w-0">
               {i > 0 && (
-                <ChevronRight
-                  className="h-3.5 w-3.5 shrink-0"
-                  style={{ color: "oklch(0.35 0.010 270)" }}
-                />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
               )}
               <span
-                className="truncate font-medium transition-colors duration-150"
-                style={{
-                  color: isLast
-                    ? "oklch(0.950 0.008 280)"
-                    : "oklch(0.50 0.012 270)",
-                  ...(isLast && {
-                    filter: "drop-shadow(0 0 8px oklch(0.565 0.240 284 / 0.30))",
-                  }),
-                }}
+                className={`truncate font-medium transition-colors duration-150 ${
+                  isLast ? "text-foreground" : "text-muted-foreground"
+                }`}
               >
                 {prettify(s)}
               </span>
@@ -63,25 +54,21 @@ export function Header() {
 
       {/* ── Search ────────────────────────────────────────────────────────── */}
       <div className="flex-1 max-w-xs mx-auto relative hidden sm:block">
-        <Search
-          className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none"
-          style={{ color: "oklch(0.45 0.010 270)" }}
-        />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none text-muted-foreground/50" />
         <input
           placeholder="Search…"
           className="w-full pl-9 pr-3 h-8 rounded-lg text-sm transition-all duration-200 focus:outline-none"
           style={{
-            background: "oklch(0.105 0.012 270 / 0.80)",
-            border: "1px solid oklch(0.165 0.015 270)",
-            color: "oklch(0.950 0.008 280)",
-            /* focus state handled by CSS below */
+            background: "var(--input)",
+            border:     "1px solid var(--border)",
+            color:      "var(--foreground)",
           }}
           onFocus={(e) => {
-            e.currentTarget.style.border = "1px solid oklch(0.565 0.240 284 / 0.70)";
-            e.currentTarget.style.boxShadow = "0 0 0 3px oklch(0.565 0.240 284 / 0.15), 0 0 12px oklch(0.565 0.240 284 / 0.10)";
+            e.currentTarget.style.border    = "1px solid var(--ring)";
+            e.currentTarget.style.boxShadow = "0 0 0 3px color-mix(in oklch, var(--ring) 15%, transparent)";
           }}
           onBlur={(e) => {
-            e.currentTarget.style.border = "1px solid oklch(0.165 0.015 270)";
+            e.currentTarget.style.border    = "1px solid var(--border)";
             e.currentTarget.style.boxShadow = "none";
           }}
         />
@@ -92,22 +79,12 @@ export function Header() {
 
         {/* Notification bell */}
         <button
-          className="relative h-8 w-8 grid place-items-center rounded-lg transition-all duration-150"
-          style={{ color: "oklch(0.50 0.012 270)" }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "oklch(0.130 0.013 270)";
-            e.currentTarget.style.color = "oklch(0.950 0.008 280)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "oklch(0.50 0.012 270)";
-          }}
+          className="relative h-8 w-8 grid place-items-center rounded-lg transition-all duration-150 text-muted-foreground hover:text-foreground hover:bg-accent"
         >
           <Bell className="h-4 w-4" />
-          {/* Animated pulse dot */}
           <span
             className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full pulse-dot"
-            style={{ background: "oklch(0.565 0.240 284)", boxShadow: "0 0 6px oklch(0.565 0.240 284)" }}
+            style={{ background: "var(--primary)", boxShadow: "0 0 6px var(--primary)" }}
           />
         </button>
 
@@ -115,12 +92,11 @@ export function Header() {
         <Link to="/campaigns/new">
           <Button
             size="sm"
-            className="h-8 gap-1.5 text-xs font-semibold px-3 transition-all duration-200"
+            className="h-8 gap-1.5 text-xs font-semibold px-3 transition-all duration-200 border-none"
             style={{
               backgroundImage: "var(--gradient-primary)",
-              color: "oklch(0.990 0.003 280)",
-              border: "none",
-              boxShadow: "0 4px 14px oklch(0.565 0.240 284 / 0.30)",
+              color:           "oklch(0.990 0.003 280)",
+              boxShadow:       "0 4px 14px oklch(0.565 0.240 284 / 0.30)",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.boxShadow = "0 6px 20px oklch(0.565 0.240 284 / 0.50)";

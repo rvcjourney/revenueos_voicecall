@@ -102,6 +102,9 @@
   --sidebar-border:    oklch(0.140 0.013 270);
   --sidebar-ring:      oklch(0.565 0.240 284);
 
+  /* ── Header (frosted glass — theme-specific) ─────────────────────────── */
+  --header-bg: oklch(0.065 0.008 270 / 0.90);
+
   /* ── Gradient tokens ──────────────────────────────────────────────────── */
   --gradient-primary:
     linear-gradient(135deg, oklch(0.565 0.240 284), oklch(0.545 0.220 252));
@@ -161,6 +164,8 @@ html.light {
   --sidebar-accent-foreground: oklch(0.100 0.020 270);
   --sidebar-border: oklch(0.880 0.014 275);
   --sidebar-ring: oklch(0.520 0.240 284);
+  --header-bg: oklch(0.985 0.004 280 / 0.92);
+
   --gradient-primary:
     linear-gradient(135deg, oklch(0.520 0.240 284), oklch(0.500 0.220 252));
   --gradient-accent:
@@ -244,8 +249,8 @@ html.light ::selection { background: oklch(0.565 0.240 284 / 0.20); }
 
   /* ── Glow text ────────────────────────────────────────────────────────── */
   .glow-text {
-    color: oklch(0.80 0.18 284);
-    text-shadow: 0 0 20px oklch(0.565 0.240 284 / 0.50);
+    color: var(--primary);
+    text-shadow: 0 0 20px oklch(0.565 0.240 284 / 0.40);
   }
 
   /* ── Filled backgrounds ───────────────────────────────────────────────── */
