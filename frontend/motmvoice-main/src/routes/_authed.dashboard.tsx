@@ -33,8 +33,8 @@ function Dashboard() {
   const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
 
   // Chart colours that adapt to theme
-  const axisColor  = theme === "dark" ? "oklch(0.52 0.020 265)" : "oklch(0.44 0.030 265)";
-  const gridColor  = theme === "dark" ? "oklch(0.20 0.030 265)" : "oklch(0.84 0.018 270)";
+  const axisColor  = theme === "dark" ? "oklch(0.45 0.012 270)" : "oklch(0.44 0.018 270)";
+  const gridColor  = theme === "dark" ? "oklch(0.16 0.012 270)" : "oklch(0.87 0.010 275)";
 
   const tooltipStyle: React.CSSProperties = {
     background:   "var(--card)",
@@ -74,7 +74,7 @@ function Dashboard() {
               Live Dashboard
             </div>
             <h1 className="text-[28px] font-heading font-semibold leading-tight">
-              <span className="text-gradient-warm">Welcome back,</span>{" "}
+              <span className="text-gradient">Welcome back,</span>{" "}
               <span className="text-foreground">{user?.full_name?.split(" ")[0] ?? "there"} 👋</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-1.5">
@@ -138,16 +138,16 @@ function Dashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={stats?.calls_last_7_days ?? []}>
                 <defs>
-                  <linearGradient id="orangeGrad" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%"   stopColor="oklch(0.66 0.22 42)" />
-                    <stop offset="100%" stopColor="oklch(0.76 0.18 62)" />
+                  <linearGradient id="primaryGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%"   stopColor="oklch(0.565 0.240 284)" />
+                    <stop offset="100%" stopColor="oklch(0.545 0.220 252)" />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                 <XAxis dataKey="day"  stroke={axisColor} fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis              stroke={axisColor} fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ stroke: "var(--border)", strokeWidth: 1 }} />
-                <Line type="monotone" dataKey="calls"      name="Total Calls" stroke="url(#orangeGrad)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.66 0.22 42)" }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="calls"      name="Total Calls" stroke="url(#primaryGrad)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.565 0.240 284)" }} activeDot={{ r: 5 }} />
                 <Line type="monotone" dataKey="interested" name="Interested"  stroke="oklch(0.70 0.16 160)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.70 0.16 160)" }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>

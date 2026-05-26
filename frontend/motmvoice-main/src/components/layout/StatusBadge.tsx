@@ -1,52 +1,177 @@
-export type CampaignStatus = "running" | "active" | "paused" | "completed" | "draft" | "scheduled" | "failed";
-export type CallOutcome = "interested" | "completed" | "not_interested" | "no_answer" | "failed" | "in_progress" | "pending";
+export type CampaignStatus =
+  | "running" | "active" | "paused" | "completed"
+  | "draft"   | "scheduled" | "failed";
 
-const outcomeStyles: Record<string, string> = {
-  interested: "bg-success/15 text-success border-success/30",
-  completed: "bg-primary/15 text-primary border-primary/30",
-  not_interested: "bg-muted text-muted-foreground border-border",
-  no_answer: "bg-surface-3 text-muted-foreground border-border",
-  failed: "bg-destructive/15 text-destructive border-destructive/30",
-  in_progress: "bg-warning/15 text-warning border-warning/30",
-  pending: "bg-surface-3 text-muted-foreground border-border",
+export type CallOutcome =
+  | "interested" | "completed" | "not_interested"
+  | "no_answer"  | "failed"    | "in_progress" | "pending";
+
+// ── Badge tokens ─────────────────────────────────────────────────────────────
+// Each status gets: bg, text, border, glowColor, and optional dotColor
+type BadgeToken = {
+  bg:     string;   // semi-transparent background
+  text:   string;   // text colour
+  border: string;   // border colour
+  glow?:  string;   // box-shadow glow (optional)
+  dot?:   string;   // indicator dot colour (optional)
+  pulse?: boolean;  // animate the dot?
 };
+
+const outcomeTokens: Record<string, BadgeToken> = {
+  interested: {
+    bg:     "oklch(0.70 0.16 160 / 0.12)",
+    text:   "oklch(0.75 0.14 160)",
+    border: "oklch(0.70 0.16 160 / 0.30)",
+    glow:   "0 0 10px oklch(0.70 0.16 160 / 0.20)",
+    dot:    "oklch(0.70 0.16 160)",
+  },
+  completed: {
+    bg:     "oklch(0.565 0.240 284 / 0.12)",
+    text:   "oklch(0.75 0.14 284)",
+    border: "oklch(0.565 0.240 284 / 0.30)",
+    glow:   "0 0 10px oklch(0.565 0.240 284 / 0.18)",
+  },
+  not_interested: {
+    bg:     "oklch(0.145 0.015 270 / 0.80)",
+    text:   "oklch(0.55 0.010 270)",
+    border: "oklch(0.22 0.012 270 / 0.60)",
+  },
+  no_answer: {
+    bg:     "oklch(0.130 0.013 270 / 0.80)",
+    text:   "oklch(0.50 0.010 270)",
+    border: "oklch(0.20 0.012 270 / 0.50)",
+  },
+  failed: {
+    bg:     "oklch(0.62 0.23 25 / 0.12)",
+    text:   "oklch(0.72 0.18 25)",
+    border: "oklch(0.62 0.23 25 / 0.30)",
+    glow:   "0 0 8px oklch(0.62 0.23 25 / 0.18)",
+  },
+  in_progress: {
+    bg:     "oklch(0.78 0.16 75 / 0.12)",
+    text:   "oklch(0.82 0.13 75)",
+    border: "oklch(0.78 0.16 75 / 0.30)",
+    dot:    "oklch(0.78 0.16 75)",
+    pulse:  true,
+  },
+  pending: {
+    bg:     "oklch(0.130 0.013 270 / 0.80)",
+    text:   "oklch(0.50 0.010 270)",
+    border: "oklch(0.20 0.012 270 / 0.50)",
+  },
+};
+
 const outcomeLabel: Record<string, string> = {
-  interested: "Interested",
-  completed: "Completed",
+  interested:     "Interested",
+  completed:      "Completed",
   not_interested: "Not Interested",
-  no_answer: "No Answer",
-  failed: "Failed",
-  in_progress: "In Progress",
-  pending: "Pending",
+  no_answer:      "No Answer",
+  failed:         "Failed",
+  in_progress:    "In Progress",
+  pending:        "Pending",
 };
 
+// ── Outcome Badge ─────────────────────────────────────────────────────────────
 export function OutcomeBadge({ outcome }: { outcome: string }) {
-  const style = outcomeStyles[outcome] ?? "bg-surface-3 text-muted-foreground border-border";
+  const t     = outcomeTokens[outcome] ?? outcomeTokens.pending;
   const label = outcomeLabel[outcome] ?? outcome;
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium ${style}`}>
-      {outcome === "in_progress" && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all duration-150"
+      style={{
+        background:  t.bg,
+        color:       t.text,
+        border:      `1px solid ${t.border}`,
+        boxShadow:   t.glow,
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+    >
+      {t.dot && (
+        <span
+          className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.pulse ? "badge-shimmer" : ""}`}
+          style={{ background: t.dot, boxShadow: `0 0 4px ${t.dot}` }}
+        />
+      )}
       {label}
     </span>
   );
 }
 
-const campStyles: Record<string, string> = {
-  running: "bg-success/15 text-success border-success/30",
-  active: "bg-success/15 text-success border-success/30",
-  paused: "bg-warning/15 text-warning border-warning/30",
-  completed: "bg-primary/15 text-primary border-primary/30",
-  draft: "bg-muted text-muted-foreground border-border",
-  scheduled: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  failed: "bg-destructive/15 text-destructive border-destructive/30",
+// ── Campaign badge tokens ─────────────────────────────────────────────────────
+const campTokens: Record<string, BadgeToken> = {
+  running: {
+    bg:     "oklch(0.70 0.16 160 / 0.12)",
+    text:   "oklch(0.75 0.14 160)",
+    border: "oklch(0.70 0.16 160 / 0.28)",
+    glow:   "0 0 12px oklch(0.70 0.16 160 / 0.22)",
+    dot:    "oklch(0.70 0.16 160)",
+    pulse:  true,
+  },
+  active: {
+    bg:     "oklch(0.70 0.16 160 / 0.12)",
+    text:   "oklch(0.75 0.14 160)",
+    border: "oklch(0.70 0.16 160 / 0.28)",
+    glow:   "0 0 12px oklch(0.70 0.16 160 / 0.22)",
+    dot:    "oklch(0.70 0.16 160)",
+    pulse:  true,
+  },
+  paused: {
+    bg:     "oklch(0.78 0.16 75 / 0.12)",
+    text:   "oklch(0.82 0.13 75)",
+    border: "oklch(0.78 0.16 75 / 0.28)",
+    dot:    "oklch(0.78 0.16 75)",
+    pulse:  false,
+  },
+  completed: {
+    bg:     "oklch(0.565 0.240 284 / 0.12)",
+    text:   "oklch(0.75 0.14 284)",
+    border: "oklch(0.565 0.240 284 / 0.28)",
+    glow:   "0 0 8px oklch(0.565 0.240 284 / 0.15)",
+  },
+  draft: {
+    bg:     "oklch(0.130 0.013 270 / 0.80)",
+    text:   "oklch(0.50 0.010 270)",
+    border: "oklch(0.20 0.012 270 / 0.50)",
+  },
+  scheduled: {
+    bg:     "oklch(0.545 0.220 252 / 0.12)",
+    text:   "oklch(0.72 0.14 252)",
+    border: "oklch(0.545 0.220 252 / 0.28)",
+    glow:   "0 0 8px oklch(0.545 0.220 252 / 0.15)",
+    dot:    "oklch(0.72 0.14 252)",
+  },
+  failed: {
+    bg:     "oklch(0.62 0.23 25 / 0.12)",
+    text:   "oklch(0.72 0.18 25)",
+    border: "oklch(0.62 0.23 25 / 0.28)",
+    glow:   "0 0 8px oklch(0.62 0.23 25 / 0.18)",
+  },
 };
 
+// ── Campaign Badge ────────────────────────────────────────────────────────────
 export function CampaignBadge({ status }: { status: string }) {
-  const style = campStyles[status] ?? "bg-muted text-muted-foreground border-border";
-  const isLive = status === "running" || status === "active";
+  const t = campTokens[status] ?? campTokens.draft;
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium capitalize ${style}`}>
-      {isLive && <span className="h-1.5 w-1.5 rounded-full bg-success pulse-dot" />}
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize transition-all duration-150"
+      style={{
+        background:  t.bg,
+        color:       t.text,
+        border:      `1px solid ${t.border}`,
+        boxShadow:   t.glow,
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+    >
+      {t.dot && (
+        <span
+          className={`h-1.5 w-1.5 rounded-full shrink-0 ${t.pulse ? "pulse-dot" : ""}`}
+          style={{ background: t.dot, boxShadow: `0 0 5px ${t.dot}` }}
+        />
+      )}
       {status}
     </span>
   );
