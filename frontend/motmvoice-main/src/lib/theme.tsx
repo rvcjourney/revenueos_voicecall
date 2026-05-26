@@ -4,16 +4,18 @@ export type Theme = "dark" | "light";
 
 interface ThemeContextValue {
   theme: Theme;
+  setTheme: (t: Theme) => void;
   toggle: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: "dark",
+  setTheme: () => {},
   toggle: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
+  const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window === "undefined") return "dark";
     return (localStorage.getItem("motm_theme") as Theme) || "dark";
   });
@@ -25,10 +27,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("motm_theme", theme);
   }, [theme]);
 
-  const toggle = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const setTheme = (t: Theme) => setThemeState(t);
+  const toggle   = () => setThemeState((t) => (t === "dark" ? "light" : "dark"));
 
   return (
-    <ThemeContext.Provider value={{ theme, toggle }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggle }}>
       {children}
     </ThemeContext.Provider>
   );
