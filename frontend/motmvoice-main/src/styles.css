@@ -86,7 +86,70 @@
   --shadow-card: 0 4px 24px oklch(0.05 0.02 265 / 0.4);
 }
 
-.dark { color-scheme: dark; }
+/* ── Dark theme (default) ─────────────────────────────────────────────────── */
+html.dark { color-scheme: dark; }
+
+/* ── Light theme ──────────────────────────────────────────────────────────── */
+html.light {
+  color-scheme: light;
+  --background:            oklch(0.97 0.005 250);
+  --foreground:            oklch(0.14 0.03 265);
+  --surface-2:             oklch(0.93 0.01 255);
+  --surface-3:             oklch(0.88 0.015 255);
+  --card:                  oklch(1 0 0);
+  --card-foreground:       oklch(0.14 0.03 265);
+  --popover:               oklch(1 0 0);
+  --popover-foreground:    oklch(0.14 0.03 265);
+  --primary:               oklch(0.54 0.21 280);
+  --primary-foreground:    oklch(0.99 0.005 250);
+  --secondary:             oklch(0.91 0.015 255);
+  --secondary-foreground:  oklch(0.14 0.03 265);
+  --muted:                 oklch(0.92 0.015 255);
+  --muted-foreground:      oklch(0.44 0.04 265);
+  --accent:                oklch(0.89 0.04 280);
+  --accent-foreground:     oklch(0.14 0.03 265);
+  --destructive:           oklch(0.54 0.23 25);
+  --destructive-foreground: oklch(0.99 0.005 250);
+  --success:               oklch(0.48 0.16 160);
+  --warning:               oklch(0.54 0.16 75);
+  --border:                oklch(0.83 0.02 265);
+  --input:                 oklch(0.87 0.02 265);
+  --ring:                  oklch(0.54 0.21 280);
+  --sidebar:               oklch(0.95 0.01 250);
+  --sidebar-foreground:    oklch(0.14 0.03 265);
+  --sidebar-primary:       oklch(0.54 0.21 280);
+  --sidebar-primary-foreground: oklch(0.99 0.005 250);
+  --sidebar-accent:        oklch(0.90 0.015 255);
+  --sidebar-accent-foreground: oklch(0.14 0.03 265);
+  --sidebar-border:        oklch(0.86 0.02 265);
+  --sidebar-ring:          oklch(0.54 0.21 280);
+  --gradient-primary:      linear-gradient(135deg, oklch(0.54 0.21 280), oklch(0.57 0.2 305));
+  --gradient-mesh:
+    radial-gradient(at 20% 20%, oklch(0.54 0.21 280 / 0.12) 0, transparent 50%),
+    radial-gradient(at 80% 30%, oklch(0.57 0.2 305 / 0.10) 0, transparent 50%),
+    radial-gradient(at 50% 90%, oklch(0.50 0.15 260 / 0.08) 0, transparent 50%);
+  --shadow-glow:           0 0 28px oklch(0.54 0.21 280 / 0.18);
+  --shadow-card:           0 4px 24px oklch(0.14 0.03 265 / 0.07);
+}
+
+html.light .glass {
+  background: oklch(0.99 0.003 250 / 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid oklch(0.80 0.02 265 / 0.5);
+}
+
+html.light .shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.89 0.015 255) 0%,
+    oklch(0.93 0.01 255) 50%,
+    oklch(0.89 0.015 255) 100%
+  );
+  background-size: 800px 100%;
+}
+
+html.light ::selection { background: oklch(0.54 0.21 280 / 0.25); }
 
 @layer base {
   html, body { background-color: var(--color-background); color: var(--color-foreground); }

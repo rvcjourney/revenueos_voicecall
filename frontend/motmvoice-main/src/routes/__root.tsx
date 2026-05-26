@@ -15,6 +15,10 @@ const GA_ID = "G-DKK08XT10J";
 import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/auth";
 import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider, useTheme } from "@/lib/theme";
+
+// Runs before React hydrates → prevents light/dark flash on page load
+const NO_FLASH_SCRIPT = `(function(){try{var t=localStorage.getItem('motm_theme')||'dark';document.documentElement.classList.remove('dark','light');document.documentElement.classList.add(t);}catch(e){}})();`;
 
 function NotFoundComponent() {
   return (
@@ -92,10 +96,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/5bfc159f-9938-44a6-87ef-480fc4f3f0ff/id-preview-581813a5--7cde9053-4ad5-466b-bf7b-f74af439a567.lovable.app-1778579282497.png" },
     ],
     links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
+      { rel: "stylesheet", href: appCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" },
@@ -109,8 +110,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
+    // "dark" class is the SSR default; NO_FLASH_SCRIPT overrides it client-side
+    // before first paint so there is no theme flash on load.
     <html lang="en" className="dark">
       <head>
+        {/* ① No-flash script — must be first in <head> */}
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
         <HeadContent />
         <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} />
         <script
@@ -138,16 +143,24 @@ function Analytics() {
   return null;
 }
 
+/** Toaster that follows the active theme automatically */
+function ThemedToaster() {
+  const { theme } = useTheme();
+  return <Toaster theme={theme} position="top-right" />;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <Analytics />
-        <Outlet />
-        <Toaster theme="dark" position="top-right" />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <Analytics />
+          <Outlet />
+          <ThemedToaster />
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

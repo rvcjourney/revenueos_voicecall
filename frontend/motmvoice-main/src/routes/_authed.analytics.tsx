@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid,
@@ -8,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Calendar, Loader2 } from "lucide-react";
 import { useDashboard } from "@/lib/hooks";
+import { useTheme } from "@/lib/theme";
 
 export const Route = createFileRoute("/_authed/analytics")({
   head: () => ({ meta: [{ title: "Analytics — MOTMVoice" }] }),
@@ -32,6 +34,23 @@ function KPI({ label, value, tone = "" }: { label: string; value: string | numbe
 
 function Analytics() {
   const { data, isLoading } = useDashboard();
+  const { theme }           = useTheme();
+
+  // Track hovered pie slice → highlights the matching legend row
+  const [activeOutcomeIdx, setActiveOutcomeIdx] = useState<number | null>(null);
+
+  // Chart colours that adapt to theme
+  const axisColor = theme === "dark" ? "oklch(0.7 0.03 255)"  : "oklch(0.44 0.04 265)";
+  const gridColor = theme === "dark" ? "oklch(0.3 0.04 265)"  : "oklch(0.83 0.02 265)";
+
+  // Tooltip style uses CSS variables → follows theme automatically
+  const tooltipStyle: React.CSSProperties = {
+    background:   "var(--card)",
+    border:       "1px solid var(--border)",
+    borderRadius: 8,
+    color:        "var(--foreground)",
+    fontSize:     12,
+  };
 
   if (isLoading) {
     return (
@@ -41,22 +60,16 @@ function Analytics() {
     );
   }
 
-  const callsLast7Days = data?.calls_last_7_days ?? [];
-  const outcomeBreakdown = data?.outcome_breakdown ?? [];
-  const activeCampaigns = data?.active_campaigns ?? [];
-  const kpis = data?.kpis;
+  const callsLast7Days  = data?.calls_last_7_days  ?? [];
+  const outcomeBreakdown = data?.outcome_breakdown  ?? [];
+  const activeCampaigns = data?.active_campaigns    ?? [];
+  const kpis            = data?.kpis;
 
   const stacked = callsLast7Days.map((d) => ({
-    day: d.day,
+    day:        d.day,
     Interested: d.interested,
-    Other: Math.max(0, d.calls - d.interested),
+    Other:      Math.max(0, d.calls - d.interested),
   }));
-
-  const tooltipStyle = {
-    background: "oklch(0.21 0.035 265)",
-    border: "1px solid oklch(0.32 0.04 265)",
-    borderRadius: 8,
-  };
 
   return (
     <div className="space-y-6 max-w-[1700px]">
@@ -70,10 +83,10 @@ function Analytics() {
 
       {kpis && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KPI label="Calls Today" value={kpis.calls_today} />
+          <KPI label="Calls Today"      value={kpis.calls_today} />
           <KPI label="Interested Today" value={kpis.interested_today} tone="text-success" />
-          <KPI label="Avg Duration" value={fmtDur(kpis.avg_duration_seconds)} />
-          <KPI label="Pickup Rate" value={`${Math.round(kpis.pickup_rate ?? 0)}%`} />
+          <KPI label="Avg Duration"     value={fmtDur(kpis.avg_duration_seconds)} />
+          <KPI label="Pickup Rate"      value={`${Math.round(kpis.pickup_rate ?? 0)}%`} />
         </div>
       )}
 
@@ -83,32 +96,32 @@ function Analytics() {
         <div className="h-72">
           <ResponsiveContainer>
             <LineChart data={callsLast7Days}>
-              <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.3 0.04 265)" />
-              <XAxis dataKey="day" stroke="oklch(0.7 0.03 255)" fontSize={12} />
-              <YAxis stroke="oklch(0.7 0.03 255)" fontSize={12} />
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+              <XAxis dataKey="day" stroke={axisColor} fontSize={12} />
+              <YAxis              stroke={axisColor} fontSize={12} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend />
-              <Line dataKey="calls" name="Total Calls" stroke="oklch(0.62 0.21 280)" strokeWidth={2.5} dot={false} />
-              <Line dataKey="interested" name="Interested" stroke="oklch(0.7 0.16 160)" strokeWidth={2.5} dot={false} />
+              <Line dataKey="calls"      name="Total Calls" stroke="oklch(0.62 0.21 280)" strokeWidth={2.5} dot={false} />
+              <Line dataKey="interested" name="Interested"  stroke="oklch(0.7 0.16 160)"  strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        {/* Stacked bar */}
+        {/* Stacked bar chart */}
         <div className="rounded-xl bg-card border border-border p-5">
           <h3 className="font-semibold mb-4">Calls by Day</h3>
           <div className="h-64">
             <ResponsiveContainer>
               <BarChart data={stacked}>
-                <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.3 0.04 265)" />
-                <XAxis dataKey="day" stroke="oklch(0.7 0.03 255)" fontSize={12} />
-                <YAxis stroke="oklch(0.7 0.03 255)" fontSize={12} />
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                <XAxis dataKey="day" stroke={axisColor} fontSize={12} />
+                <YAxis              stroke={axisColor} fontSize={12} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend />
                 <Bar dataKey="Interested" stackId="a" fill="oklch(0.7 0.16 160)" />
-                <Bar dataKey="Other" stackId="a" fill="oklch(0.5 0.03 265)" />
+                <Bar dataKey="Other"      stackId="a" fill="oklch(0.5 0.03 265)" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -119,26 +132,66 @@ function Analytics() {
           <h3 className="font-semibold mb-4">Outcome Breakdown</h3>
           {outcomeBreakdown.length > 0 ? (
             <div className="flex items-center gap-6">
+              {/* Pie — hover sets activeOutcomeIdx */}
               <div className="h-52 flex-1">
                 <ResponsiveContainer>
                   <PieChart>
-                    <Pie data={outcomeBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
+                    <Pie
+                      data={outcomeBreakdown}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      onMouseEnter={(_, index) => setActiveOutcomeIdx(index)}
+                      onMouseLeave={() => setActiveOutcomeIdx(null)}
+                    >
                       {outcomeBreakdown.map((entry, i) => (
-                        <Cell key={i} fill={entry.color} />
+                        <Cell
+                          key={i}
+                          fill={entry.color}
+                          opacity={activeOutcomeIdx === null || activeOutcomeIdx === i ? 1 : 0.4}
+                          stroke={activeOutcomeIdx === i ? entry.color : "transparent"}
+                          strokeWidth={activeOutcomeIdx === i ? 2 : 0}
+                        />
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipStyle} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="space-y-2 text-sm min-w-0">
-                {outcomeBreakdown.map((o, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full shrink-0" style={{ background: o.color }} />
-                    <span className="text-muted-foreground capitalize">{o.name.replace(/_/g, " ")}</span>
-                    <span className="font-mono font-semibold ml-auto pl-3">{o.value}</span>
-                  </div>
-                ))}
+
+              {/* Custom legend — row matching hovered slice gets coloured text */}
+              <div className="space-y-2.5 text-sm min-w-0">
+                {outcomeBreakdown.map((o, i) => {
+                  const isActive = activeOutcomeIdx === i;
+                  return (
+                    <div key={i} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-full shrink-0 transition-transform duration-150"
+                        style={{
+                          background: o.color,
+                          transform: isActive ? "scale(1.25)" : "scale(1)",
+                        }}
+                      />
+                      <span
+                        className="capitalize transition-colors duration-150"
+                        style={{
+                          color:      isActive ? o.color : "var(--muted-foreground)",
+                          fontWeight: isActive ? 600 : 400,
+                        }}
+                      >
+                        {o.name.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className="font-mono ml-auto pl-3 transition-colors duration-150"
+                        style={{ color: isActive ? o.color : "var(--foreground)", fontWeight: isActive ? 700 : 600 }}
+                      >
+                        {o.value}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -173,7 +226,7 @@ function Analytics() {
               </tr>
             ) : (
               activeCampaigns.map((c) => (
-                <tr key={c.id} className="border-t border-border/60">
+                <tr key={c.id} className="border-t border-border/60 hover:bg-surface-2/40 transition-colors">
                   <td className="px-5 py-2.5 font-medium">{c.name}</td>
                   <td className="px-5 py-2.5 text-right font-mono">{c.total_contacts}</td>
                   <td className="px-5 py-2.5 text-right font-mono">{c.completed_calls}</td>
