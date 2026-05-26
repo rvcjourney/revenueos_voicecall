@@ -9,18 +9,22 @@ const FEATURES = [
   { icon: Shield, text: "Human-like voice with real-time AI"         },
 ];
 
-// ── Sarvam-exact colour tokens (hardcoded so login always looks the same) ──
+// ── Deep navy colour tokens (matches app theme) ──────────────────────────────
 const C = {
-  bg:          "oklch(0.94 0.018 270)",   // #e9eaf5  lavender
-  bgDeep:      "oklch(0.91 0.020 270)",   // slightly deeper lavender
-  navy:        "oklch(0.10 0.045 265)",   // #0c0d1e  dark navy text
-  navyBtn:     "oklch(0.14 0.055 265)",   // #10112a  button navy
-  muted:       "oklch(0.46 0.030 265)",   // medium navy-gray
-  border:      "oklch(0.84 0.020 270)",   // lavender border
-  cardBg:      "oklch(0.98 0.005 270)",   // near-white card
-  orange:      "oklch(0.70 0.20  45)",    // warm orange
-  orangeLight: "oklch(0.80 0.14  50)",    // peach/amber for glow
-  white:       "oklch(0.99 0.002 270)",
+  bg:          "oklch(0.178 0.030 254)",   // --background deep navy
+  bgDeep:      "oklch(0.138 0.024 258)",   // --sidebar deeper navy
+  bgCard:      "oklch(0.218 0.032 253)",   // --card
+  text:        "oklch(0.938 0.012 255)",   // --foreground near-white
+  muted:       "oklch(0.580 0.022 252)",   // --muted-foreground
+  border:      "oklch(0.295 0.030 251)",   // --border
+  inputBg:     "oklch(0.208 0.030 254)",   // --input
+  primary:     "oklch(0.622 0.220 250)",   // --primary electric blue
+  primaryFg:   "oklch(0.986 0.006 252)",   // --primary-foreground
+  accent:      "oklch(0.280 0.065 252)",   // --accent
+  ring:        "oklch(0.622 0.220 250)",   // --ring
+  orange:      "oklch(0.70 0.20  45)",     // brand orange accent (logo / glow)
+  orangeLight: "oklch(0.80 0.14  50)",     // peach glow
+  white:       "oklch(0.988 0.003 255)",
 };
 
 export function AuthLayout({
@@ -31,31 +35,31 @@ export function AuthLayout({
   return (
     <div
       className="min-h-screen grid lg:grid-cols-2"
-      style={{ background: C.bg, color: C.navy }}
+      style={{ background: C.bg, color: C.text }}
     >
 
       {/* ════════════════════════════════════════════════════════════════
-          LEFT PANEL — Sarvam lavender + orange glow hero
+          LEFT PANEL — deep navy hero with electric blue glow
       ════════════════════════════════════════════════════════════════ */}
       <div
         className="relative hidden lg:flex flex-col justify-between p-12 overflow-hidden"
-        style={{ borderRight: `1px solid ${C.border}`, background: C.bg }}
+        style={{ borderRight: `1px solid ${C.border}`, background: C.bgDeep }}
       >
 
-        {/* ── Sarvam orange radial glow (top-centre, exactly like screenshot) */}
+        {/* Electric blue radial glow top */}
         <div
           className="absolute pointer-events-none"
           style={{
-            top: "-15%",
+            top: "-20%",
             left: "50%",
             transform: "translateX(-50%)",
-            width: "130%",
-            height: "65%",
-            background: `radial-gradient(ellipse at 50% 0%, ${C.orangeLight} 0%, oklch(0.88 0.10 310 / 0.3) 45%, transparent 75%)`,
+            width: "140%",
+            height: "70%",
+            background: `radial-gradient(ellipse at 50% 0%, oklch(0.622 0.220 250 / 0.28) 0%, oklch(0.590 0.242 278 / 0.12) 45%, transparent 72%)`,
           }}
         />
 
-        {/* ── Soft lavender glow bottom-left */}
+        {/* Soft blue glow bottom-left */}
         <div
           className="absolute pointer-events-none"
           style={{
@@ -63,15 +67,15 @@ export function AuthLayout({
             left: "-10%",
             width: "60%",
             height: "50%",
-            background: `radial-gradient(ellipse, oklch(0.75 0.12 270 / 0.25) 0%, transparent 70%)`,
+            background: `radial-gradient(ellipse, oklch(0.622 0.220 250 / 0.15) 0%, transparent 70%)`,
           }}
         />
 
-        {/* ── Dot grid texture */}
+        {/* Dot grid texture */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
-            backgroundImage: `radial-gradient(circle, oklch(0.45 0.028 265 / 0.15) 1px, transparent 1px)`,
+            backgroundImage: `radial-gradient(circle, oklch(0.622 0.220 250 / 0.10) 1px, transparent 1px)`,
             backgroundSize: "22px 22px",
           }}
         />
@@ -88,10 +92,10 @@ export function AuthLayout({
             <Mic className="h-4 w-4" style={{ color: C.white }} />
           </div>
           <div>
-            <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.navy }}>
+            <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.text }}>
               MOTMVoice
             </div>
-            <div className="text-[10px] font-semibold mt-0.5 tracking-wide" style={{ color: C.orange }}>
+            <div className="text-[10px] font-semibold mt-0.5 tracking-wide" style={{ color: C.primary }}>
               AI Voice Platform
             </div>
           </div>
@@ -103,25 +107,25 @@ export function AuthLayout({
             <div
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wider uppercase mb-4"
               style={{
-                background: `${C.orange}18`,
-                border: `1px solid ${C.orange}35`,
-                color: C.orange,
+                background: `${C.primary}20`,
+                border: `1px solid ${C.primary}40`,
+                color: C.primary,
               }}
             >
               <span
                 className="h-1.5 w-1.5 rounded-full animate-pulse"
-                style={{ background: C.orange }}
+                style={{ background: C.primary }}
               />
               Trusted by 200+ Sales Teams
             </div>
 
             <h2
               className="text-5xl font-heading font-semibold leading-tight tracking-tight"
-              style={{ color: C.navy }}
+              style={{ color: C.text }}
             >
               <span
                 style={{
-                  background: `linear-gradient(135deg, ${C.orange}, oklch(0.78 0.17 62))`,
+                  background: `linear-gradient(135deg, ${C.primary}, oklch(0.590 0.242 278))`,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   backgroundClip: "text",
@@ -144,7 +148,7 @@ export function AuthLayout({
               <li key={text} className="flex items-center gap-3 text-sm" style={{ color: C.muted }}>
                 <div
                   className="h-7 w-7 rounded-lg grid place-items-center shrink-0"
-                  style={{ background: `${C.orange}15`, color: C.orange }}
+                  style={{ background: `${C.primary}18`, color: C.primary }}
                 >
                   <Icon className="h-3.5 w-3.5" />
                 </div>
@@ -157,7 +161,7 @@ export function AuthLayout({
           <div
             className="rounded-xl p-5"
             style={{
-              background: `${C.cardBg}cc`,
+              background: `${C.bgCard}cc`,
               backdropFilter: "blur(16px)",
               WebkitBackdropFilter: "blur(16px)",
               border: `1px solid ${C.border}`,
@@ -175,7 +179,7 @@ export function AuthLayout({
                 />
                 Live calls in progress
               </span>
-              <span className="font-mono font-semibold" style={{ color: C.navy }}>
+              <span className="font-mono font-semibold" style={{ color: C.text }}>
                 1,247 today
               </span>
             </div>
@@ -194,13 +198,13 @@ export function AuthLayout({
         className="flex items-center justify-center p-6 lg:p-12 relative"
         style={{ background: C.bg }}
       >
-        {/* Subtle orange glow top-right */}
+        {/* Subtle blue glow top-right */}
         <div
           className="absolute top-0 right-0 pointer-events-none"
           style={{
             width: "300px",
             height: "300px",
-            background: `radial-gradient(circle, ${C.orangeLight}30 0%, transparent 70%)`,
+            background: `radial-gradient(circle, oklch(0.622 0.220 250 / 0.12) 0%, transparent 70%)`,
           }}
         />
 
@@ -218,10 +222,10 @@ export function AuthLayout({
               <Mic className="h-4 w-4" style={{ color: C.white }} />
             </div>
             <div>
-              <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.navy }}>
+              <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.text }}>
                 MOTMVoice
               </div>
-              <div className="text-[10px] font-semibold mt-0.5" style={{ color: C.orange }}>
+              <div className="text-[10px] font-semibold mt-0.5" style={{ color: C.primary }}>
                 AI Voice Platform
               </div>
             </div>
@@ -230,7 +234,7 @@ export function AuthLayout({
           {/* Heading */}
           <h1
             className="text-[28px] font-heading font-semibold tracking-tight"
-            style={{ color: C.navy }}
+            style={{ color: C.text }}
           >
             {title}
           </h1>
@@ -238,21 +242,21 @@ export function AuthLayout({
             {subtitle}
           </p>
 
-          {/* Form — wrap in a style override so form inputs use navy colours */}
+          {/* Form — CSS variable overrides so all child components use navy */}
           <div
             className="mt-8"
             style={{
-              "--foreground": C.navy,
-              "--muted-foreground": C.muted,
-              "--border": C.border,
-              "--background": C.bg,
-              "--card": C.cardBg,
-              "--input": C.bgDeep,
-              "--primary": C.navyBtn,
-              "--primary-foreground": C.white,
-              "--ring": C.navyBtn,
-              "--accent": "oklch(0.88 0.030 270)",
-              "--accent-foreground": C.navy,
+              "--foreground":          C.text,
+              "--muted-foreground":    C.muted,
+              "--border":              C.border,
+              "--background":          C.bg,
+              "--card":                C.bgCard,
+              "--input":               C.inputBg,
+              "--primary":             C.primary,
+              "--primary-foreground":  C.primaryFg,
+              "--ring":                C.ring,
+              "--accent":              C.accent,
+              "--accent-foreground":   C.text,
             } as React.CSSProperties}
           >
             {children}

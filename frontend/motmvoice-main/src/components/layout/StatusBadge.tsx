@@ -37,9 +37,10 @@ const outcomeTokens: Record<string, BadgeToken> = {
     border: "oklch(0.22 0.012 270 / 0.60)",
   },
   no_answer: {
-    bg:     "oklch(0.130 0.013 270 / 0.80)",
-    text:   "oklch(0.50 0.010 270)",
-    border: "oklch(0.20 0.012 270 / 0.50)",
+    bg:     "oklch(0.62 0.20 18 / 0.12)",
+    text:   "oklch(0.76 0.14 16)",
+    border: "oklch(0.62 0.20 18 / 0.30)",
+    glow:   "0 0 8px oklch(0.62 0.20 18 / 0.15)",
   },
   failed: {
     bg:     "oklch(0.62 0.23 25 / 0.12)",
