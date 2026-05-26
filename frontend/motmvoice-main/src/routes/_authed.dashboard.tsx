@@ -33,8 +33,8 @@ function Dashboard() {
   const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
 
   // Chart colours that adapt to theme
-  const axisColor  = theme === "dark" ? "oklch(0.55 0.008 260)" : "oklch(0.44 0.020 265)";
-  const gridColor  = theme === "dark" ? "oklch(0.18 0.008 260)" : "oklch(0.86 0.012 60)";
+  const axisColor  = theme === "dark" ? "oklch(0.52 0.006 55)"  : "oklch(0.44 0.020 265)";
+  const gridColor  = theme === "dark" ? "oklch(0.17 0.006 55)"  : "oklch(0.86 0.012 60)";
 
   const tooltipStyle: React.CSSProperties = {
     background:   "var(--card)",
@@ -139,15 +139,15 @@ function Dashboard() {
               <LineChart data={stats?.calls_last_7_days ?? []}>
                 <defs>
                   <linearGradient id="orangeGrad" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%"   stopColor="oklch(0.73 0.19 47)" />
-                    <stop offset="100%" stopColor="oklch(0.79 0.17 65)" />
+                    <stop offset="0%"   stopColor="oklch(0.66 0.22 42)" />
+                    <stop offset="100%" stopColor="oklch(0.76 0.18 62)" />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                 <XAxis dataKey="day"  stroke={axisColor} fontSize={11} tickLine={false} axisLine={false} />
                 <YAxis              stroke={axisColor} fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ stroke: "var(--border)", strokeWidth: 1 }} />
-                <Line type="monotone" dataKey="calls"      name="Total Calls" stroke="url(#orangeGrad)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.73 0.19 47)" }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="calls"      name="Total Calls" stroke="url(#orangeGrad)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.66 0.22 42)" }} activeDot={{ r: 5 }} />
                 <Line type="monotone" dataKey="interested" name="Interested"  stroke="oklch(0.70 0.16 160)" strokeWidth={2.5} dot={{ r: 3, fill: "oklch(0.70 0.16 160)" }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>

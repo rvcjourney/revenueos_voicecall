@@ -46,67 +46,67 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DARK THEME (default) — Near-black + Warm Orange  (Sarvam-inspired)
+   DARK THEME (default) — Warm dark #0d0b09 + Deep orange #ea6c0a
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --radius: 0.75rem;
 
-  /* ── Backgrounds ──────────────────────────────────────────────────────── */
-  --background:            oklch(0.07 0.005 260);   /* near-pure black       */
-  --foreground:            oklch(0.96 0.005 250);
-  --surface-2:             oklch(0.11 0.008 260);
-  --surface-3:             oklch(0.15 0.010 260);
+  /* ── Backgrounds: warm dark, slight golden undertone ─────────────────── */
+  --background:            oklch(0.07 0.010 55);    /* #0d0b09 warm near-black */
+  --foreground:            oklch(0.96 0.006 60);    /* warm white              */
+  --surface-2:             oklch(0.11 0.008 55);    /* #141210 elevated surface*/
+  --surface-3:             oklch(0.15 0.007 55);    /* #1c1a17 higher surface  */
 
   /* ── Cards ────────────────────────────────────────────────────────────── */
-  --card:                  oklch(0.10 0.008 260);
-  --card-foreground:       oklch(0.96 0.005 250);
-  --popover:               oklch(0.13 0.010 260);
-  --popover-foreground:    oklch(0.96 0.005 250);
+  --card:                  oklch(0.11 0.008 55);
+  --card-foreground:       oklch(0.96 0.006 60);
+  --popover:               oklch(0.14 0.008 55);
+  --popover-foreground:    oklch(0.96 0.006 60);
 
-  /* ── Primary: warm orange ─────────────────────────────────────────────── */
-  --primary:               oklch(0.73 0.19 47);
-  --primary-foreground:    oklch(0.07 0.005 260);
+  /* ── Primary: deep warm orange #ea6c0a ───────────────────────────────── */
+  --primary:               oklch(0.66 0.22 42);
+  --primary-foreground:    oklch(0.99 0.005 60);
 
   /* ── Secondary / muted ────────────────────────────────────────────────── */
-  --secondary:             oklch(0.15 0.010 260);
-  --secondary-foreground:  oklch(0.96 0.005 250);
-  --muted:                 oklch(0.15 0.010 260);
-  --muted-foreground:      oklch(0.58 0.008 260);
+  --secondary:             oklch(0.15 0.007 55);
+  --secondary-foreground:  oklch(0.96 0.006 60);
+  --muted:                 oklch(0.15 0.007 55);
+  --muted-foreground:      oklch(0.57 0.006 55);    /* warm gray              */
 
-  /* ── Accent: dark orange tint ─────────────────────────────────────────── */
-  --accent:                oklch(0.14 0.04  47);
-  --accent-foreground:     oklch(0.96 0.005 250);
+  /* ── Accent: deep warm orange tint ───────────────────────────────────── */
+  --accent:                oklch(0.15 0.040 50);
+  --accent-foreground:     oklch(0.96 0.006 60);
 
   /* ── States ───────────────────────────────────────────────────────────── */
   --destructive:           oklch(0.62 0.23  25);
-  --destructive-foreground: oklch(0.99 0.005 250);
+  --destructive-foreground: oklch(0.99 0.005 60);
   --success:               oklch(0.70 0.16 160);
   --warning:               oklch(0.78 0.16  75);
 
   /* ── Borders / inputs ─────────────────────────────────────────────────── */
-  --border:                oklch(0.20 0.008 260);
-  --input:                 oklch(0.14 0.008 260);
-  --ring:                  oklch(0.73 0.19  47);
+  --border:                oklch(0.19 0.006 55);    /* #252220 warm subtle    */
+  --input:                 oklch(0.14 0.007 55);
+  --ring:                  oklch(0.66 0.22  42);
 
-  /* ── Sidebar: slightly darker than background ────────────────────────── */
-  --sidebar:               oklch(0.06 0.005 260);
-  --sidebar-foreground:    oklch(0.96 0.005 250);
-  --sidebar-primary:       oklch(0.73 0.19  47);
-  --sidebar-primary-foreground: oklch(0.07 0.005 260);
-  --sidebar-accent:        oklch(0.11 0.008 260);
-  --sidebar-accent-foreground: oklch(0.96 0.005 250);
-  --sidebar-border:        oklch(0.14 0.008 260);
-  --sidebar-ring:          oklch(0.73 0.19  47);
+  /* ── Sidebar: slightly darker/warmer than background ────────────────── */
+  --sidebar:               oklch(0.06 0.008 55);    /* #0a0806 deepest warm   */
+  --sidebar-foreground:    oklch(0.96 0.006 60);
+  --sidebar-primary:       oklch(0.66 0.22  42);
+  --sidebar-primary-foreground: oklch(0.99 0.005 60);
+  --sidebar-accent:        oklch(0.11 0.008 55);
+  --sidebar-accent-foreground: oklch(0.96 0.006 60);
+  --sidebar-border:        oklch(0.13 0.007 55);
+  --sidebar-ring:          oklch(0.66 0.22  42);
 
   /* ── Gradients & shadows ──────────────────────────────────────────────── */
-  --gradient-primary: linear-gradient(135deg, oklch(0.73 0.19 47), oklch(0.79 0.17 65));
+  --gradient-primary: linear-gradient(135deg, oklch(0.66 0.22 42), oklch(0.76 0.18 62));
   --gradient-mesh:
-    radial-gradient(at 10% 10%, oklch(0.73 0.19 47 / 0.14) 0, transparent 55%),
-    radial-gradient(at 85% 15%, oklch(0.65 0.21 40 / 0.09) 0, transparent 50%),
-    radial-gradient(at 50% 95%, oklch(0.73 0.19 47 / 0.07) 0, transparent 50%);
-  --shadow-glow:   0 0 32px oklch(0.73 0.19 47 / 0.30);
-  --shadow-card:   0 4px 28px oklch(0.02 0.005 260 / 0.65);
-  --shadow-orange: 0 0 0 1px oklch(0.73 0.19 47 / 0.25), 0 4px 20px oklch(0.73 0.19 47 / 0.18);
+    radial-gradient(at 10% 10%, oklch(0.66 0.22 42 / 0.15) 0, transparent 55%),
+    radial-gradient(at 85% 15%, oklch(0.60 0.22 38 / 0.10) 0, transparent 50%),
+    radial-gradient(at 50% 95%, oklch(0.66 0.22 42 / 0.07) 0, transparent 50%);
+  --shadow-glow:   0 0 32px oklch(0.66 0.22 42 / 0.32);
+  --shadow-card:   0 4px 28px oklch(0.02 0.008 55  / 0.70);
+  --shadow-orange: 0 0 0 1px oklch(0.66 0.22 42 / 0.28), 0 4px 20px oklch(0.66 0.22 42 / 0.20);
 }
 
 html.dark { color-scheme: dark; }
@@ -209,7 +209,7 @@ html.light .dot-grid {
 
   /* Subtle dot-grid pattern (Sarvam-style background texture) */
   .dot-grid {
-    background-image: radial-gradient(circle, oklch(0.38 0.008 260 / 0.50) 1px, transparent 1px);
+    background-image: radial-gradient(circle, oklch(0.42 0.006 55 / 0.55) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 
@@ -220,10 +220,10 @@ html.light .dot-grid {
 
   /* Glassmorphism */
   .glass {
-    background: oklch(0.11 0.008 260 / 0.65);
+    background: oklch(0.12 0.008 55 / 0.65);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-    border: 1px solid oklch(0.35 0.010 260 / 0.35);
+    border: 1px solid oklch(0.35 0.008 55 / 0.30);
   }
 
   /* Monospace */
@@ -286,9 +286,9 @@ html.light .dot-grid {
 }
 .shimmer {
   background: linear-gradient(90deg,
-    oklch(0.14 0.008 260) 0%,
-    oklch(0.20 0.010 260) 50%,
-    oklch(0.14 0.008 260) 100%
+    oklch(0.13 0.007 55) 0%,
+    oklch(0.19 0.008 55) 50%,
+    oklch(0.13 0.007 55) 100%
   );
   background-size: 800px 100%;
   animation: shimmer 1.5s infinite;

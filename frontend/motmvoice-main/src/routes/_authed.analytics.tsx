@@ -40,8 +40,8 @@ function Analytics() {
   const [activeOutcomeIdx, setActiveOutcomeIdx] = useState<number | null>(null);
 
   // Chart colours that adapt to theme
-  const axisColor = theme === "dark" ? "oklch(0.7 0.03 255)"  : "oklch(0.44 0.04 265)";
-  const gridColor = theme === "dark" ? "oklch(0.3 0.04 265)"  : "oklch(0.83 0.02 265)";
+  const axisColor = theme === "dark" ? "oklch(0.52 0.006 55)"  : "oklch(0.44 0.04 265)";
+  const gridColor = theme === "dark" ? "oklch(0.17 0.006 55)"  : "oklch(0.83 0.02 265)";
 
   // Tooltip style uses CSS variables → follows theme automatically
   const tooltipStyle: React.CSSProperties = {
@@ -101,8 +101,8 @@ function Analytics() {
               <YAxis              stroke={axisColor} fontSize={12} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend />
-              <Line dataKey="calls"      name="Total Calls" stroke="oklch(0.62 0.21 280)" strokeWidth={2.5} dot={false} />
-              <Line dataKey="interested" name="Interested"  stroke="oklch(0.7 0.16 160)"  strokeWidth={2.5} dot={false} />
+              <Line dataKey="calls"      name="Total Calls" stroke="oklch(0.66 0.22 42)"  strokeWidth={2.5} dot={false} />
+              <Line dataKey="interested" name="Interested"  stroke="oklch(0.70 0.16 160)" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -120,8 +120,8 @@ function Analytics() {
                 <YAxis              stroke={axisColor} fontSize={12} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend />
-                <Bar dataKey="Interested" stackId="a" fill="oklch(0.7 0.16 160)" />
-                <Bar dataKey="Other"      stackId="a" fill="oklch(0.5 0.03 265)" />
+                <Bar dataKey="Interested" stackId="a" fill="oklch(0.70 0.16 160)" />
+                <Bar dataKey="Other"      stackId="a" fill="oklch(0.20 0.007 55)" />
               </BarChart>
             </ResponsiveContainer>
           </div>
