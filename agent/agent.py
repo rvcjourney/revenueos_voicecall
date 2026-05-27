@@ -43,13 +43,11 @@ logging.basicConfig(
 logger = logging.getLogger("voice-agent")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-_LLM_MAX_TOKENS = 80  # ~2 short Hinglish sentences; lower = faster first TTS byte
+_LLM_MAX_TOKENS = 70  # ~1-2 short Hinglish sentences; lower = faster first TTS byte
 
 # Characters buffered before ElevenLabs starts generating audio.
-# 30 = aggressive low-latency; ElevenLabs default is [120, 160, 250, 290].
-_CHUNK_LENGTH_SCHEDULE = [80, 140, 200, 280]
-# 80 chars (~12 words) gives ElevenLabs enough context for natural sentence prosody.
-# 50 was too short — first audio chunk sounded choppy/cut off.
+# First chunk at 50 chars = ~7-8 words — enough prosody context, starts audio sooner.
+_CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 280]
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
@@ -188,9 +186,9 @@ async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.20,   # slightly quicker silence detection
-        activation_threshold   = 0.85,   # was 0.92 — catches speech onset more reliably (0.92 missed soft/quiet starts)
-        deactivation_threshold = 0.55,   # was 0.60 — smoother deactivation
+        min_silence_duration   = 0.18,   # slightly faster silence detection
+        activation_threshold   = 0.78,   # lower = catches speech onset faster (soft/quiet starts too)
+        deactivation_threshold = 0.50,   # smoother, quicker deactivation
         sample_rate            = 16000,
     )
     logger.info("VAD loaded in prewarm ✓")
@@ -264,7 +262,7 @@ class VoiceAgent(Agent):
 
     async def on_enter(self) -> None:
         logger.info("Agent entered room — pipeline ready")
-        await asyncio.sleep(0.2)  # let TTS output track attach
+        await asyncio.sleep(0.1)  # let TTS output track attach
         try:
             logger.info("Speaking welcome message...")
             await self.session.say(self._welcome_message)
@@ -481,10 +479,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         encoding              = "pcm_24000",
         chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
         voice_settings        = elevenlabs.VoiceSettings(
-            stability         = 0.60,  # was 0.7 — slight variation between sentences feels more human
-            similarity_boost  = 0.85,  # stay true to the voice character
-            style             = 0.10,  # was 0.0 — adds subtle expressiveness, avoids flat robotic delivery
-            use_speaker_boost = True,  # clearer audio on phone
+            stability         = 0.52,  # lower = more natural sentence-to-sentence variation, less monotone
+            similarity_boost  = 0.85,  # stay true to voice character
+            style             = 0.18,  # more expressiveness — sounds engaged not flat
+            use_speaker_boost = True,  # clearer audio on phone calls
         ),
     )
     logger.info("ElevenLabs TTS ready ✓")
@@ -504,7 +502,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model          = "nova-2",
             language       = "hi",   # Hindi model handles English words naturally (Hinglish)
             interim_results= True,
-            endpointing_ms = 200,    # wait 200ms of silence before finalising — balanced: ~100ms faster than 300ms, still safe against "ha"/"hmm" false triggers
+            endpointing_ms = 150,    # 150ms — fast finalization, safe against single-word false triggers
             smart_format   = False,
         ),
         llm=llm,
@@ -512,8 +510,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.25,  # 250ms after STT finalises — fast, natural turn-taking
-            min_interruption_words= 10,    # ~1 sentence to interrupt — natural; still blocks "ha"/"hmm" (1-2 words)
+            min_endpointing_delay = 0.12,  # 120ms after STT finalises — very fast turn-taking
+            min_interruption_words= 7,     # ~half sentence to interrupt — natural feel
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
