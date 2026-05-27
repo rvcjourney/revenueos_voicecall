@@ -37,7 +37,11 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.core.vobiz import fetch_recording_for_call
-from app.database import AsyncSessionLocal
+from app.database import make_worker_session_factory
+
+# NullPool: fresh DB connection per session, no reuse across asyncio.run() calls.
+# See make_worker_session_factory() docstring for full explanation.
+AsyncSessionLocal = make_worker_session_factory()
 from app.models.agent import AgentTemplate
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus
@@ -653,14 +657,6 @@ def run_campaign(self, campaign_id: str) -> None:
     Launch the sequential dispatcher for one campaign.
     Called by the campaign-start API endpoint and by `resume_stalled_campaigns`.
     """
-    # Celery prefork reuses the same OS process for multiple tasks.
-    # Each asyncio.run() creates a NEW event loop, but the SQLAlchemy connection
-    # pool holds asyncpg connections bound to the PREVIOUS loop → "Future attached
-    # to a different loop" RuntimeError on the second task in the same worker.
-    # Disposing before asyncio.run() closes all stale pool connections so the
-    # new event loop always starts with fresh connections.
-    from app.database import engine
-    engine.dispose()
     asyncio.run(_run_campaign_async(campaign_id))
 
 
@@ -670,8 +666,6 @@ def resume_stalled_campaigns(self) -> None:
     Beat task (every 60 s): re-queue any RUNNING campaign whose dispatcher
     has exited (lock released). Handles calling-window resumption and crash recovery.
     """
-    from app.database import engine
-    engine.dispose()
     asyncio.run(_resume_stalled_async())
 
 

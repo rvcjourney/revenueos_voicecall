@@ -122,3 +122,31 @@ async def check_db_health() -> bool:
 async def dispose_engine() -> None:
     """Close all pooled connections. Called on application shutdown."""
     await engine.dispose()
+
+
+def make_worker_session_factory():
+    """
+    NullPool session factory for Celery workers.
+
+    Celery prefork workers call asyncio.run() for every task, creating a new
+    event loop each time. A pooled engine reuses asyncpg connections tied to
+    the PREVIOUS event loop → 'Future attached to a different loop' crash.
+
+    NullPool creates a brand-new DB connection for every session and closes it
+    when the session ends — nothing is ever reused across event loops.
+    """
+    from sqlalchemy.pool import NullPool
+    worker_engine = create_async_engine(
+        _async_url(settings.DATABASE_URL),
+        poolclass=NullPool,
+        connect_args=_connect_args(),
+        echo=settings.DB_ECHO,
+        future=True,
+    )
+    return async_sessionmaker(
+        bind=worker_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
