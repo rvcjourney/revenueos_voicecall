@@ -46,8 +46,8 @@ logger = logging.getLogger("voice-agent")
 _LLM_MAX_TOKENS = 70  # ~1-2 short Hinglish sentences; lower = faster first TTS byte
 
 # Characters buffered before ElevenLabs starts generating audio.
-# First chunk at 50 chars = ~7-8 words — enough prosody context, starts audio sooner.
-_CHUNK_LENGTH_SCHEDULE = [50, 120, 200, 280]
+# First chunk at 80 chars = ~12 words — enough for full sentence prosody, no mid-sentence breaks.
+_CHUNK_LENGTH_SCHEDULE = [80, 140, 200, 280]
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
@@ -479,9 +479,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         encoding              = "pcm_24000",
         chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
         voice_settings        = elevenlabs.VoiceSettings(
-            stability         = 0.52,  # lower = more natural sentence-to-sentence variation, less monotone
+            stability         = 0.65,  # consistent tone across chunks — prevents mid-sentence tone shifts
             similarity_boost  = 0.85,  # stay true to voice character
-            style             = 0.18,  # more expressiveness — sounds engaged not flat
+            style             = 0.10,  # subtle expressiveness without causing prosody breaks
             use_speaker_boost = True,  # clearer audio on phone calls
         ),
     )
