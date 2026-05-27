@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger("voice-agent")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-_LLM_MAX_TOKENS = 70  # ~1-2 short Hinglish sentences; lower = faster first TTS byte
+_LLM_MAX_TOKENS = 110  # enough for 2 complete Hinglish sentences without cutting off
 
 # Characters buffered before ElevenLabs starts generating audio.
 # First chunk at 80 chars = ~12 words — enough for full sentence prosody, no mid-sentence breaks.
@@ -532,8 +532,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             allow_interruptions   = True,
-            min_endpointing_delay = 0.12,  # 120ms after STT finalises — very fast turn-taking
-            min_interruption_words= 7,     # ~half sentence to interrupt — natural feel
+            min_endpointing_delay = 0.15,  # 150ms after STT finalises — fast but stable
+            min_interruption_words= 12,    # customer must say ~12 words to interrupt agent — prevents "haan/achha" breaking sentences
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
     )
