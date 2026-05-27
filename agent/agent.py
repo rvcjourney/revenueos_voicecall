@@ -124,8 +124,22 @@ def _end_call_filter_transform(hangup_fn):
 
 
 # ── System prompt guardrails ──────────────────────────────────────────────────
-def _build_prompt(raw: str) -> str:
+def _build_prompt(raw: str, welcome_message: str = "") -> str:
     p = raw.strip()
+
+    # Inject the welcome message as a first-turn instruction.
+    # This makes the LLM generate the opening through the same streaming
+    # LLM→TTS pipeline as every other turn — identical voice tone and prosody.
+    # (session.say() sends a static text block to ElevenLabs which produces
+    #  a noticeably different prosody from streamed LLM output.)
+    opening_block = ""
+    if welcome_message and welcome_message.strip():
+        opening_block = (
+            "[FIRST TURN — no customer input yet]\n"
+            f'Open the call with this line, spoken naturally: "{welcome_message.strip()}"\n'
+            "Then stop immediately and wait for the customer to respond.\n\n"
+        )
+
     guardrails = (
         "[ABSOLUTE RULES — never break these]\n"
         "1. Speak like a real Indian salesperson on a phone call — warm, natural, confident. "
@@ -157,7 +171,7 @@ def _build_prompt(raw: str) -> str:
         "'Ek kaam karo sir, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
         "If unsure whether the customer is leaving, ask one more question. Never end early.\n"
     )
-    return guardrails + "\n" + p
+    return opening_block + guardrails + "\n" + p
 
 # =============================================================================
 # LLM WARMUP
@@ -264,11 +278,19 @@ class VoiceAgent(Agent):
         logger.info("Agent entered room — pipeline ready")
         await asyncio.sleep(0.1)  # let TTS output track attach
         try:
-            logger.info("Speaking welcome message...")
-            await self.session.say(self._welcome_message)
-            logger.info("Welcome message sent ✓")
+            # generate_reply() routes through LLM → chunk_schedule → TTS —
+            # the same pipeline as every conversation turn, so tone matches perfectly.
+            # session.say() sends a static block to ElevenLabs (no streaming chunks)
+            # which produces noticeably different prosody on the first utterance.
+            logger.info("Generating welcome via LLM pipeline...")
+            await self.session.generate_reply()
+            logger.info("Welcome generated ✓")
         except Exception as e:
-            logger.error("session.say failed: %s", e)
+            logger.error("generate_reply failed — falling back to say(): %s", e)
+            try:
+                await self.session.say(self._welcome_message)
+            except Exception as e2:
+                logger.error("say() fallback also failed: %s", e2)
         _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
@@ -448,7 +470,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
 
-    system_prompt = _build_prompt(raw_prompt)
+    system_prompt = _build_prompt(raw_prompt, welcome_message)
     logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
 
     llm = _CappedGroqLLM(model=llm_model, temperature=llm_temperature)
