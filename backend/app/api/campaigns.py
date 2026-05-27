@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 from datetime import datetime, timezone
@@ -23,7 +22,7 @@ from app.schemas.campaign import (
     CampaignOut,
     CampaignUpdate,
 )
-from app.workers.tasks.campaign import _run_campaign_async
+from app.workers.tasks.campaign import run_campaign
 
 router = APIRouter()
 
@@ -277,9 +276,8 @@ async def launch_campaign(
     await db.commit()
     await db.refresh(campaign)
 
-    # Run dispatcher as asyncio background task (no Celery needed for single-machine)
-    from app.workers.tasks.campaign import _run_campaign_async
-    asyncio.create_task(_run_campaign_async(str(campaign_id)))
+    # Dispatch to Celery worker (campaigns queue)
+    run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
 
     return _to_out(campaign)
 
