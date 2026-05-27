@@ -653,6 +653,14 @@ def run_campaign(self, campaign_id: str) -> None:
     Launch the sequential dispatcher for one campaign.
     Called by the campaign-start API endpoint and by `resume_stalled_campaigns`.
     """
+    # Celery prefork reuses the same OS process for multiple tasks.
+    # Each asyncio.run() creates a NEW event loop, but the SQLAlchemy connection
+    # pool holds asyncpg connections bound to the PREVIOUS loop → "Future attached
+    # to a different loop" RuntimeError on the second task in the same worker.
+    # Disposing before asyncio.run() closes all stale pool connections so the
+    # new event loop always starts with fresh connections.
+    from app.database import engine
+    engine.dispose()
     asyncio.run(_run_campaign_async(campaign_id))
 
 
@@ -662,6 +670,8 @@ def resume_stalled_campaigns(self) -> None:
     Beat task (every 60 s): re-queue any RUNNING campaign whose dispatcher
     has exited (lock released). Handles calling-window resumption and crash recovery.
     """
+    from app.database import engine
+    engine.dispose()
     asyncio.run(_resume_stalled_async())
 
 
