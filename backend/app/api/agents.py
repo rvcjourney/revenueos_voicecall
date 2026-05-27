@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid as _uuid_module
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +13,7 @@ from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.agent import AgentTemplate
+from app.models.call import Call, CallDirection, CallStatus, CallOutcome
 from app.schemas.agent import AgentCreate, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
@@ -137,6 +140,61 @@ async def delete_agent(
     if not agent or agent.org_id != token.org_id or agent.deleted_at:
         raise NotFoundError("Agent template not found")
 
-    from datetime import datetime, timezone
     agent.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+# ── Test call ─────────────────────────────────────────────────────────────────
+
+class TestCallRequest(BaseModel):
+    phone_number: str
+
+
+class TestCallResponse(BaseModel):
+    call_id: str
+    status: str
+
+
+@router.post("/{agent_id}/test-call", response_model=TestCallResponse, status_code=202)
+async def test_call(
+    agent_id: UUID,
+    body: TestCallRequest,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Place a real outbound test call using the given agent template.
+    Returns immediately with a call_id; poll GET /api/calls/{call_id} for status.
+    """
+    agent = await db.get(AgentTemplate, agent_id)
+    if not agent or agent.org_id != token.org_id or agent.deleted_at:
+        raise NotFoundError("Agent template not found")
+
+    # Normalise phone number to E.164 (+91 default for India)
+    phone = body.phone_number.strip().replace(" ", "").replace("-", "")
+    if not phone.startswith("+"):
+        phone = "+91" + phone.lstrip("0")
+
+    # Create a Call record immediately so we can return call_id to the frontend
+    room_name = f"test-{_uuid_module.uuid4().hex}"
+    call = Call(
+        org_id=token.org_id,
+        phone_number=phone,
+        direction=CallDirection.OUTBOUND,
+        status=CallStatus.INITIATED,
+        outcome=CallOutcome.PENDING,
+        livekit_room_name=room_name,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(call)
+    await db.commit()
+    await db.refresh(call)
+
+    # Dispatch to Celery worker (calls queue)
+    from app.workers.tasks.campaign import place_test_call
+    place_test_call.apply_async(
+        args=[str(agent_id), phone, str(call.id), str(token.org_id)],
+        queue="calls",
+    )
+
+    return TestCallResponse(call_id=str(call.id), status="initiated")

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { voices } from "@/lib/mock-data";
-import { agentsApi, type AgentOut, type AgentCreate } from "@/lib/api";
+import { agentsApi, callsApi, type AgentOut, type AgentCreate } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import {
-  Plus, Bot, Edit, Copy, Trash2, Sparkles, Loader2, CheckCircle,
+  Plus, Bot, Edit, Copy, Trash2, Sparkles, Loader2, CheckCircle, Phone, PhoneCall, PhoneOff,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/agents")({
@@ -45,10 +45,11 @@ const EMPTY_FORM: AgentCreate = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 function Agents() {
-  const [agents, setAgents]       = useState<AgentOut[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  const [agents, setAgents]         = useState<AgentOut[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [showModal, setShowModal]   = useState(false);
   const [editTarget, setEditTarget] = useState<AgentOut | null>(null);
+  const [testCallAgent, setTestCallAgent] = useState<AgentOut | null>(null);
 
   useEffect(() => {
     agentsApi.list()
@@ -74,8 +75,9 @@ function Agents() {
     setAgents((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const openCreate = () => { setEditTarget(null); setShowModal(true); };
-  const openEdit   = (a: AgentOut) => { setEditTarget(a); setShowModal(true); };
+  const openCreate    = () => { setEditTarget(null); setShowModal(true); };
+  const openEdit      = (a: AgentOut) => { setEditTarget(a); setShowModal(true); };
+  const openTestCall  = (a: AgentOut) => setTestCallAgent(a);
 
   return (
     <div className="space-y-6 max-w-[1500px]">
@@ -131,6 +133,15 @@ function Agents() {
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(a)}>
                     <Edit className="h-3 w-3" /> Edit
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300"
+                    title="Test Call"
+                    onClick={() => openTestCall(a)}
+                  >
+                    <Phone className="h-3 w-3" />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => {
                     navigator.clipboard.writeText(a.system_prompt);
                   }}>
@@ -154,9 +165,174 @@ function Agents() {
           onClose={() => { setShowModal(false); setEditTarget(null); }}
         />
       )}
+
+      {/* Test Call Dialog */}
+      {testCallAgent && (
+        <TestCallDialog
+          agent={testCallAgent}
+          onClose={() => setTestCallAgent(null)}
+        />
+      )}
     </div>
   );
 }
+
+// ── Test Call Dialog ──────────────────────────────────────────────────────────
+
+type CallPhase = "idle" | "calling" | "connected" | "ended" | "no_answer" | "failed";
+
+interface TestCallDialogProps {
+  agent: AgentOut;
+  onClose: () => void;
+}
+
+function TestCallDialog({ agent, onClose }: TestCallDialogProps) {
+  const [phone, setPhone]       = useState("+91 ");
+  const [phase, setPhase]       = useState<CallPhase>("idle");
+  const [callId, setCallId]     = useState<string | null>(null);
+  const [outcome, setOutcome]   = useState<string | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
+  const [error, setError]       = useState("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  useEffect(() => () => stopPolling(), []);
+
+  const startCall = async () => {
+    const clean = phone.trim().replace(/\s/g, "");
+    if (clean.length < 8) { setError("Enter a valid phone number."); return; }
+    setError("");
+    setPhase("calling");
+    setOutcome(null);
+    setDuration(null);
+
+    try {
+      const res = await agentsApi.testCall(agent.id, clean);
+      const id  = res.data.call_id;
+      setCallId(id);
+
+      // Poll GET /api/calls/{id} every 3 s for status
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await callsApi.get(id);
+          const s = r.data.status;
+          if (s === "connected")  setPhase("connected");
+          if (s === "no_answer")  { setPhase("no_answer"); stopPolling(); }
+          if (s === "failed")     { setPhase("failed");    stopPolling(); }
+          if (s === "completed") {
+            setPhase("ended");
+            setOutcome(r.data.outcome ?? null);
+            setDuration(r.data.duration_seconds ?? null);
+            stopPolling();
+          }
+        } catch { /* ignore transient errors */ }
+      }, 3000);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "Failed to initiate call. Please try again.");
+      setPhase("idle");
+    }
+  };
+
+  const phaseLabel: Record<CallPhase, string> = {
+    idle:      "",
+    calling:   "Dialling…",
+    connected: "Connected — call in progress",
+    ended:     "Call ended",
+    no_answer: "Not answered",
+    failed:    "Call failed",
+  };
+
+  const outcomeLabels: Record<string, string> = {
+    interested:         "✅ Interested",
+    not_interested:     "❌ Not interested",
+    callback_requested: "📅 Callback requested",
+    wrong_number:       "⚠️ Wrong number",
+    do_not_call:        "🚫 Do not call",
+    voicemail:          "📬 Voicemail",
+    no_answer:          "📵 No answer",
+    pending:            "⏳ Processing…",
+  };
+
+  const isActive = phase === "calling" || phase === "connected";
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !isActive) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PhoneCall className="h-4 w-4 text-emerald-400" />
+            Test Call — {agent.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            This places a real outbound call to the number you enter, using this agent's voice, prompt, and settings.
+          </p>
+
+          <div className="space-y-1.5">
+            <Label>Phone Number</Label>
+            <Input
+              placeholder="+91 98765 43210"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={isActive}
+            />
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          {/* Status area */}
+          {phase !== "idle" && (
+            <div className={`rounded-lg border px-4 py-3 text-sm flex items-center gap-3 ${
+              phase === "connected"  ? "border-emerald-500/40 bg-emerald-500/8 text-emerald-300" :
+              phase === "ended"      ? "border-primary/30 bg-primary/5 text-foreground" :
+              phase === "no_answer"  ? "border-orange-500/40 bg-orange-500/8 text-orange-300" :
+              phase === "failed"     ? "border-destructive/40 bg-destructive/8 text-destructive" :
+              "border-border bg-surface-1 text-muted-foreground"
+            }`}>
+              {isActive
+                ? <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+                : phase === "ended"
+                  ? <CheckCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                  : <PhoneOff className="h-4 w-4 flex-shrink-0" />
+              }
+              <div>
+                <div className="font-medium">{phaseLabel[phase]}</div>
+                {phase === "ended" && outcome && (
+                  <div className="text-xs mt-0.5 text-muted-foreground">
+                    Outcome: {outcomeLabels[outcome] ?? outcome}
+                    {duration != null && ` · ${Math.round(duration / 60)}m ${duration % 60}s`}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} disabled={isActive}>
+            {isActive ? "Call in progress…" : "Close"}
+          </Button>
+          {phase === "idle" || phase === "ended" || phase === "no_answer" || phase === "failed" ? (
+            <Button
+              className="bg-gradient-primary text-white shadow-glow"
+              onClick={startCall}
+              disabled={isActive}
+            >
+              <Phone className="h-4 w-4" />
+              {phase === "idle" ? "Start Test Call" : "Call Again"}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 
 // ── Agent Create/Edit Modal ───────────────────────────────────────────────────
 interface AgentModalProps {

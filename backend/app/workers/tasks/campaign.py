@@ -660,6 +660,103 @@ def run_campaign(self, campaign_id: str) -> None:
     asyncio.run(_run_campaign_async(campaign_id))
 
 
+# ── Test call ─────────────────────────────────────────────────────────────────
+
+async def _run_test_call_async(
+    agent_id: str,
+    phone_number: str,
+    call_id: str,
+    org_id: str,
+) -> None:
+    """Place a single test call for an agent template (no campaign)."""
+    from uuid import UUID as _UUID
+
+    async with AsyncSessionLocal() as session:
+        call_row = await session.get(Call, _UUID(call_id))
+        agent = await session.get(AgentTemplate, _UUID(agent_id))
+        if not agent or not call_row:
+            log.error("test_call_missing_records", agent_id=agent_id, call_id=call_id)
+            return
+
+        room_name = call_row.livekit_room_name
+
+        livekit_trunk_id = await session.scalar(
+            select(SipTrunk.livekit_trunk_id).where(
+                SipTrunk.org_id == _UUID(org_id),
+                SipTrunk.is_default.is_(True),
+                SipTrunk.is_active.is_(True),
+                SipTrunk.deleted_at.is_(None),
+            )
+        ) or settings.DEFAULT_SIP_TRUNK_ID
+
+        system_prompt  = agent.system_prompt or ""
+        welcome_msg    = agent.welcome_message or ""
+        voice_id       = agent.voice_id or ""
+        llm_model      = agent.llm_model or ""
+        llm_temperature = float(agent.llm_temperature or 0.7)
+
+    log.info("test_call_start", call_id=call_id, phone=phone_number, room=room_name)
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        place_result = await _place_call(
+            http,
+            room_name=room_name,
+            phone=phone_number,
+            contact_name="Test",
+            livekit_trunk_id=livekit_trunk_id,
+            call_id=call_id,
+            campaign_id="",
+            org_id=org_id,
+            agent_template_id=agent_id,
+            system_prompt=system_prompt,
+            welcome_message=welcome_msg,
+            voice_id=voice_id,
+            llm_model=llm_model,
+            llm_temperature=llm_temperature,
+        )
+
+        log.info("test_call_placed", call_id=call_id, result=place_result)
+
+        if place_result == "placed":
+            await _wait_for_room_empty(
+                http,
+                room_name=room_name,
+                timeout_seconds=660,
+                campaign_id="",  # no campaign lock — refresh is a harmless no-op
+            )
+
+    # Finalize the Call row
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        call_row = await session.get(Call, _UUID(call_id))
+        if call_row:
+            if place_result == "no_answer":
+                call_row.status = CallStatus.NO_ANSWER
+                call_row.outcome = CallOutcome.NO_ANSWER
+            elif place_result == "failed":
+                call_row.status = CallStatus.FAILED
+            else:
+                # Agent will POST the real outcome via /calls/{id}/agent-report
+                call_row.status = CallStatus.COMPLETED
+            call_row.ended_at = now
+            if call_row.started_at:
+                call_row.duration_seconds = int((now - call_row.started_at).total_seconds())
+            await session.commit()
+
+    log.info("test_call_done", call_id=call_id, result=place_result)
+
+
+@celery_app.task(
+    name="app.workers.tasks.campaign.place_test_call",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+)
+def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id: str) -> None:
+    """Place a single test call for an agent template (no campaign)."""
+    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id))
+
+
 @celery_app.task(name="app.workers.tasks.campaign.resume_stalled_campaigns", bind=True)
 def resume_stalled_campaigns(self) -> None:
     """

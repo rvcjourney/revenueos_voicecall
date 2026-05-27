@@ -103,6 +103,11 @@ export const agentsApi = {
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", {
       raw_input: rawInput,
     }),
+  testCall: (agentId: string, phoneNumber: string) =>
+    api.post<{ call_id: string; status: string }>(
+      `/api/agents/${agentId}/test-call`,
+      { phone_number: phoneNumber }
+    ),
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
