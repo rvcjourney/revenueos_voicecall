@@ -500,6 +500,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         model                 = ELEVENLABS_MODEL_ID,
         encoding              = "pcm_24000",
         chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
+        speed                 = 1.15,  # 15% faster than default — natural sales pace (range: 0.7–1.2)
         voice_settings        = elevenlabs.VoiceSettings(
             stability         = 0.65,  # consistent tone across chunks — prevents mid-sentence tone shifts
             similarity_boost  = 0.85,  # stay true to voice character
