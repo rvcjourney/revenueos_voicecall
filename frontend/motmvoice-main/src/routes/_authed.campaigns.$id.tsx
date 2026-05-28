@@ -3,7 +3,7 @@ import { CampaignBadge, OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed } from "lucide-react";
+import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { useCampaign, useCalls } from "@/lib/hooks";
 import { campaignsApi, type CallOut } from "@/lib/api";
@@ -30,7 +30,8 @@ function CampaignDetail() {
   const { data: callsData } = useCalls({ campaign_id: id, limit: 200 });
 
   const calls = callsData?.items ?? [];
-  const interestedCalls = calls.filter((c) => c.outcome === "interested");
+  const interestedCalls    = calls.filter((c) => c.outcome === "interested");
+  const callbackCalls      = calls.filter((c) => c.outcome === "callback_requested");
   const notInterestedCalls = calls.filter((c) =>
     ["not_interested", "do_not_call", "wrong_number"].includes(c.outcome)
   );
@@ -140,6 +141,10 @@ function CampaignDetail() {
             <Heart className="h-3 w-3 mr-1 text-success" />
             Interested ({interestedCalls.length})
           </TabsTrigger>
+          <TabsTrigger value="callback">
+            <CalendarClock className="h-3 w-3 mr-1 text-amber-400" />
+            Callback ({callbackCalls.length})
+          </TabsTrigger>
           <TabsTrigger value="not_interested">
             <XCircle className="h-3 w-3 mr-1 text-destructive" />
             Not Interested ({notInterestedCalls.length})
@@ -172,6 +177,26 @@ function CampaignDetail() {
             </div>
           )}
           <CallTable calls={interestedCalls} emptyText="No interested leads yet" highlightPhone="text-success" />
+        </TabsContent>
+
+        <TabsContent value="callback" className="mt-4">
+          {callbackCalls.length > 0 && (
+            <div className="flex justify-end mb-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  campaignsApi.exportCallbackLeads(
+                    id,
+                    `${campaign.name.replace(/\s+/g, "_")}_callback_leads.csv`
+                  ).catch(() => toast.error("Export failed"))
+                }
+              >
+                <Download className="h-4 w-4 mr-1" /> Download CSV
+              </Button>
+            </div>
+          )}
+          <CallTable calls={callbackCalls} emptyText="No callback requests yet" highlightPhone="text-amber-400" />
         </TabsContent>
 
         <TabsContent value="not_interested" className="mt-4">

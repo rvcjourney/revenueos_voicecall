@@ -355,6 +355,43 @@ async def export_no_answer_calls(
     )
 
 
+@router.get("/{campaign_id}/export/callback_requested")
+async def export_callback_leads(
+    campaign_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a CSV of all calls where the customer requested a callback."""
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
+        raise NotFoundError("Campaign not found")
+
+    rows = (await db.execute(
+        select(Call)
+        .where(
+            Call.campaign_id == campaign_id,
+            Call.outcome == CallOutcome.CALLBACK_REQUESTED,
+        )
+        .order_by(Call.started_at.desc())
+    )).scalars().all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Phone Number", "Call Date", "Duration (min)", "Summary"])
+    for call in rows:
+        date_str = call.started_at.strftime("%Y-%m-%d %H:%M") if call.started_at else ""
+        duration = f"{round(call.duration_seconds / 60, 1)}" if call.duration_seconds else ""
+        writer.writerow([call.phone_number, date_str, duration, call.summary or ""])
+
+    buf.seek(0)
+    filename = f"{campaign.name.replace(' ', '_')}_callback_leads.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{campaign_id}/pause", response_model=CampaignOut)
 async def pause_campaign(
     campaign_id: UUID,

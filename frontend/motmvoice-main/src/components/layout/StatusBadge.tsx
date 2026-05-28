@@ -60,16 +60,42 @@ const outcomeTokens: Record<string, BadgeToken> = {
     text:   "oklch(0.50 0.010 270)",
     border: "oklch(0.20 0.012 270 / 0.50)",
   },
+  callback_requested: {
+    bg:     "oklch(0.72 0.18 55 / 0.12)",
+    text:   "oklch(0.80 0.15 55)",
+    border: "oklch(0.72 0.18 55 / 0.30)",
+    glow:   "0 0 8px oklch(0.72 0.18 55 / 0.18)",
+    dot:    "oklch(0.80 0.15 55)",
+  },
+  do_not_call: {
+    bg:     "oklch(0.62 0.23 25 / 0.10)",
+    text:   "oklch(0.65 0.18 25)",
+    border: "oklch(0.62 0.23 25 / 0.25)",
+  },
+  wrong_number: {
+    bg:     "oklch(0.130 0.013 270 / 0.80)",
+    text:   "oklch(0.50 0.010 270)",
+    border: "oklch(0.20 0.012 270 / 0.50)",
+  },
+  voicemail: {
+    bg:     "oklch(0.545 0.220 252 / 0.10)",
+    text:   "oklch(0.65 0.14 252)",
+    border: "oklch(0.545 0.220 252 / 0.25)",
+  },
 };
 
 const outcomeLabel: Record<string, string> = {
-  interested:     "Interested",
-  completed:      "Completed",
-  not_interested: "Not Interested",
-  no_answer:      "No Answer",
-  failed:         "Failed",
-  in_progress:    "In Progress",
-  pending:        "Pending",
+  interested:          "Interested",
+  completed:           "Completed",
+  not_interested:      "Not Interested",
+  no_answer:           "No Answer",
+  failed:              "Failed",
+  in_progress:         "In Progress",
+  pending:             "Pending",
+  callback_requested:  "Callback",
+  do_not_call:         "Do Not Call",
+  wrong_number:        "Wrong Number",
+  voicemail:           "Voicemail",
 };
 
 // ── Outcome Badge ─────────────────────────────────────────────────────────────

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from uuid import UUID
 
+import aiohttp
 import httpx
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
@@ -153,6 +155,51 @@ async def get_call(
     if not call:
         raise NotFoundError("Call not found")
     return _to_detail(call)
+
+
+@router.post("/{call_id}/fetch-recording", status_code=status.HTTP_200_OK)
+async def fetch_recording(
+    call_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually retry fetching a recording from Vobiz for a completed call.
+    Returns {"found": true} if recording URL was saved, {"found": false} if not available yet.
+    """
+    result = await db.execute(
+        select(Call).where(Call.id == call_id, Call.org_id == token.org_id)
+    )
+    call = result.scalar_one_or_none()
+    if not call:
+        raise NotFoundError("Call not found")
+
+    if not settings.VOBIZ_AUTH_ID or not settings.VOBIZ_AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="Vobiz credentials not configured")
+
+    # Use a wide window (2 hours before call start) to avoid timezone/clock-skew issues
+    called_after = (call.started_at - timedelta(hours=2)) if call.started_at else None
+    if not called_after:
+        raise HTTPException(status_code=422, detail="Call has no start time")
+
+    from app.core.vobiz import fetch_recording_for_call
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+        url = await fetch_recording_for_call(
+            http,
+            auth_id=settings.VOBIZ_AUTH_ID,
+            auth_token=settings.VOBIZ_AUTH_TOKEN,
+            to_number=call.phone_number,
+            called_after=called_after.replace(tzinfo=timezone.utc) if called_after.tzinfo is None else called_after,
+            retries=2,
+            retry_delay=2.0,
+        )
+
+    if url:
+        await db.execute(update(Call).where(Call.id == call_id).values(recording_url=url))
+        await db.commit()
+        return {"found": True, "recording_url": url}
+
+    return {"found": False}
 
 
 @router.get("/{call_id}/recording")

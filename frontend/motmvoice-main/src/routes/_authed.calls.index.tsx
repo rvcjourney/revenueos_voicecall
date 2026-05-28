@@ -68,7 +68,7 @@ function CallHistory() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Outcomes</SelectItem>
-            {["interested", "not_interested", "no_answer", "failed", "do_not_call", "wrong_number"].map((o) => (
+            {["interested", "callback_requested", "not_interested", "no_answer", "failed", "do_not_call", "wrong_number", "voicemail"].map((o) => (
               <SelectItem key={o} value={o}>{o.replace(/_/g, " ")}</SelectItem>
             ))}
           </SelectContent>

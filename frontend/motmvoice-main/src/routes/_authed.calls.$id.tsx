@@ -2,9 +2,11 @@ import { createFileRoute, Link, useParams } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download, FileText, Loader2, Mic, MicOff } from "lucide-react";
-import { api } from "@/lib/api";
+import { ArrowLeft, Download, FileText, Loader2, Mic, MicOff, RefreshCw } from "lucide-react";
+import { api, callsApi } from "@/lib/api";
 import { useCall } from "@/lib/hooks";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_authed/calls/$id")({
   head: () => ({ meta: [{ title: "Call Detail — MOTMVoice" }] }),
@@ -48,8 +50,27 @@ function fmtDur(s: number | null | undefined) {
 function CallDetail() {
   const { id } = useParams({ from: "/_authed/calls/$id" });
   const { data, isLoading, isError } = useCall(id);
+  const qc = useQueryClient();
+  const [retrying, setRetrying] = useState(false);
   // Must be called before any early returns — Rules of Hooks
   const { blobUrl, loading: recordingLoading } = useRecordingBlob(id, !!data?.recording_url);
+
+  async function handleRetryRecording() {
+    setRetrying(true);
+    try {
+      const res = await callsApi.fetchRecording(id);
+      if (res.data.found) {
+        toast.success("Recording found and saved!");
+        qc.invalidateQueries({ queryKey: ["calls", id] });
+      } else {
+        toast.error("Recording not available yet on Vobiz. Try again in a minute.");
+      }
+    } catch {
+      toast.error("Failed to fetch recording.");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -114,9 +135,22 @@ function CallDetail() {
                 <MicOff className="h-8 w-8 opacity-40" />
                 <p className="text-sm">
                   {c.status === "completed"
-                    ? "Recording not yet available — check back in a minute"
+                    ? "Recording not yet available on this call"
                     : "No recording for this call"}
                 </p>
+                {c.status === "completed" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={retrying}
+                    onClick={handleRetryRecording}
+                  >
+                    {retrying
+                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Checking Vobiz…</>
+                      : <><RefreshCw className="h-3 w-3" /> Retry Fetch Recording</>
+                    }
+                  </Button>
+                )}
               </div>
             )}
           </div>
