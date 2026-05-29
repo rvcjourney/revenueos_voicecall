@@ -1,7 +1,8 @@
 import { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { Mic, Zap, Shield, Globe } from "lucide-react";
+import { Zap, Shield, Globe } from "lucide-react";
 import { SoundWave } from "./SoundWave";
+import { LogoMark } from "@/components/Logo";
 
 const FEATURES = [
   { icon: Zap,    text: "1,500+ calls per day on autopilot"         },
@@ -81,19 +82,21 @@ export function AuthLayout({
         />
 
         {/* Logo */}
-        <Link to="/" className="relative z-10 flex items-center gap-2.5 w-fit">
-          <div
-            className="h-9 w-9 rounded-lg grid place-items-center"
-            style={{
-              background: `linear-gradient(135deg, ${C.orange}, oklch(0.78 0.17 62))`,
-              boxShadow: `0 0 20px ${C.orange}40`,
-            }}
-          >
-            <Mic className="h-4 w-4" style={{ color: C.white }} />
+        <Link to="/" className="relative z-10 flex items-center gap-3 w-fit">
+          <div style={{ filter: `drop-shadow(0 0 14px oklch(0.55 0.24 278 / 0.65))` }}>
+            <LogoMark size={40} />
           </div>
           <div>
-            <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.text }}>
-              MOTMVoice
+            <div
+              className="font-bold text-[16px] tracking-tight leading-none"
+              style={{
+                background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+              }}
+            >
+              MOTM<span style={{ fontWeight: 300 }}>Voice</span>
             </div>
             <div className="text-[10px] font-semibold mt-0.5 tracking-wide" style={{ color: C.primary }}>
               AI Voice Platform
@@ -211,19 +214,21 @@ export function AuthLayout({
         <div className="relative w-full max-w-sm fade-up">
 
           {/* Mobile logo */}
-          <div className="lg:hidden mb-8 flex items-center gap-2.5">
-            <div
-              className="h-9 w-9 rounded-lg grid place-items-center"
-              style={{
-                background: `linear-gradient(135deg, ${C.orange}, oklch(0.78 0.17 62))`,
-                boxShadow: `0 0 20px ${C.orange}40`,
-              }}
-            >
-              <Mic className="h-4 w-4" style={{ color: C.white }} />
+          <div className="lg:hidden mb-8 flex items-center gap-3">
+            <div style={{ filter: `drop-shadow(0 0 10px oklch(0.55 0.24 278 / 0.55))` }}>
+              <LogoMark size={36} />
             </div>
             <div>
-              <div className="font-bold text-[15px] tracking-tight leading-none" style={{ color: C.text }}>
-                MOTMVoice
+              <div
+                className="font-bold text-[15px] tracking-tight leading-none"
+                style={{
+                  background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
+              >
+                MOTM<span style={{ fontWeight: 300 }}>Voice</span>
               </div>
               <div className="text-[10px] font-semibold mt-0.5" style={{ color: C.primary }}>
                 AI Voice Platform

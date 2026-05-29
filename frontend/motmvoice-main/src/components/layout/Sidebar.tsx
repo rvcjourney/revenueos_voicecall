@@ -1,9 +1,10 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
-  Mic, LayoutDashboard, Megaphone, Phone,
+  LayoutDashboard, Megaphone, Phone,
   Bot, BarChart3, Settings, LogOut, Zap,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { LogoMark } from "@/components/Logo";
 
 // ── Nav config ───────────────────────────────────────────────────────────────
 const mainNav = [
@@ -113,31 +114,27 @@ export function Sidebar() {
       {/* ── Logo ──────────────────────────────────────────────────────────── */}
       <Link
         to="/dashboard"
-        className="relative flex items-center gap-3 px-5 h-[60px] shrink-0"
+        className="relative flex items-center gap-3 px-4 h-[62px] shrink-0"
         style={{ borderBottom: "1px solid var(--sidebar-border)" }}
       >
-        {/* Gradient icon cube with floating glow */}
-        <div
-          className="h-8 w-8 rounded-lg grid place-items-center shrink-0 float-glow"
-          style={{
-            backgroundImage: "var(--gradient-primary)",
-            boxShadow: "0 0 20px oklch(0.565 0.240 284 / 0.45), 0 0 8px oklch(0.565 0.240 284 / 0.25)",
-          }}
-        >
-          <Mic className="h-4 w-4" style={{ color: "oklch(0.990 0.003 280)", filter: "drop-shadow(0 0 4px oklch(1 0 0 / 0.4))" }} />
+        <div className="shrink-0 float-glow" style={{ filter: "drop-shadow(0 0 10px oklch(0.55 0.24 278 / 0.55))" }}>
+          <LogoMark size={36} />
         </div>
-
-        {/* Name + sub-label */}
         <div className="min-w-0">
-          <div className="font-bold text-[14px] tracking-tight leading-none text-foreground">
-            MOTMVoice
+          <div
+            className="font-bold text-[14px] tracking-tight leading-none"
+            style={{
+              background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            MOTM<span style={{ fontWeight: 300 }}>Voice</span>
           </div>
           <div className="flex items-center gap-1 mt-0.5">
             <Zap className="h-2.5 w-2.5" style={{ color: "oklch(0.70 0.18 284)" }} />
-            <span
-              className="text-[10px] font-semibold tracking-wide"
-              style={{ color: "oklch(0.70 0.18 284)" }}
-            >
+            <span className="text-[10px] font-semibold tracking-wide" style={{ color: "oklch(0.68 0.16 270)" }}>
               AI Voice Platform
             </span>
           </div>

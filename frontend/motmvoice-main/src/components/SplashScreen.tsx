@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LogoMark } from "@/components/Logo";
 
 const WAVE_DELAYS  = [0, 0.12, 0.22, 0.08, 0.32, 0.18, 0.28, 0.04, 0.36, 0.14, 0.24, 0.06, 0.30, 0.16, 0.40, 0.10];
 const WAVE_HEIGHTS = [16, 32, 44, 28, 48, 36, 52, 24, 44, 40, 20, 36, 48, 28, 40, 18];
@@ -53,18 +54,10 @@ export function SplashScreen() {
 
         {/* Logo badge */}
         <div className="splash-logo-wrap">
-          <div className="splash-logo">
-            <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
-              <path
-                d="M6 36V10L21 24L36 10V36"
-                stroke="white"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <div className="splash-logo-ring" />
+          <div className="splash-logo-inner">
+            <LogoMark size={88} />
           </div>
+          <div className="splash-logo-ring" />
         </div>
 
         {/* Brand name — letter by letter */}
