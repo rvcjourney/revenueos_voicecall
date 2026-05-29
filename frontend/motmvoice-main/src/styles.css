@@ -390,18 +390,21 @@ html.dark { color-scheme: dark; }
   66%       { transform: translate(-15px, 20px) scale(0.97); }
 }
 
-/* ── Body state while splash is active ──────────────────────────────────── */
+/* ── Splash guard (set by inline <script> in <head> before first paint) ─── */
 
-/* Hides app content so nothing bleeds through before the splash starts */
-body.splash-active #app-root {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* App content fades in smoothly once splash-active is removed */
+/* Default: app root is fully visible */
 #app-root {
   opacity: 1;
-  transition: opacity 0.70s ease 0.10s;
+  transition: opacity 0.80s ease;
+}
+
+/* While html.splash-active is present, hide the app root completely.
+   The inline script adds this class synchronously before any paint,
+   so the dashboard is never visible before the splash. */
+html.splash-active #app-root {
+  opacity: 0;
+  pointer-events: none;
+  transition: none; /* no transition INTO hidden — instant block */
 }
 
 /* ── Root container ──────────────────────────────────────────────────────── */

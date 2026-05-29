@@ -7,43 +7,31 @@ const WAVE_HEIGHTS = [16, 32, 44, 28, 48, 36, 52, 24, 44, 40, 20, 36, 48, 28, 40
 const MOTM_DELAYS  = [0.45, 0.52, 0.59, 0.66];
 const VOICE_DELAYS = [0.82, 0.89, 0.96, 1.03, 1.10];
 
-// Checked synchronously so the splash is visible on the very first render —
-// no useEffect delay means zero flash of the underlying app.
-function shouldShowSplash(): boolean {
-  try {
-    if (typeof window === "undefined") return false;
-    if (sessionStorage.getItem("motm_splash_done")) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const SHOW = shouldShowSplash();
-
 export function SplashScreen() {
-  const [visible, setVisible] = useState(SHOW);
+  // Start hidden — the inline <script> in <head> already hid #app-root via CSS.
+  // useEffect will show the splash after hydration.
+  const [visible, setVisible] = useState(false);
   const [phase, setPhase]     = useState<"in" | "hold" | "out">("in");
 
   useEffect(() => {
-    if (!visible) return;
+    // If the inline script did NOT add splash-active (already visited), skip.
+    if (!document.documentElement.classList.contains("splash-active")) return;
 
-    // Mark done before timers so rapid re-mounts don't double-show
     try { sessionStorage.setItem("motm_splash_done", "1"); } catch { /* noop */ }
 
-    // Body class hides app content behind the splash — removed on exit
-    document.body.classList.add("splash-active");
+    setVisible(true);
 
     const t1 = setTimeout(() => setPhase("hold"), 700);
     const t2 = setTimeout(() => setPhase("out"),  2600);
     const t3 = setTimeout(() => {
       setVisible(false);
-      document.body.classList.remove("splash-active");
+      // Removing the class triggers the CSS transition that reveals #app-root
+      document.documentElement.classList.remove("splash-active");
     }, 3500);
 
     return () => {
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
-      document.body.classList.remove("splash-active");
+      document.documentElement.classList.remove("splash-active");
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

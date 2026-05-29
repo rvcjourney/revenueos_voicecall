@@ -113,6 +113,15 @@ function RootShell({ children }: { children: React.ReactNode }) {
     <html lang="en" className="dark">
       <head>
         <HeadContent />
+        {/* Splash guard — runs synchronously before any paint.
+            Adds 'splash-active' to <html> if this is the first visit this session.
+            CSS hides #app-root while this class is present, so dashboard never
+            flashes before the splash animation plays. */}
+        <script dangerouslySetInnerHTML={{ __html:
+          `(function(){try{if(!sessionStorage.getItem('motm_splash_done')){` +
+          `document.documentElement.classList.add('splash-active');` +
+          `}}catch(e){}})();`
+        }} />
         <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} />
         <script
           dangerouslySetInnerHTML={{
