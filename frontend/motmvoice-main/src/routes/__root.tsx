@@ -16,6 +16,7 @@ import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/auth";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider, useTheme } from "@/lib/theme";
+import { SplashScreen } from "@/components/SplashScreen";
 
 // Single fixed theme — no flash script needed.
 
@@ -151,6 +152,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
+          <SplashScreen />
           <Analytics />
           <Outlet />
           <ThemedToaster />
