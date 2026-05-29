@@ -345,6 +345,35 @@ html.dark { color-scheme: dark; }
   to   { opacity: 1; transform: translateY(0)    skewX(0deg);  filter: blur(0); }
 }
 
+/* Each letter drops in from above with blur-to-sharp */
+@keyframes splash-letter-in {
+  0%   { opacity: 0; transform: translateY(-28px) scale(1.4); filter: blur(12px); }
+  55%  { opacity: 1; filter: blur(0); transform: translateY(4px) scale(0.97); }
+  80%  { transform: translateY(-2px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+/* Continuous glow-pulse on the word after it's fully revealed */
+@keyframes splash-word-glow {
+  0%, 100% {
+    text-shadow:
+      0 0 12px oklch(0.65 0.22 270 / 0.50),
+      0 0 30px oklch(0.58 0.24 278 / 0.25);
+  }
+  50% {
+    text-shadow:
+      0 0 24px oklch(0.70 0.24 268 / 0.80),
+      0 0 60px oklch(0.60 0.26 280 / 0.45),
+      0 0 100px oklch(0.55 0.22 270 / 0.20);
+  }
+}
+
+/* Shimmer sweep left-to-right across the brand text */
+@keyframes splash-shimmer-sweep {
+  0%   { background-position: -400px center; }
+  100% { background-position:  400px center; }
+}
+
 @keyframes splash-fade-up {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -481,34 +510,63 @@ body.splash-active #app-root {
   animation: splash-ring-pulse 1.6s cubic-bezier(0, 0, 0.2, 1) 0.5s infinite;
 }
 
-/* ── Brand text ─────────────────────────────────────────────────────────── */
+/* ── Brand text — letter-by-letter reveal ───────────────────────────────── */
 
 .splash-brand {
   display: flex;
   align-items: baseline;
-  gap: 0;
-  animation: splash-text-in 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.45s both;
+  gap: 6px;
+  /* Glow pulse starts after last letter lands (~1.3s) */
+  animation: splash-word-glow 2.4s ease-in-out 1.3s infinite;
 }
 
-.splash-brand-motm {
+.splash-brand-motm-wrap,
+.splash-brand-voice-wrap {
+  display: flex;
+  align-items: baseline;
+}
+
+/* Individual letter base */
+.splash-letter {
+  display: inline-block;
   font-family: var(--font-sans);
-  font-size: 52px;
-  font-weight: 800;
-  letter-spacing: -2px;
   line-height: 1;
-  background: linear-gradient(135deg, #fff 30%, oklch(0.75 0.18 262) 100%);
+  opacity: 0;
+  animation: splash-letter-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* Each letter holds its final state */
+  animation-fill-mode: both;
+}
+
+/* MOTM — heavy bold white-to-blue gradient */
+.splash-letter-bold {
+  font-size: 58px;
+  font-weight: 800;
+  letter-spacing: -2.5px;
+  background: linear-gradient(
+    160deg,
+    #ffffff   0%,
+    oklch(0.90 0.08 260) 40%,
+    oklch(0.75 0.20 268) 75%,
+    oklch(0.65 0.24 278) 100%
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  /* Shimmer sweep runs after reveal */
+  background-size: 300% 100%;
+  animation:
+    splash-letter-in      0.55s cubic-bezier(0.22, 1, 0.36, 1) both,
+    splash-shimmer-sweep  2.0s  linear 1.4s infinite;
 }
 
-.splash-brand-voice {
-  font-family: var(--font-sans);
-  font-size: 52px;
+/* Voice — thin elegant lighter violet */
+.splash-letter-light {
+  font-size: 58px;
   font-weight: 300;
   letter-spacing: -1px;
-  line-height: 1;
-  color: oklch(0.65 0.16 265);
+  color: oklch(0.68 0.17 270);
+  /* Slight glow on each light letter */
+  filter: drop-shadow(0 0 8px oklch(0.65 0.20 272 / 0.50));
 }
 
 /* ── Tagline ────────────────────────────────────────────────────────────── */
@@ -520,7 +578,7 @@ body.splash-active #app-root {
   letter-spacing: 4px;
   text-transform: uppercase;
   color: oklch(0.55 0.06 262);
-  animation: splash-fade-up 0.5s ease 0.85s both;
+  animation: splash-fade-up 0.5s ease 1.25s both;
   margin-top: -16px;
 }
 
