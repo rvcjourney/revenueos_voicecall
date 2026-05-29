@@ -361,6 +361,20 @@ html.dark { color-scheme: dark; }
   66%       { transform: translate(-15px, 20px) scale(0.97); }
 }
 
+/* ── Body state while splash is active ──────────────────────────────────── */
+
+/* Hides app content so nothing bleeds through before the splash starts */
+body.splash-active #app-root {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* App content fades in smoothly once splash-active is removed */
+#app-root {
+  opacity: 1;
+  transition: opacity 0.70s ease 0.10s;
+}
+
 /* ── Root container ──────────────────────────────────────────────────────── */
 
 .splash-root {
@@ -372,11 +386,12 @@ html.dark { color-scheme: dark; }
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  animation: splash-appear 0.25s ease both;
+  /* No fade-in — appear instantly to cover the app from frame 1 */
+  opacity: 1;
 }
 
 .splash-root[data-phase="out"] {
-  animation: splash-disappear 0.80s cubic-bezier(0.4, 0, 1, 1) both;
+  animation: splash-disappear 0.90s cubic-bezier(0.4, 0, 1, 1) both;
   pointer-events: none;
 }
 

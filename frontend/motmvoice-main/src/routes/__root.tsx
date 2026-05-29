@@ -153,9 +153,11 @@ function RootComponent() {
       <ThemeProvider>
         <AuthProvider>
           <SplashScreen />
-          <Analytics />
-          <Outlet />
-          <ThemedToaster />
+          <div id="app-root">
+            <Analytics />
+            <Outlet />
+            <ThemedToaster />
+          </div>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

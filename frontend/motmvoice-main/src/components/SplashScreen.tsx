@@ -1,22 +1,47 @@
 import { useEffect, useState } from "react";
 
-const WAVE_DELAYS = [0, 0.12, 0.22, 0.08, 0.32, 0.18, 0.28, 0.04, 0.36, 0.14, 0.24, 0.06, 0.30, 0.16, 0.40, 0.10];
+const WAVE_DELAYS  = [0, 0.12, 0.22, 0.08, 0.32, 0.18, 0.28, 0.04, 0.36, 0.14, 0.24, 0.06, 0.30, 0.16, 0.40, 0.10];
 const WAVE_HEIGHTS = [16, 32, 44, 28, 48, 36, 52, 24, 44, 40, 20, 36, 48, 28, 40, 18];
 
+// Checked synchronously so the splash is visible on the very first render —
+// no useEffect delay means zero flash of the underlying app.
+function shouldShowSplash(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    if (sessionStorage.getItem("motm_splash_done")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const SHOW = shouldShowSplash();
+
 export function SplashScreen() {
-  const [visible, setVisible] = useState(false);
-  const [phase, setPhase] = useState<"in" | "hold" | "out">("in");
+  const [visible, setVisible] = useState(SHOW);
+  const [phase, setPhase]     = useState<"in" | "hold" | "out">("in");
 
   useEffect(() => {
-    if (sessionStorage.getItem("motm_splash_done")) return;
-    sessionStorage.setItem("motm_splash_done", "1");
-    setVisible(true);
+    if (!visible) return;
 
-    const t1 = setTimeout(() => setPhase("hold"), 600);
-    const t2 = setTimeout(() => setPhase("out"), 2400);
-    const t3 = setTimeout(() => setVisible(false), 3200);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, []);
+    // Mark done before timers so rapid re-mounts don't double-show
+    try { sessionStorage.setItem("motm_splash_done", "1"); } catch { /* noop */ }
+
+    // Body class hides app content behind the splash — removed on exit
+    document.body.classList.add("splash-active");
+
+    const t1 = setTimeout(() => setPhase("hold"), 700);
+    const t2 = setTimeout(() => setPhase("out"),  2600);
+    const t3 = setTimeout(() => {
+      setVisible(false);
+      document.body.classList.remove("splash-active");
+    }, 3500);
+
+    return () => {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      document.body.classList.remove("splash-active");
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!visible) return null;
 
@@ -73,7 +98,7 @@ export function SplashScreen() {
           ))}
         </div>
 
-        {/* Version label */}
+        {/* Credits */}
         <div className="splash-version">Powered by LiveKit · ElevenLabs · Groq</div>
       </div>
     </div>
