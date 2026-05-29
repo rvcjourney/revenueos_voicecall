@@ -82,7 +82,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "MOTMVoice — AI Voice Sales Call Automation" },
+      { title: "MOTMVoice — AI Voice Call Automation" },
       { name: "description", content: "Automate 1500+ outbound sales calls daily with human-like AI voice agents in Hinglish, English & 20+ languages." },
       { name: "author", content: "MOTMVoice" },
       { property: "og:title", content: "MOTMVoice — AI Voice Sales Call Automation" },
