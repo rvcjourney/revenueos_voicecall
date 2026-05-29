@@ -372,6 +372,31 @@ class VoiceAgent(Agent):
             for m in full_transcript
         ) or "\n".join(f"CUSTOMER: {t}" for t in self._user_messages)
 
+        # ── Minimum engagement gate ────────────────────────────────────────────
+        # Count how many words the customer actually said across all turns.
+        # If they barely spoke, there is no evidence of interest — skip the LLM
+        # entirely and classify as not_interested immediately.
+        customer_word_count = sum(
+            len(m.get("text", "").split())
+            for m in full_transcript
+            if m.get("role") == "user"
+        )
+        if customer_word_count < 8:
+            logger.info(
+                "classify_skip: customer only spoke %d words — marking not_interested",
+                customer_word_count,
+            )
+            outcome = "not_interested"
+            summary = "Customer did not engage meaningfully in the conversation."
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                await http.post(
+                    f"{self._backend_url}/api/calls/{self._call_id}/agent-report",
+                    json={"outcome": outcome, "summary": summary, "transcript": full_transcript},
+                )
+            logger.info("post_call_report_sent | call=%s outcome=%s words=%d", self._call_id, outcome, customer_word_count)
+            return
+
+        # ── LLM classification (customer said enough to judge) ─────────────────
         outcome, summary = "not_interested", ""
         try:
             import groq as _groq
@@ -384,26 +409,30 @@ class VoiceAgent(Agent):
                     {
                         "role": "system",
                         "content": (
-                            "You analyze sales call transcripts (may contain speech-to-text errors — read intent, not exact words). "
-                            "Reply ONLY with valid JSON, no extra text.\n"
-                            'Format: {"outcome": "...", "summary": "..."}\n'
-                            "outcome must be exactly one of:\n"
-                            "  interested          - Use this when ANY of these are true:\n"
-                            "                        • Customer shared or confirmed WhatsApp/phone/email\n"
-                            "                        • Customer agreed to receive catalogue, quote, or details\n"
-                            "                        • Customer said they will send an inquiry or think about it\n"
-                            "                        • Customer asked about price, availability, or product specs\n"
-                            "                        • Customer mentioned they purchase similar products\n"
-                            "                        • Conversation lasted more than 3 exchanges without rejection\n"
-                            "                        WHEN IN DOUBT → use interested\n"
-                            "  callback_requested  - Customer explicitly asked to be called at a specific later time\n"
-                            "  not_interested      - Customer gave FIRM rejection: 'nahi chahiye', 'mat karo call', 'not needed', hung up immediately\n"
-                            "  wrong_number        - Wrong person or wrong business\n"
-                            "  do_not_call         - Customer demanded to never be called again\n"
-                            "summary: 1-2 sentences. Focus on what the customer said they need and what was agreed (catalogue sent, inquiry planned, etc.)."
+                            "You classify sales call outcomes strictly from the CUSTOMER's words in the transcript. "
+                            "Ignore STT errors — judge intent, not exact wording. "
+                            "Reply ONLY with valid JSON: {\"outcome\": \"...\", \"summary\": \"...\"}\n\n"
+                            "OUTCOME RULES — read carefully:\n\n"
+                            "  interested         — Customer showed CLEAR, ACTIVE interest. Requires at least ONE of:\n"
+                            "                       • Asked a specific question about price, availability, delivery, or specs\n"
+                            "                       • Shared or agreed to share contact info (WhatsApp, phone, email)\n"
+                            "                       • Agreed to receive catalogue, sample, demo, or quote\n"
+                            "                       • Confirmed they currently buy or use this type of product\n"
+                            "                       • Explicitly said they want to place an order or inquire\n"
+                            "                       IMPORTANT: Passive replies only ('haan', 'hmm', 'theek hai', 'okay', 'bol') "
+                            "do NOT count as interest — the customer must have asked something or agreed to something.\n\n"
+                            "  callback_requested — Customer EXPLICITLY asked to be called back at a specific later time.\n\n"
+                            "  not_interested     — DEFAULT for all other cases:\n"
+                            "                       • Customer only gave short/vague replies without engaging\n"
+                            "                       • Customer never asked a question or agreed to anything\n"
+                            "                       • Rejection: 'nahi chahiye', 'busy hoon', 'mat karo call', hung up\n"
+                            "                       WHEN IN DOUBT → use not_interested\n\n"
+                            "  wrong_number       — Wrong person or wrong business.\n\n"
+                            "  do_not_call        — Customer demanded never to be called again.\n\n"
+                            "summary: 1–2 sentences. State what the customer actually said and what (if anything) was agreed."
                         ),
                     },
-                    {"role": "user", "content": f"Call transcript:\n{transcript_text}"},
+                    {"role": "user", "content": f"Transcript:\n{transcript_text}"},
                 ],
             )
             raw = resp.choices[0].message.content.strip()
@@ -417,6 +446,10 @@ class VoiceAgent(Agent):
             valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
             if outcome not in valid:
                 outcome = "not_interested"
+            logger.info(
+                "classify_llm: call=%s outcome=%s words=%d",
+                self._call_id, outcome, customer_word_count,
+            )
         except Exception as exc:
             logger.warning("groq_classify_error: %s", exc)
 
