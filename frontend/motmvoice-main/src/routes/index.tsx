@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { SoundWave } from "@/components/marketing/SoundWave";
 import { Mic, PhoneCall, Upload, Settings2, Rocket, Download, BarChart3, Zap, Languages, FileSpreadsheet, ShieldCheck, Plug, Check } from "lucide-react";
+import { LogoMark } from "@/components/Logo";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -19,11 +20,21 @@ function Nav() {
   return (
     <nav className="sticky top-0 z-50 glass border-b border-border/40">
       <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-primary grid place-items-center shadow-glow">
-            <Mic className="h-4 w-4 text-white" />
+        <Link to="/" className="flex items-center gap-2.5">
+          <div style={{ filter: "drop-shadow(0 0 8px oklch(0.55 0.24 278 / 0.55))" }}>
+            <LogoMark size={32} />
           </div>
-          <span className="font-bold text-lg tracking-tight">MOTMVoice</span>
+          <span
+            className="font-bold text-lg tracking-tight"
+            style={{
+              background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            MOTM<span style={{ fontWeight: 300 }}>Voice</span>
+          </span>
         </Link>
         <div className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
           <a href="#features" className="hover:text-foreground transition-colors">Features</a>
@@ -269,8 +280,20 @@ function Footer() {
       <div className="mx-auto max-w-7xl px-6 py-12 grid md:grid-cols-4 gap-8 text-sm">
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <div className="h-7 w-7 rounded-lg bg-gradient-primary grid place-items-center"><Mic className="h-3.5 w-3.5 text-white" /></div>
-            <span className="font-bold">MOTMVoice</span>
+            <div style={{ filter: "drop-shadow(0 0 6px oklch(0.55 0.24 278 / 0.45))" }}>
+              <LogoMark size={28} />
+            </div>
+            <span
+              className="font-bold"
+              style={{
+                background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                backgroundClip: "text",
+              }}
+            >
+              MOTM<span style={{ fontWeight: 300 }}>Voice</span>
+            </span>
           </div>
           <p className="text-muted-foreground text-xs">Voice that converts.</p>
         </div>
