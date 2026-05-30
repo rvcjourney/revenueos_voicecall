@@ -99,7 +99,7 @@ export function AuthLayout({
               MOTM<span style={{ fontWeight: 300 }}>Voice</span>
             </div>
             <div className="text-[10px] font-semibold mt-0.5 tracking-wide" style={{ color: C.primary }}>
-              AI Voice Platform
+              AI Voice Call Platform
             </div>
           </div>
         </Link>
