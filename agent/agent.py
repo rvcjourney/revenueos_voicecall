@@ -252,7 +252,11 @@ class VoiceAgent(Agent):
         """Called when agent's own speech contains [end_call] — agent already said goodbye."""
         if self._ending:
             return
-        logger.info("TTS filter: [end_call] detected — waiting for farewell TTS to finish")
+        if self._turn_count < 5:
+            # LLM generated [end_call] too early — suppress and let conversation continue
+            logger.warning("[end_call] at turn %d (<5) — suppressing early exit", self._turn_count)
+            return
+        logger.info("TTS filter: [end_call] detected at turn %d — waiting for farewell TTS to finish", self._turn_count)
         self._ending = True
         # Goodbye text is ~10-15 words. TTS needs ~300ms to generate + ~5s to play.
         # Wait 8s so the customer always hears the complete farewell before the line drops.
@@ -297,8 +301,8 @@ class VoiceAgent(Agent):
         if text:
             self._user_messages.append(text)
 
-        # Only allow hangup-by-keyword after at least 3 customer turns
-        if self._turn_count >= 3 and _HANGUP_RE.search(text):
+        # Only allow hangup-by-keyword after at least 6 customer turns (agent needs time to pitch)
+        if self._turn_count >= 6 and _HANGUP_RE.search(text):
             self._ending = True
             _safe_task(self._do_hangup(), "hangup-from-keyword")
             return
