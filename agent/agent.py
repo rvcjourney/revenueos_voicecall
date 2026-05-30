@@ -533,12 +533,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     if voice_provider == "cartesia":
         tts = cartesia.TTS(
-            api_key   = CARTESIA_API_KEY,
-            voice_id  = voice_id,
-            model     = CARTESIA_MODEL_ID,
-            language  = "en",
-            encoding  = "pcm_s16le",
-            sample_rate = 16000,
+            api_key     = CARTESIA_API_KEY,
+            voice       = voice_id,
+            model       = CARTESIA_MODEL_ID,
+            language    = "en",
+            encoding    = "pcm_s16le",
+            sample_rate = 24000,
         )
         logger.info("Cartesia TTS ready ✓ (model=%s voice=%s)", CARTESIA_MODEL_ID, voice_id)
     else:
