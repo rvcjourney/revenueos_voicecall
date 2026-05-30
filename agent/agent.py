@@ -519,31 +519,26 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
     if voice_provider == "cartesia":
-        # Map agent language to Cartesia language code.
-        # Hinglish/Hindi both use "hi" — Cartesia's multilingual model handles
-        # mixed Hindi+English (Hinglish) correctly under the "hi" code.
+        # Cartesia sonic models only support: "en", "de", "es", "fr".
+        # Hindi ("hi") is NOT supported — passing it causes hallucination.
+        # For Hinglish/Hindi use "en"; the model phonetically handles mixed text correctly.
         _cartesia_lang_map = {
-            "hinglish": "hi",
-            "hindi":    "hi",
             "english":  "en",
-            "marathi":  "mr",
-            "tamil":    "ta",
-            "telugu":   "te",
-            "bengali":  "bn",
-            "gujarati": "gu",
-            "kannada":  "kn",
-            "punjabi":  "pa",
+            "german":   "de",
+            "spanish":  "es",
+            "french":   "fr",
         }
-        cartesia_language = _cartesia_lang_map.get(language, "hi")
+        cartesia_language = _cartesia_lang_map.get(language, "en")  # all Indian languages → "en"
         tts = cartesia.TTS(
             api_key     = CARTESIA_API_KEY,
             voice       = voice_id,
             model       = CARTESIA_MODEL_ID,
             language    = cartesia_language,
+            speed       = 0.85,        # default is 1.0 — 0.85 is natural phone-call pace
             encoding    = "pcm_s16le",
             sample_rate = 24000,
         )
-        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
+        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s speed=0.85)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
