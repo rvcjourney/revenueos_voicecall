@@ -206,7 +206,14 @@ async def upload_contacts(
 
     contacts = []
     for _, row in df.iterrows():
-        raw_phone = str(row[phone_col]).strip()
+        phone_val = row[phone_col]
+        if pd.isna(phone_val) if isinstance(phone_val, float) else phone_val is None:
+            continue
+        # Pandas reads numeric columns as float — convert to int to strip ".0"
+        if isinstance(phone_val, float):
+            raw_phone = str(int(phone_val))
+        else:
+            raw_phone = str(phone_val).strip()
         if not raw_phone or raw_phone in ("nan", "None", ""):
             continue
 
@@ -272,7 +279,7 @@ async def launch_campaign(
     contact_count = await db.scalar(
         select(func.count()).where(
             CampaignContact.campaign_id == campaign_id,
-            CampaignContact.status == ContactStatus.PENDING,
+            CampaignContact.status.in_([ContactStatus.PENDING, ContactStatus.DIALING]),
         )
     )
     if not contact_count:
