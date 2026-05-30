@@ -47,9 +47,8 @@ logger = logging.getLogger("voice-agent")
 # ── Constants ─────────────────────────────────────────────────────────────────
 _LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
 
-# Characters buffered before ElevenLabs starts generating audio.
-# First chunk at 80 chars = ~12 words — enough for full sentence prosody, no mid-sentence breaks.
-_CHUNK_LENGTH_SCHEDULE = [80, 140, 200, 280]
+# Larger first chunk = more context per TTS call = smoother prosody across chunks.
+_CHUNK_LENGTH_SCHEDULE = [120, 200, 280, 360]
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
@@ -537,9 +536,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             encoding              = "pcm_24000",
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
             voice_settings        = elevenlabs.VoiceSettings(
-                stability         = 0.65,
+                stability         = 0.85,  # high = consistent tone across all chunks, no high/low shifts
                 similarity_boost  = 0.85,
-                style             = 0.10,
+                style             = 0.0,   # zero expressiveness = no tonal variation between chunks
                 use_speaker_boost = True,
             ),
         )
