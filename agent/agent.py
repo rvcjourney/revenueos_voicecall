@@ -519,15 +519,31 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
     if voice_provider == "cartesia":
+        # Map agent language to Cartesia language code.
+        # Hinglish/Hindi both use "hi" — Cartesia's multilingual model handles
+        # mixed Hindi+English (Hinglish) correctly under the "hi" code.
+        _cartesia_lang_map = {
+            "hinglish": "hi",
+            "hindi":    "hi",
+            "english":  "en",
+            "marathi":  "mr",
+            "tamil":    "ta",
+            "telugu":   "te",
+            "bengali":  "bn",
+            "gujarati": "gu",
+            "kannada":  "kn",
+            "punjabi":  "pa",
+        }
+        cartesia_language = _cartesia_lang_map.get(language, "hi")
         tts = cartesia.TTS(
             api_key     = CARTESIA_API_KEY,
             voice       = voice_id,
             model       = CARTESIA_MODEL_ID,
-            language    = "en",
+            language    = cartesia_language,
             encoding    = "pcm_s16le",
             sample_rate = 24000,
         )
-        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s)", CARTESIA_MODEL_ID, voice_id)
+        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
