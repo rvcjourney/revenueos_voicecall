@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { voices } from "@/lib/mock-data";
 import { agentsApi, callsApi, type AgentOut, type AgentCreate } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -394,20 +395,24 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) return;
+    if (!form.name.trim()) { toast.error("Agent name is required"); return; }
     setSaving(true);
     try {
+      // Normalize language to lowercase — backend enum expects "hinglish" not "Hinglish"
+      const payload = { ...form, language: (form.language ?? "hinglish").toLowerCase() };
       let agent: AgentOut;
       if (isEdit && initial) {
-        const res = await agentsApi.update(initial.id, form);
+        const res = await agentsApi.update(initial.id, payload);
         agent = res.data;
       } else {
-        const res = await agentsApi.create(form);
+        const res = await agentsApi.create(payload);
         agent = res.data;
       }
+      toast.success(isEdit ? "Agent updated" : "Agent created");
       onSaved(agent);
-    } catch {
-      /* toast here if desired */
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail ?? e?.message ?? "Save failed";
+      toast.error(typeof detail === "string" ? detail : JSON.stringify(detail));
     } finally {
       setSaving(false);
     }
