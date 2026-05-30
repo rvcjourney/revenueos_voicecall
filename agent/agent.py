@@ -234,7 +234,7 @@ class VoiceAgent(Agent):
         self._turn_count      = 0  # exchanges so far; end_call blocked until >= 4
 
         end_call_tool = EndCallTool(
-            delete_room=True,
+            delete_room=False,  # we delete the room ourselves after farewell TTS finishes
             end_instructions=(
                 "Say one warm, natural Hinglish farewell — e.g. 'Bahut shukriya sir, "
                 "koi zaroorat ho toh zaroor call karein. Take care, namaste!' "
@@ -253,9 +253,12 @@ class VoiceAgent(Agent):
             logger.warning("EndCallTool fired at turn %d (<4) — suppressing early hangup", self._turn_count)
             self._ending = False
             return
-        logger.info("EndCallTool triggered by LLM at turn %d — disconnecting", self._turn_count)
+        logger.info("EndCallTool triggered by LLM at turn %d — waiting for farewell TTS", self._turn_count)
         self._ending = True
-        await asyncio.sleep(6.0)  # wait for farewell TTS to finish playing
+        # The LLM generates farewell text in the same turn as the tool call.
+        # TTS needs ~1s to start + ~3-5s to speak. We wait 10s so the customer
+        # always hears the full goodbye before we tear down the SIP call.
+        await asyncio.sleep(10.0)
         await self._post_call_report()
         await self._disconnect()
 
