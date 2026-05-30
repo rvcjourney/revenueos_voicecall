@@ -203,10 +203,11 @@ async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.18,   # slightly faster silence detection
-        activation_threshold   = 0.78,   # lower = catches speech onset faster (soft/quiet starts too)
-        deactivation_threshold = 0.50,   # smoother, quicker deactivation
+        min_silence_duration   = 0.18,
+        activation_threshold   = 0.78,
+        deactivation_threshold = 0.50,
         sample_rate            = 16000,
+        num_threads            = 4,      # parallel PyTorch threads — prevents "slower than realtime" on CPU
     )
     logger.info("VAD loaded in prewarm ✓")
 
