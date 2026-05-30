@@ -207,7 +207,6 @@ def prewarm(proc: JobProcess) -> None:
         activation_threshold   = 0.78,
         deactivation_threshold = 0.50,
         sample_rate            = 16000,
-        num_threads            = 4,      # parallel PyTorch threads — prevents "slower than realtime" on CPU
     )
     logger.info("VAD loaded in prewarm ✓")
 
