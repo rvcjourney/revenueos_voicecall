@@ -67,11 +67,14 @@ def _lock_key(campaign_id: str) -> str:
     return f"motm:dispatcher:lock:{campaign_id}"
 
 
-async def _acquire_lock(campaign_id: str, ttl: int = 3600) -> bool:
+_LOCK_TTL = 300  # 5 minutes — active dispatchers refresh this on every call via _refresh_lock
+
+
+async def _acquire_lock(campaign_id: str) -> bool:
     """True if we grabbed the lock; False if another worker already holds it."""
     try:
         from app.core.redis import get_redis
-        return bool(await (await get_redis()).set(_lock_key(campaign_id), "1", nx=True, ex=ttl))
+        return bool(await (await get_redis()).set(_lock_key(campaign_id), "1", nx=True, ex=_LOCK_TTL))
     except Exception:
         if campaign_id in _mem_locks:
             return False
@@ -87,10 +90,10 @@ async def _release_lock(campaign_id: str) -> None:
         _mem_locks.discard(campaign_id)
 
 
-async def _refresh_lock(campaign_id: str, ttl: int = 3600) -> None:
+async def _refresh_lock(campaign_id: str) -> None:
     try:
         from app.core.redis import get_redis
-        await (await get_redis()).expire(_lock_key(campaign_id), ttl)
+        await (await get_redis()).expire(_lock_key(campaign_id), _LOCK_TTL)
     except Exception:
         pass  # in-memory lock doesn't expire
 
@@ -784,20 +787,43 @@ async def _resume_stalled_async() -> None:
 
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
-            select(Campaign.id).where(
+            select(Campaign.id, Campaign.name).where(
                 Campaign.status == CampaignStatus.RUNNING,
                 Campaign.deleted_at.is_(None),
             )
         )
-        campaign_ids = [str(r[0]) for r in rows]
+        running = [(str(r[0]), r[1]) for r in rows]
 
-    for cid in campaign_ids:
-        if await redis.exists(_lock_key(cid)):
+    if not running:
+        return
+
+    log.info("resume_check", running_campaigns=len(running))
+
+    for cid, cname in running:
+        has_lock = bool(await redis.exists(_lock_key(cid)))
+        if has_lock:
+            log.debug("campaign_dispatcher_alive", campaign_id=cid, name=cname)
             continue  # dispatcher is alive
 
         async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, uuid.UUID(cid))
 
-        if campaign and _in_calling_window(campaign):
+        if not campaign:
+            continue
+
+        in_window = _in_calling_window(campaign)
+        log.info(
+            "stalled_campaign_found",
+            campaign_id=cid,
+            name=cname,
+            in_window=in_window,
+            tz=campaign.timezone,
+            window=f"{campaign.calling_window_start}–{campaign.calling_window_end}",
+            days=campaign.calling_days,
+        )
+
+        if in_window:
             run_campaign.delay(cid)
-            log.info("stalled_campaign_requeued", campaign_id=cid)
+            log.info("stalled_campaign_requeued", campaign_id=cid, name=cname)
+        else:
+            log.info("stalled_campaign_outside_window", campaign_id=cid, name=cname)
