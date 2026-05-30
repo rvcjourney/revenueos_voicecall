@@ -234,12 +234,7 @@ class VoiceAgent(Agent):
         self._turn_count      = 0  # exchanges so far; end_call blocked until >= 4
 
         end_call_tool = EndCallTool(
-            delete_room=False,  # we delete the room ourselves after farewell TTS finishes
-            end_instructions=(
-                "Say one warm, natural Hinglish farewell — e.g. 'Bahut shukriya sir, "
-                "koi zaroorat ho toh zaroor call karein. Take care, namaste!' "
-                "Then the call will end automatically. Do NOT say the words end_call."
-            ),
+            delete_room=False,  # we handle room teardown ourselves after farewell
             on_tool_called=self._on_end_call_tool_called,
         )
         super().__init__(
@@ -253,12 +248,21 @@ class VoiceAgent(Agent):
             logger.warning("EndCallTool fired at turn %d (<4) — suppressing early hangup", self._turn_count)
             self._ending = False
             return
-        logger.info("EndCallTool triggered by LLM at turn %d — waiting for farewell TTS", self._turn_count)
+        logger.info("EndCallTool triggered by LLM at turn %d — speaking farewell", self._turn_count)
         self._ending = True
-        # The LLM generates farewell text in the same turn as the tool call.
-        # TTS needs ~1s to start + ~3-5s to speak. We wait 10s so the customer
-        # always hears the full goodbye before we tear down the SIP call.
-        await asyncio.sleep(10.0)
+        # Speak the farewell ourselves — don't rely on end_instructions since the LLM
+        # sometimes calls the tool without generating speech first.
+        try:
+            await asyncio.wait_for(
+                self.session.say(_FAREWELL, allow_interruptions=False),
+                timeout=8.0,
+            )
+            logger.info("Farewell TTS complete ✓")
+        except asyncio.TimeoutError:
+            logger.warning("Farewell TTS timed out — disconnecting anyway")
+        except Exception as e:
+            logger.warning("Farewell TTS failed: %s", e)
+        await asyncio.sleep(0.5)
         await self._post_call_report()
         await self._disconnect()
 
