@@ -106,9 +106,19 @@ function CampaignDetail() {
         </div>
         <div className="flex gap-2">
           {campaign.status === "running" && (
-            <Button variant="outline" size="sm" onClick={handlePause}>
-              <Pause className="h-4 w-4" /> Pause
-            </Button>
+            <>
+              <Button variant="outline" size="sm" onClick={handlePause}>
+                <Pause className="h-4 w-4" /> Pause
+              </Button>
+              <Button
+                size="sm"
+                className="bg-gradient-primary text-white"
+                title="Re-dispatch the campaign dispatcher (use if calls have stopped)"
+                onClick={handleLaunch}
+              >
+                <Play className="h-4 w-4" /> Restart
+              </Button>
+            </>
           )}
           {/* Edit — only enabled when paused or draft */}
           {campaign.status !== "completed" && (
@@ -265,9 +275,6 @@ const DAY_OPTS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] as const;
 const DAY_CODE: Record<string, string> = {
   Mon:"mon", Tue:"tue", Wed:"wed", Thu:"thu", Fri:"fri", Sat:"sat", Sun:"sun",
 };
-const DAY_FROM_CODE: Record<string, string> = Object.fromEntries(
-  Object.entries(DAY_CODE).map(([k,v]) => [v, k])
-);
 
 function EditCampaignDialog({
   campaign,
