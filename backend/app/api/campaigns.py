@@ -259,8 +259,15 @@ async def launch_campaign(
     if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
         raise NotFoundError("Campaign not found")
 
+    if campaign.status == CampaignStatus.RUNNING:
+        # Campaign is already RUNNING but dispatcher may have died.
+        # Re-dispatch the task — the lock mechanism prevents double-running.
+        run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
+        await db.refresh(campaign)
+        return _to_out(campaign)
+
     if campaign.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
-        raise CampaignStateError(f"Campaign is '{campaign.status}', only draft or paused can be launched")
+        raise CampaignStateError(f"Campaign is '{campaign.status}', cannot be launched")
 
     contact_count = await db.scalar(
         select(func.count()).where(

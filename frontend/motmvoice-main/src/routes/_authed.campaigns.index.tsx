@@ -149,15 +149,21 @@ function CampaignsList() {
                   <Link to="/campaigns/$id" params={{ id: c.id }} className="flex-1">
                     <Button variant="outline" size="sm" className="w-full">View Details</Button>
                   </Link>
-                  {c.status === "running" ? (
-                    <Button variant="ghost" size="sm" onClick={() => handlePause(c.id)}>
-                      <Pause className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : c.status === "paused" || c.status === "draft" ? (
+                  {c.status === "running" && (
+                    <>
+                      <Button variant="ghost" size="sm" title="Pause" onClick={() => handlePause(c.id)}>
+                        <Pause className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="sm" title="Restart dispatcher" onClick={() => handleLaunch(c.id)}>
+                        <Play className="h-3.5 w-3.5 text-primary" />
+                      </Button>
+                    </>
+                  )}
+                  {(c.status === "paused" || c.status === "draft") && (
                     <Button variant="ghost" size="sm" onClick={() => handleLaunch(c.id)}>
                       <Play className="h-3.5 w-3.5" />
                     </Button>
-                  ) : null}
+                  )}
                 </div>
               </div>
             );
