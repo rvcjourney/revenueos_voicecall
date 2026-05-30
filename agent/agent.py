@@ -252,10 +252,11 @@ class VoiceAgent(Agent):
         """Called when agent's own speech contains [end_call] — agent already said goodbye."""
         if self._ending:
             return
-        logger.info("TTS filter: [end_call] detected — agent said goodbye, disconnecting")
+        logger.info("TTS filter: [end_call] detected — waiting for farewell TTS to finish")
         self._ending = True
-        # Agent already said farewell before [end_call] — skip second farewell, just report+disconnect
-        await asyncio.sleep(1.5)  # let current TTS chunk finish playing
+        # Goodbye text is ~10-15 words. TTS needs ~300ms to generate + ~5s to play.
+        # Wait 8s so the customer always hears the complete farewell before the line drops.
+        await asyncio.sleep(8.0)
         await self._post_call_report()
         await self._disconnect()
 
