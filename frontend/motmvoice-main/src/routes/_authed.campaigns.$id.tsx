@@ -3,11 +3,16 @@ import { CampaignBadge, OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed, CalendarClock } from "lucide-react";
+import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed, CalendarClock, Edit2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useCampaign, useCalls } from "@/lib/hooks";
-import { campaignsApi, type CallOut } from "@/lib/api";
+import { campaignsApi, type CallOut, type CampaignOut } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authed/campaigns/$id")({
   head: () => ({ meta: [{ title: "Campaign — MOTMVoice" }] }),
@@ -25,6 +30,7 @@ function CampaignDetail() {
   const { id } = useParams({ from: "/_authed/campaigns/$id" });
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [showEdit, setShowEdit] = useState(false);
 
   const { data: campaign, isLoading: campLoading } = useCampaign(id);
   const { data: callsData } = useCalls({ campaign_id: id, limit: 200 });
@@ -102,6 +108,19 @@ function CampaignDetail() {
           {campaign.status === "running" && (
             <Button variant="outline" size="sm" onClick={handlePause}>
               <Pause className="h-4 w-4" /> Pause
+            </Button>
+          )}
+          {/* Edit — only enabled when paused or draft */}
+          {campaign.status !== "completed" && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={campaign.status === "running"}
+              title={campaign.status === "running" ? "Pause the campaign before editing" : "Edit campaign settings"}
+              onClick={() => setShowEdit(true)}
+            >
+              <Edit2 className="h-4 w-4" />
+              {campaign.status === "running" ? "Pause to Edit" : "Edit"}
             </Button>
           )}
           {(campaign.status === "paused" || campaign.status === "draft") && (
@@ -223,7 +242,199 @@ function CampaignDetail() {
           <CallTable calls={noAnswerCalls} emptyText="No unanswered calls yet" highlightPhone="text-muted-foreground" />
         </TabsContent>
       </Tabs>
+
+      {/* Edit Campaign Dialog */}
+      {showEdit && campaign && (
+        <EditCampaignDialog
+          campaign={campaign}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => {
+            setShowEdit(false);
+            qc.invalidateQueries({ queryKey: ["campaigns", id] });
+            toast.success("Campaign updated");
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Edit Campaign Dialog ──────────────────────────────────────────────────────
+
+const DAY_OPTS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] as const;
+const DAY_CODE: Record<string, string> = {
+  Mon:"mon", Tue:"tue", Wed:"wed", Thu:"thu", Fri:"fri", Sat:"sat", Sun:"sun",
+};
+const DAY_FROM_CODE: Record<string, string> = Object.fromEntries(
+  Object.entries(DAY_CODE).map(([k,v]) => [v, k])
+);
+
+function EditCampaignDialog({
+  campaign,
+  onClose,
+  onSaved,
+}: {
+  campaign: CampaignOut;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName]         = useState(campaign.name);
+  const [desc, setDesc]         = useState(campaign.description ?? "");
+  const [start, setStart]       = useState(campaign.calling_window_start.slice(0,5));
+  const [end, setEnd]           = useState(campaign.calling_window_end.slice(0,5));
+  const [tz, setTz]             = useState(campaign.timezone);
+  const [cpm, setCpm]           = useState(String(campaign.calls_per_minute));
+  const [retries, setRetries]   = useState(String(campaign.max_retries));
+  const [days, setDays]         = useState<Record<string,boolean>>(
+    Object.fromEntries(DAY_OPTS.map(d => [d, campaign.calling_days.includes(DAY_CODE[d])]))
+  );
+  const [saving, setSaving]     = useState(false);
+
+  const canEdit = campaign.status === "paused" || campaign.status === "draft";
+
+  async function handleSave() {
+    if (!canEdit) return;
+    if (!name.trim()) { toast.error("Campaign name is required"); return; }
+    const selectedDays = DAY_OPTS.filter(d => days[d]).map(d => DAY_CODE[d]);
+    if (!selectedDays.length) { toast.error("Select at least one calling day"); return; }
+
+    setSaving(true);
+    try {
+      await campaignsApi.update(campaign.id, {
+        name:                 name.trim(),
+        description:          desc || undefined,
+        calling_window_start: start + ":00",
+        calling_window_end:   end   + ":00",
+        calling_days:         selectedDays,
+        timezone:             tz,
+        calls_per_minute:     parseInt(cpm) || 1,
+        max_retries:          parseInt(retries) || 1,
+      });
+      onSaved();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Edit2 className="h-4 w-4" /> Edit Campaign
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Pause warning */}
+        {!canEdit && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm text-amber-300">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>Pause the campaign before making changes. Running campaigns cannot be edited.</span>
+          </div>
+        )}
+
+        <div className="space-y-4 py-1">
+          {/* Name */}
+          <div className="space-y-1.5">
+            <Label>Campaign Name</Label>
+            <Input value={name} onChange={e => setName(e.target.value)} disabled={!canEdit} />
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1.5">
+            <Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
+            <Input value={desc} onChange={e => setDesc(e.target.value)} disabled={!canEdit} placeholder="e.g. Q3 outbound drive" />
+          </div>
+
+          {/* Time window */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Start Time</Label>
+              <Input type="time" value={start} onChange={e => setStart(e.target.value)} disabled={!canEdit} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>End Time</Label>
+              <Input type="time" value={end} onChange={e => setEnd(e.target.value)} disabled={!canEdit} />
+            </div>
+          </div>
+
+          {/* Timezone */}
+          <div className="space-y-1.5">
+            <Label>Timezone</Label>
+            <Select value={tz} onValueChange={setTz} disabled={!canEdit}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {["Asia/Kolkata","Asia/Dubai","Asia/Singapore","Asia/Tokyo",
+                  "Europe/London","America/New_York","America/Los_Angeles","UTC"].map(t => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Days */}
+          <div className="space-y-1.5">
+            <Label>Calling Days</Label>
+            <div className="flex flex-wrap gap-2">
+              {DAY_OPTS.map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => setDays(prev => ({ ...prev, [d]: !prev[d] }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                    days[d]
+                      ? "bg-primary/20 border-primary/60 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* CPM + Retries */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Calls / Minute</Label>
+              <Select value={cpm} onValueChange={setCpm} disabled={!canEdit}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["1","2","3","5","10"].map(v => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Max Retries</Label>
+              <Select value={retries} onValueChange={setRetries} disabled={!canEdit}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["0","1","2","3"].map(v => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            className="bg-gradient-primary text-white"
+            onClick={handleSave}
+            disabled={!canEdit || saving}
+          >
+            {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : "Save Changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
