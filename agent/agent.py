@@ -46,7 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger("voice-agent")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-_LLM_MAX_TOKENS = 110  # enough for 2 complete Hinglish sentences without cutting off
+_LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
 
 # Characters buffered before ElevenLabs starts generating audio.
 # First chunk at 80 chars = ~12 words — enough for full sentence prosody, no mid-sentence breaks.
