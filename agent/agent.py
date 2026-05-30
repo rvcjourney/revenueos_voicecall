@@ -126,7 +126,7 @@ def _end_call_filter_transform(hangup_fn):
 
 
 # ── System prompt guardrails ──────────────────────────────────────────────────
-def _build_prompt(raw: str, welcome_message: str = "") -> str:
+def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish") -> str:
     p = raw.strip()
 
     # Inject the welcome message as a first-turn instruction.
@@ -154,7 +154,10 @@ def _build_prompt(raw: str, welcome_message: str = "") -> str:
         "6. If unsure about anything: politely say you will confirm and get back.\n"
         "7. Never ask more than ONE question per reply.\n"
         "8. Stay in character at ALL times as described in your instructions.\n"
-        "9. Use the language specified in your instructions. Match the customer's language if not specified.\n"
+        f"9. LANGUAGE — you MUST speak in {language.upper()} for the ENTIRE call. "
+        "Never switch language mid-conversation regardless of what the customer speaks. "
+        "If the customer speaks English, Hindi, or anything else — you still respond in "
+        f"{language.upper()} only. Consistent language from first word to last.\n"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "11. To end the call: first say a complete warm goodbye OUT LOUD "
         "(e.g. 'Bahut shukriya sir, koi zaroorat ho toh zaroor call karein, take care!'), "
@@ -482,11 +485,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     welcome_message = meta.get("welcome_message") or AGENT_WELCOME_MESSAGE
     voice_provider  = (meta.get("voice_provider") or "elevenlabs").lower()
     voice_id        = meta.get("voice_id") or (CARTESIA_VOICE_ID if voice_provider == "cartesia" else ELEVENLABS_VOICE_ID)
+    language        = (meta.get("language") or "hinglish").lower()
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
 
-    system_prompt = _build_prompt(raw_prompt, welcome_message)
+    system_prompt = _build_prompt(raw_prompt, welcome_message, language)
     logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
 
     llm = _CappedGroqLLM(model=llm_model, temperature=llm_temperature)
