@@ -60,6 +60,16 @@ class CampaignUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     status: str | None = None
-    calling_window_start: str | None = None
-    calling_window_end: str | None = None
+    calling_window_start: time | None = None
+    calling_window_end: time | None = None
+    calling_days: list[str] | None = None
+    timezone: str | None = None
     calls_per_minute: int | None = None
+    max_retries: int | None = None
+
+    @field_validator("calling_window_start", "calling_window_end", mode="before")
+    @classmethod
+    def _parse_time(cls, v: object) -> object:
+        if isinstance(v, str):
+            return time.fromisoformat(v)
+        return v
