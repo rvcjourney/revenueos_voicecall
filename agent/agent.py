@@ -15,7 +15,6 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
-from livekit.agents.beta.tools import EndCallTool
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
 from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia
@@ -157,22 +156,22 @@ def _build_prompt(raw: str, welcome_message: str = "") -> str:
         "8. Stay in character at ALL times as described in your instructions.\n"
         "9. Use the language specified in your instructions. Match the customer's language if not specified.\n"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
-        "11. NEVER say the words 'end_call' or 'end call' out loud — the system ends the call automatically.\n"
-        "12. Before you are EVER allowed to call end_call, ALL of these conditions must be true:\n"
-        "    (A) You have had at least 5 back-and-forth exchanges with the customer.\n"
-        "    (B) If the customer showed ANY interest, you have already asked for their WhatsApp number or email.\n"
-        "    (C) The customer has EXPLICITLY said one of these clear goodbyes: "
+        "11. To end the call: first say a complete warm goodbye OUT LOUD "
+        "(e.g. 'Bahut shukriya sir, koi zaroorat ho toh zaroor call karein, take care!'), "
+        "then immediately output the EXACT text [end_call] on its own. "
+        "The system will end the call automatically — never say 'end_call' as a spoken word.\n"
+        "12. Only end the call when ALL of these are true:\n"
+        "    (A) At least 5 back-and-forth exchanges have happened.\n"
+        "    (B) If the customer showed ANY interest, you have already asked for their WhatsApp or email.\n"
+        "    (C) The customer has clearly said goodbye OR firmly rejected: "
         "bye / goodbye / alvida / ok bye / chalo bye / theek hai bye / "
-        "band karo / call khatam / rakhta hoon / rakhti hoon / "
-        "chalta hoon / chalti hoon / nikalta hoon / nikalti hoon / disconnect.\n"
-        "    (D) You have spoken a complete warm farewell BEFORE calling end_call.\n"
-        "These are NOT goodbyes — NEVER end the call for them: "
-        "ok / theek hai / accha / haan / ha / hmm / ji / bilkul / suno / suno na / ek second / ruko / "
-        "shukriya / dhanyavaad / phir milenge / phir baat karte / dekh lenge / sochta hoon / samjha / samjhi. "
-        "If ANY condition (A-D) is not met — keep the conversation going. "
-        "If the customer has not given contact info yet, ALWAYS ask: "
+        "band karo / call khatam / rakhta hoon / rakhti hoon / nahi chahiye / mat karo call.\n"
+        "These are NOT goodbyes — never end for them: "
+        "ok / theek hai / accha / haan / hmm / ji / bilkul / shukriya / phir milenge / sochta hoon.\n"
+        "If ANY condition is not met — keep the conversation going. "
+        "If the customer has not given contact info yet, ask: "
         "'Ek kaam karo sir, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
-        "If unsure whether the customer is leaving, ask one more question. Never end early.\n"
+        "Never end early.\n"
     )
     return opening_block + guardrails + "\n" + p
 
@@ -231,40 +230,9 @@ class VoiceAgent(Agent):
         self._backend_url     = backend_url
         self._webhook_secret  = webhook_secret
         self._user_messages: list[str] = []
-        self._turn_count      = 0  # exchanges so far; end_call blocked until >= 4
+        self._turn_count      = 0
 
-        end_call_tool = EndCallTool(
-            delete_room=False,  # we handle room teardown ourselves after farewell
-            on_tool_called=self._on_end_call_tool_called,
-        )
-        super().__init__(
-            instructions=instructions,
-            tools=[end_call_tool],
-        )
-
-    async def _on_end_call_tool_called(self, ev) -> None:
-        if self._turn_count < 4:
-            # LLM called end_call too early — ignore and let the conversation continue
-            logger.warning("EndCallTool fired at turn %d (<4) — suppressing early hangup", self._turn_count)
-            self._ending = False
-            return
-        logger.info("EndCallTool triggered by LLM at turn %d — speaking farewell", self._turn_count)
-        self._ending = True
-        # Speak the farewell ourselves — don't rely on end_instructions since the LLM
-        # sometimes calls the tool without generating speech first.
-        try:
-            await asyncio.wait_for(
-                self.session.say(_FAREWELL, allow_interruptions=False),
-                timeout=8.0,
-            )
-            logger.info("Farewell TTS complete ✓")
-        except asyncio.TimeoutError:
-            logger.warning("Farewell TTS timed out — disconnecting anyway")
-        except Exception as e:
-            logger.warning("Farewell TTS failed: %s", e)
-        await asyncio.sleep(0.5)
-        await self._post_call_report()
-        await self._disconnect()
+        super().__init__(instructions=instructions)
 
     async def _disconnect(self) -> None:
         try:
@@ -278,11 +246,15 @@ class VoiceAgent(Agent):
             logger.warning("room.disconnect: %s", e)
 
     async def _trigger_hangup(self) -> None:
+        """Called when agent's own speech contains [end_call] — agent already said goodbye."""
         if self._ending:
             return
-        logger.info("TTS filter: end_call detected — hanging up")
+        logger.info("TTS filter: [end_call] detected — agent said goodbye, disconnecting")
         self._ending = True
-        _safe_task(self._do_hangup(), "hangup-from-end-call-filter")
+        # Agent already said farewell before [end_call] — skip second farewell, just report+disconnect
+        await asyncio.sleep(1.5)  # let current TTS chunk finish playing
+        await self._post_call_report()
+        await self._disconnect()
 
     async def on_enter(self) -> None:
         logger.info("Agent entered room — pipeline ready")
