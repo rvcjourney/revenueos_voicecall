@@ -1,4 +1,4 @@
-livekit-agents[deepgram,groq,silero,elevenlabs,noise-cancellation,turn-detector]>=0.12.11
+livekit-agents[deepgram,groq,silero,elevenlabs,cartesia,noise-cancellation,turn-detector]>=0.12.11
 livekit>=0.18.0
 python-dotenv>=1.0.0
 certifi>=2024.0.0

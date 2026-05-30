@@ -173,9 +173,10 @@ export const outcomeBreakdown = [
 ];
 
 export const voices = [
-  { id: "C8R8ahkE5XosZ8qPpSPy", name: "Suyash", lang: "Hinglish", gender: "M", desc: "Warm & professional" },
-  { id: "codoBx1vrQVwrVQylqGj", name: "Nitesh", lang: "Hinglish", gender: "M", desc: "Energetic & persuasive" },
-  { id: "6h2Hja4LgQR8wIIv3XXW", name: "Anandu", lang: "Hinglish", gender: "M", desc: "Friendly & natural" },
+  { id: "C8R8ahkE5XosZ8qPpSPy",                   provider: "elevenlabs", name: "Suyash",  lang: "Hinglish", gender: "M", desc: "Warm & professional"   },
+  { id: "codoBx1vrQVwrVQylqGj",                   provider: "elevenlabs", name: "Nitesh",  lang: "Hinglish", gender: "M", desc: "Energetic & persuasive" },
+  { id: "6h2Hja4LgQR8wIIv3XXW",                   provider: "elevenlabs", name: "Anandu",  lang: "Hinglish", gender: "M", desc: "Friendly & natural"     },
+  { id: "910fb75e-1d20-4840-ac63-ac6b26a71bdc",   provider: "cartesia",   name: "Cartesia Sonic 3.5", lang: "English/Hindi", gender: "N", desc: "Ultra-low latency"    },
 ];
 
 export const promptTemplates = [

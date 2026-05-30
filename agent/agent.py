@@ -18,7 +18,7 @@ from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
 from livekit.agents.beta.tools import EndCallTool
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
-from livekit.plugins import deepgram, groq, silero, elevenlabs
+from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia
 
 from config import (
     AGENT_SYSTEM_PROMPT,
@@ -28,6 +28,9 @@ from config import (
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL_ID,
+    CARTESIA_API_KEY,
+    CARTESIA_VOICE_ID,
+    CARTESIA_MODEL_ID,
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -498,7 +501,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     raw_prompt      = meta.get("system_prompt") or AGENT_SYSTEM_PROMPT
     welcome_message = meta.get("welcome_message") or AGENT_WELCOME_MESSAGE
-    voice_id        = meta.get("voice_id") or ELEVENLABS_VOICE_ID
+    voice_provider  = (meta.get("voice_provider") or "elevenlabs").lower()
+    voice_id        = meta.get("voice_id") or (CARTESIA_VOICE_ID if voice_provider == "cartesia" else ELEVENLABS_VOICE_ID)
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
@@ -527,20 +531,31 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except (asyncio.TimeoutError, Exception) as e:
         logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
-    tts = elevenlabs.TTS(
-        api_key               = ELEVENLABS_API_KEY,
-        voice_id              = voice_id,
-        model                 = ELEVENLABS_MODEL_ID,
-        encoding              = "pcm_24000",
-        chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
-        voice_settings        = elevenlabs.VoiceSettings(
-            stability         = 0.65,  # consistent tone across chunks — prevents mid-sentence tone shifts
-            similarity_boost  = 0.85,  # stay true to voice character
-            style             = 0.10,  # subtle expressiveness without causing prosody breaks
-            use_speaker_boost = True,  # clearer audio on phone calls
-        ),
-    )
-    logger.info("ElevenLabs TTS ready ✓")
+    if voice_provider == "cartesia":
+        tts = cartesia.TTS(
+            api_key   = CARTESIA_API_KEY,
+            voice_id  = voice_id,
+            model     = CARTESIA_MODEL_ID,
+            language  = "en",
+            encoding  = "pcm_s16le",
+            sample_rate = 16000,
+        )
+        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s)", CARTESIA_MODEL_ID, voice_id)
+    else:
+        tts = elevenlabs.TTS(
+            api_key               = ELEVENLABS_API_KEY,
+            voice_id              = voice_id,
+            model                 = ELEVENLABS_MODEL_ID,
+            encoding              = "pcm_24000",
+            chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
+            voice_settings        = elevenlabs.VoiceSettings(
+                stability         = 0.65,
+                similarity_boost  = 0.85,
+                style             = 0.10,
+                use_speaker_boost = True,
+            ),
+        )
+        logger.info("ElevenLabs TTS ready ✓ (voice=%s)", voice_id)
 
     voice_agent = VoiceAgent(
         ctx.room,

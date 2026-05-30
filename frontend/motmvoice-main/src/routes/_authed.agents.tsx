@@ -38,7 +38,8 @@ const EMPTY_FORM: AgentCreate = {
   welcome_message: "",
   system_prompt: "",
   voice_id: voices[0].id,
-  llm_model: "llama-3.1-70b-specdec",
+  voice_provider: "elevenlabs",
+  llm_model: "llama-3.3-70b-versatile",
   llm_temperature: 0.7,
   max_call_duration_seconds: 600,
 };
@@ -353,6 +354,7 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
           welcome_message: initial.welcome_message,
           system_prompt: initial.system_prompt,
           voice_id: initial.voice_id,
+          voice_provider: initial.voice_provider ?? "elevenlabs",
           llm_model: initial.llm_model,
           llm_temperature: initial.llm_temperature,
           max_call_duration_seconds: initial.max_call_duration_seconds,
@@ -541,6 +543,30 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
             </p>
           </div>
 
+          {/* TTS Provider */}
+          <div className="space-y-1.5">
+            <Label>TTS Provider</Label>
+            <Select
+              value={form.voice_provider ?? "elevenlabs"}
+              onValueChange={(v) => {
+                set("voice_provider", v);
+                // Auto-select the first voice for the chosen provider
+                const first = voices.find((vx) => vx.provider === v);
+                if (first) set("voice_id", first.id);
+              }}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="elevenlabs">
+                  ElevenLabs — High quality, natural Indian voices
+                </SelectItem>
+                <SelectItem value="cartesia">
+                  Cartesia Sonic 3.5 — Ultra-low latency (~150ms)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Voice + Model */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -548,11 +574,13 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
               <Select value={form.voice_id} onValueChange={(v) => set("voice_id", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {voices.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>
-                      {v.name} — {v.desc}
-                    </SelectItem>
-                  ))}
+                  {voices
+                    .filter((v) => v.provider === (form.voice_provider ?? "elevenlabs"))
+                    .map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.name} — {v.desc}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -561,8 +589,7 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
               <Select value={form.llm_model} onValueChange={(v) => set("llm_model", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="llama-3.1-70b-specdec">llama-3.1-70b-specdec (Recommended)</SelectItem>
-                  <SelectItem value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Highest quality)</SelectItem>
+                  <SelectItem value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Recommended)</SelectItem>
                   <SelectItem value="llama-3.1-8b-instant">llama-3.1-8b-instant (Fastest)</SelectItem>
                 </SelectContent>
               </Select>

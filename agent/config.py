@@ -19,6 +19,11 @@ ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "6h2Hja4LgQR8wIIv3XXW")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
+# ── Cartesia TTS ───────────────────────────────────────────────────────────────
+CARTESIA_API_KEY   = os.getenv("CARTESIA_API_KEY", "")
+CARTESIA_VOICE_ID  = os.getenv("CARTESIA_VOICE_ID", "910fb75e-1d20-4840-ac63-ac6b26a71bdc")
+CARTESIA_MODEL_ID  = os.getenv("CARTESIA_MODEL_ID", "sonic-2")
+
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")

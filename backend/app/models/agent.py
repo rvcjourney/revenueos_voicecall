@@ -20,7 +20,8 @@ from app.models.base import OrgScopedMixin, SoftDeleteMixin, TimestampMixin
 
 class VoiceProvider(StrEnum):
     ELEVENLABS = "elevenlabs"
-    DEEPGRAM = "deepgram"
+    CARTESIA   = "cartesia"
+    DEEPGRAM   = "deepgram"
 
 
 class AgentLanguage(StrEnum):

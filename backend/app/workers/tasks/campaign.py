@@ -199,6 +199,7 @@ async def _place_call(
     system_prompt: str = "",
     welcome_message: str = "",
     voice_id: str = "",
+    voice_provider: str = "elevenlabs",
     llm_model: str = "",
     llm_temperature: float = 0.7,
 ) -> str:
@@ -221,6 +222,7 @@ async def _place_call(
                     "system_prompt": system_prompt,
                     "welcome_message": welcome_message,
                     "voice_id": voice_id,
+                    "voice_provider": voice_provider,
                     "llm_model": llm_model,
                     "llm_temperature": llm_temperature,
                 }),
@@ -528,8 +530,9 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 max_duration = tmpl.max_call_duration_seconds if tmpl else 600
                 tmpl_system_prompt = tmpl.system_prompt if tmpl else ""
                 tmpl_welcome_message = tmpl.welcome_message if tmpl else ""
-                tmpl_voice_id = tmpl.voice_id if tmpl else ""
-                tmpl_llm_model = tmpl.llm_model if tmpl else ""
+                tmpl_voice_id       = tmpl.voice_id if tmpl else ""
+                tmpl_voice_provider = str(tmpl.voice_provider) if tmpl else "elevenlabs"
+                tmpl_llm_model      = tmpl.llm_model if tmpl else ""
                 tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
 
         if not livekit_trunk_id:
@@ -560,6 +563,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
             system_prompt=tmpl_system_prompt,
             welcome_message=tmpl_welcome_message,
             voice_id=tmpl_voice_id,
+            voice_provider=tmpl_voice_provider,
             llm_model=tmpl_llm_model,
             llm_temperature=tmpl_llm_temperature,
         )
@@ -689,10 +693,11 @@ async def _run_test_call_async(
             )
         ) or settings.DEFAULT_SIP_TRUNK_ID
 
-        system_prompt  = agent.system_prompt or ""
-        welcome_msg    = agent.welcome_message or ""
-        voice_id       = agent.voice_id or ""
-        llm_model      = agent.llm_model or ""
+        system_prompt   = agent.system_prompt or ""
+        welcome_msg     = agent.welcome_message or ""
+        voice_id        = agent.voice_id or ""
+        voice_provider  = str(agent.voice_provider) if agent.voice_provider else "elevenlabs"
+        llm_model       = agent.llm_model or ""
         llm_temperature = float(agent.llm_temperature or 0.7)
 
     log.info("test_call_start", call_id=call_id, phone=phone_number, room=room_name)
@@ -711,6 +716,7 @@ async def _run_test_call_async(
             system_prompt=system_prompt,
             welcome_message=welcome_msg,
             voice_id=voice_id,
+            voice_provider=voice_provider,
             llm_model=llm_model,
             llm_temperature=llm_temperature,
         )
