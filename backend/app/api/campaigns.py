@@ -267,8 +267,13 @@ async def launch_campaign(
         raise NotFoundError("Campaign not found")
 
     if campaign.status == CampaignStatus.RUNNING:
-        # Campaign is already RUNNING but dispatcher may have died.
-        # Re-dispatch the task — the lock mechanism prevents double-running.
+        # Campaign is already RUNNING but dispatcher may have died — clear stale
+        # lock so the re-dispatched task can acquire it immediately.
+        try:
+            from app.core.redis import get_redis
+            await (await get_redis()).delete(f"motm:dispatcher:lock:{campaign_id}")
+        except Exception:
+            pass
         run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
         await db.refresh(campaign)
         return _to_out(campaign)
@@ -293,6 +298,14 @@ async def launch_campaign(
     campaign.started_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(campaign)
+
+    # Clear any stale Redis lock left by a crashed or restarted worker so the
+    # new dispatcher task can acquire it immediately.
+    try:
+        from app.core.redis import get_redis
+        await (await get_redis()).delete(f"motm:dispatcher:lock:{campaign_id}")
+    except Exception:
+        pass  # Redis unavailable — task will use in-memory fallback
 
     # Dispatch to Celery worker (campaigns queue)
     run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
