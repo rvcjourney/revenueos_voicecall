@@ -266,20 +266,26 @@ class VoiceAgent(Agent):
     async def on_enter(self) -> None:
         logger.info("Agent entered room — pipeline ready")
         await asyncio.sleep(0.1)  # let TTS output track attach
+        if self._ending:
+            return  # participant left before on_enter ran (rejected call)
         try:
-            # generate_reply() routes through LLM → chunk_schedule → TTS —
-            # the same pipeline as every conversation turn, so tone matches perfectly.
-            # session.say() sends a static block to ElevenLabs (no streaming chunks)
-            # which produces noticeably different prosody on the first utterance.
             logger.info("Generating welcome via LLM pipeline...")
             await self.session.generate_reply()
             logger.info("Welcome generated ✓")
         except Exception as e:
+            msg = str(e).lower()
+            if "closing" in msg or "closed" in msg or "shutdown" in msg:
+                # Session already closing — call was rejected/dropped before agent spoke
+                logger.debug("Session closed before welcome (call rejected early)")
+                return
             logger.error("generate_reply failed — falling back to say(): %s", e)
             try:
                 await self.session.say(self._welcome_message)
             except Exception as e2:
-                logger.error("say() fallback also failed: %s", e2)
+                if "closing" in str(e2).lower() or "closed" in str(e2).lower():
+                    logger.debug("Session closed before fallback say()")
+                else:
+                    logger.error("say() fallback also failed: %s", e2)
         _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
