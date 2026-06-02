@@ -134,6 +134,8 @@ services:
     container_name: motm-agent
     restart: always
     env_file: ./agent/.env
+    environment:
+      - PYTHONUNBUFFERED=1
     command: python -u agent.py start
     networks:
       - motm
