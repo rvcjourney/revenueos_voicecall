@@ -503,61 +503,62 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         log.info("campaign_completed", campaign_id=campaign_id)
                         return
 
-        if needs_retry_wait:
-            log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id, waiting=no_answer_waiting)
-            await asyncio.sleep(60)
-            continue
+                if not needs_retry_wait:
+                    # DNC check — done inside the transaction so the status update
+                    # is committed atomically with the DIALING mark below.
+                    if await _is_dnc_blocked(session, campaign.org_id, contact.phone):
+                        await session.execute(
+                            update(CampaignContact)
+                            .where(CampaignContact.id == contact.id)
+                            .values(status=ContactStatus.DO_NOT_CALL)
+                        )
+                        log.info("contact_dnc_blocked", phone=contact.phone)
+                        # session.begin() commits on exit even via continue
+                        continue
 
-                # DNC check — done inside the transaction so the status update
-                # is committed atomically with the DIALING mark below.
-                if await _is_dnc_blocked(session, campaign.org_id, contact.phone):
+                    # Mark DIALING to prevent another worker picking the same contact
                     await session.execute(
                         update(CampaignContact)
                         .where(CampaignContact.id == contact.id)
-                        .values(status=ContactStatus.DO_NOT_CALL)
+                        .values(status=ContactStatus.DIALING)
                     )
-                    log.info("contact_dnc_blocked", phone=contact.phone)
-                    # session.begin() commits on exit even via continue
-                    continue
 
-                # Mark DIALING to prevent another worker picking the same contact
-                await session.execute(
-                    update(CampaignContact)
-                    .where(CampaignContact.id == contact.id)
-                    .values(status=ContactStatus.DIALING)
-                )
+                    # Create the Call record before touching LiveKit
+                    call_obj = Call(
+                        org_id=campaign.org_id,
+                        campaign_id=campaign.id,
+                        contact_id=contact.id,
+                        livekit_room_name=room_name,
+                        phone_number=contact.phone,
+                        direction=CallDirection.OUTBOUND,
+                        status=CallStatus.INITIATED,
+                        started_at=datetime.now(timezone.utc),
+                    )
+                    session.add(call_obj)
+                    await session.flush()
 
-                # Create the Call record before touching LiveKit
-                call_obj = Call(
-                    org_id=campaign.org_id,
-                    campaign_id=campaign.id,
-                    contact_id=contact.id,
-                    livekit_room_name=room_name,
-                    phone_number=contact.phone,
-                    direction=CallDirection.OUTBOUND,
-                    status=CallStatus.INITIATED,
-                    started_at=datetime.now(timezone.utc),
-                )
-                session.add(call_obj)
-                await session.flush()
+                    # Capture all values we need after the session closes
+                    call_id = call_obj.id
+                    contact_id = contact.id
+                    contact_phone = contact.phone
+                    contact_name = contact.name
 
-                # Capture all values we need after the session closes
-                call_id = call_obj.id
-                contact_id = contact.id
-                contact_phone = contact.phone
-                contact_name = contact.name
+                    # Resolve SIP trunk and template inside the same session
+                    livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
+                    tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
+                    max_duration = tmpl.max_call_duration_seconds if tmpl else 600
+                    tmpl_system_prompt = tmpl.system_prompt if tmpl else ""
+                    tmpl_welcome_message = tmpl.welcome_message if tmpl else ""
+                    tmpl_voice_id       = tmpl.voice_id if tmpl else ""
+                    tmpl_voice_provider = str(tmpl.voice_provider) if tmpl else "elevenlabs"
+                    tmpl_language       = str(tmpl.language) if tmpl else "hinglish"
+                    tmpl_llm_model      = tmpl.llm_model if tmpl else ""
+                    tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
 
-                # Resolve SIP trunk and template inside the same session
-                livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
-                tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
-                max_duration = tmpl.max_call_duration_seconds if tmpl else 600
-                tmpl_system_prompt = tmpl.system_prompt if tmpl else ""
-                tmpl_welcome_message = tmpl.welcome_message if tmpl else ""
-                tmpl_voice_id       = tmpl.voice_id if tmpl else ""
-                tmpl_voice_provider = str(tmpl.voice_provider) if tmpl else "elevenlabs"
-                tmpl_language       = str(tmpl.language) if tmpl else "hinglish"
-                tmpl_llm_model      = tmpl.llm_model if tmpl else ""
-                tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
+        if needs_retry_wait:
+            log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id)
+            await asyncio.sleep(60)
+            continue
 
         if not livekit_trunk_id:
             log.error("no_sip_trunk_configured", campaign_id=campaign_id)
