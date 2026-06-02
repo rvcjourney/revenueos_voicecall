@@ -279,7 +279,11 @@ async def launch_campaign(
     contact_count = await db.scalar(
         select(func.count()).where(
             CampaignContact.campaign_id == campaign_id,
-            CampaignContact.status.in_([ContactStatus.PENDING, ContactStatus.DIALING]),
+            CampaignContact.status.in_([
+                ContactStatus.PENDING,
+                ContactStatus.DIALING,
+                ContactStatus.NO_ANSWER,  # awaiting retry
+            ]),
         )
     )
     if not contact_count:

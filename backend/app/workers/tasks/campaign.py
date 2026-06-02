@@ -33,7 +33,7 @@ import structlog
 from livekit import api as lk_api
 from livekit.api import LiveKitAPI
 from livekit.api.twirp_client import TwirpError
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.config import settings
 from app.core.vobiz import fetch_recording_for_call
@@ -471,6 +471,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
         livekit_trunk_id: str = ""
         max_duration: int = 600
 
+        needs_retry_wait = False
+
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 contact = await _next_pending(session, campaign.id)
@@ -478,17 +480,33 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     contact = await _next_retry(session, campaign.id, campaign.retry_after_minutes)
 
                 if contact is None:
-                    # All contacts exhausted — campaign is done
-                    await session.execute(
-                        update(Campaign)
-                        .where(Campaign.id == campaign.id)
-                        .values(
-                            status=CampaignStatus.COMPLETED,
-                            completed_at=datetime.now(timezone.utc),
+                    # Check whether any NO_ANSWER contacts are still within retry cooldown
+                    no_answer_waiting = await session.scalar(
+                        select(func.count()).where(
+                            CampaignContact.campaign_id == campaign.id,
+                            CampaignContact.status == ContactStatus.NO_ANSWER,
                         )
                     )
-                    log.info("campaign_completed", campaign_id=campaign_id)
-                    return
+                    if no_answer_waiting:
+                        # Contacts exist but retry delay hasn't elapsed yet — wait and re-check
+                        needs_retry_wait = True
+                    else:
+                        # Truly no contacts left — campaign is done
+                        await session.execute(
+                            update(Campaign)
+                            .where(Campaign.id == campaign.id)
+                            .values(
+                                status=CampaignStatus.COMPLETED,
+                                completed_at=datetime.now(timezone.utc),
+                            )
+                        )
+                        log.info("campaign_completed", campaign_id=campaign_id)
+                        return
+
+        if needs_retry_wait:
+            log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id, waiting=no_answer_waiting)
+            await asyncio.sleep(60)
+            continue
 
                 # DNC check — done inside the transaction so the status update
                 # is committed atomically with the DIALING mark below.
