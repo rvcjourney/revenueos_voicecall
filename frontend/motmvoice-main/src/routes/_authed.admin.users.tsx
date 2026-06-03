@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut, type AgentCreationRequestAdminOut } from "@/lib/api";
+import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut, type AgentCreationRequestAdminOut, type OrgStatsOut, type UserStatOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import {
   Users, Plus, Shield, UserCheck, UserX, Trash2, Copy, Loader2,
   RefreshCw, Key, Bot, CheckCircle, XCircle, Clock,
+  Phone, Heart, Megaphone, Activity, TrendingUp,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/admin/users")({
@@ -29,6 +30,7 @@ function AdminUsersPage() {
 
   const [users, setUsers]                   = useState<AdminUserOut[]>([]);
   const [org, setOrg]                       = useState<OrgInfo | null>(null);
+  const [stats, setStats]                   = useState<OrgStatsOut | null>(null);
   const [agentRequests, setAgentReqs]       = useState<AgentAccessRequestOut[]>([]);
   const [creationRequests, setCreationReqs] = useState<AgentCreationRequestAdminOut[]>([]);
   const [loading, setLoading]               = useState(true);
@@ -43,18 +45,19 @@ function AdminUsersPage() {
   async function load() {
     setLoading(true);
     try {
-      const [usersRes, orgRes] = await Promise.all([
+      const [usersRes, orgRes, statsRes] = await Promise.all([
         adminApi.listUsers(),
         adminApi.getOrg(),
+        adminApi.getStats(),
       ]);
       setUsers(usersRes.data);
       setOrg(orgRes.data);
+      setStats(statsRes.data);
     } catch {
       toast.error("Failed to load team data");
     } finally {
       setLoading(false);
     }
-    // Load agent access + creation requests (fail silently if table missing)
     try {
       const [accessRes, creationRes] = await Promise.all([
         adminApi.listAgentRequests(),
@@ -62,9 +65,7 @@ function AdminUsersPage() {
       ]);
       setAgentReqs(accessRes.data);
       setCreationReqs(creationRes.data);
-    } catch {
-      // silently ignore if migrations not yet run
-    }
+    } catch { /* silently ignore if migrations not yet run */ }
   }
 
   async function handleReview(id: string) {
@@ -180,8 +181,91 @@ function AdminUsersPage() {
         </div>
       )}
 
-      {/* Users table */}
+      {/* Overall Analytics */}
+      {stats && (
+        <div className="space-y-4">
+          <h2 className="font-semibold text-sm flex items-center gap-2 text-muted-foreground uppercase tracking-wide">
+            <TrendingUp className="h-4 w-4" /> Overall Analytics
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {[
+              { icon: Users,     label: "Members",         value: stats.totals.total_members,    tone: "text-foreground" },
+              { icon: Megaphone, label: "Total Campaigns",  value: stats.totals.total_campaigns,  tone: "text-primary"    },
+              { icon: Phone,     label: "Total Calls",      value: stats.totals.total_calls,      tone: "text-foreground" },
+              { icon: Heart,     label: "Interested",       value: stats.totals.total_interested, tone: "text-green-400"  },
+              { icon: Activity,  label: "Active Now",       value: stats.totals.active_campaigns, tone: "text-amber-400"  },
+            ].map(({ icon: Icon, label, value, tone }) => (
+              <div key={label} className="rounded-xl bg-card border border-border p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Icon className="h-3.5 w-3.5" /> {label}
+                </div>
+                <div className={`text-2xl font-bold font-mono ${tone}`}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* User Performance Table */}
+      {stats && (
+        <div className="rounded-xl bg-card border border-border overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center gap-2 font-semibold text-sm">
+            <Activity className="h-4 w-4 text-primary" /> User Performance
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground bg-surface-2/40 border-b border-border">
+                  <th className="px-4 py-2 font-medium">Member</th>
+                  <th className="px-4 py-2 font-medium text-center">Campaigns</th>
+                  <th className="px-4 py-2 font-medium text-center">Calls Made</th>
+                  <th className="px-4 py-2 font-medium text-center">Interested</th>
+                  <th className="px-4 py-2 font-medium text-center">Active Now</th>
+                  <th className="px-4 py-2 font-medium">Last Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.users.map((u) => (
+                  <tr key={u.user_id} className="border-t border-border/60 hover:bg-surface-2/30">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-sm">{u.full_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{u.email}</div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {u.role === "admin"
+                          ? <span className="text-[9px] font-bold text-primary border border-primary/30 px-1.5 rounded">Admin</span>
+                          : <span className="text-[9px] text-muted-foreground border border-border px-1.5 rounded">Member</span>}
+                        {!u.is_active && <span className="text-[9px] text-destructive border border-destructive/30 px-1.5 rounded">Inactive</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-sm">{u.total_campaigns}</td>
+                    <td className="px-4 py-3 text-center font-mono text-sm">{u.total_calls}</td>
+                    <td className={`px-4 py-3 text-center font-mono text-sm font-semibold ${u.total_interested > 0 ? "text-green-400" : ""}`}>
+                      {u.total_interested}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {u.active_campaigns > 0
+                        ? <span className="inline-flex items-center gap-1 text-xs text-amber-400 font-medium">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                            {u.active_campaigns} running
+                          </span>
+                        : <span className="text-xs text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : "Never"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Users Management Table */}
       <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border font-semibold text-sm flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" /> Manage Members
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-muted-foreground bg-surface-2/40 border-b border-border">

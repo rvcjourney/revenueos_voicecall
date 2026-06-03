@@ -90,8 +90,33 @@ export interface AgentCreationRequestAdminOut extends AgentCreationRequestOut {
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
+export interface UserStatOut {
+  user_id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  total_campaigns: number;
+  active_campaigns: number;
+  total_calls: number;
+  total_interested: number;
+  last_login_at: string | null;
+}
+
+export interface OrgStatsOut {
+  totals: {
+    total_members: number;
+    total_campaigns: number;
+    total_calls: number;
+    total_interested: number;
+    active_campaigns: number;
+  };
+  users: UserStatOut[];
+}
+
 export const adminApi = {
   getOrg: () => api.get<OrgInfo>("/api/admin/org"),
+  getStats: () => api.get<OrgStatsOut>("/api/admin/stats"),
   listUsers: () => api.get<AdminUserOut[]>("/api/admin/users"),
   createUser: (data: { full_name: string; email: string; password: string; role: string }) =>
     api.post<AdminUserOut>("/api/admin/users", data),

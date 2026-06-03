@@ -22,6 +22,7 @@ from app.database import get_db
 from app.models.agent import AgentTemplate
 from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
+from app.models.campaign import Campaign, CampaignStatus
 from app.models.user import Organization, User, UserRole
 from app.schemas.agent import AgentAccessRequestOut, AgentCreationRequestAdminOut
 from app.schemas.auth import AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserOut
@@ -59,6 +60,58 @@ async def get_org_info(
         "calls_used_this_period": org.calls_used_this_period,
         "invite_code": org_id_hex[:8].upper(),  # share this with team members
     }
+
+
+@router.get("/stats")
+async def get_org_stats(
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return org-wide totals and per-user performance breakdown."""
+    users = (await db.execute(
+        select(User)
+        .where(User.org_id == token.org_id, User.deleted_at.is_(None))
+        .order_by(User.created_at)
+    )).scalars().all()
+
+    org_totals = dict(total_members=0, total_campaigns=0, total_calls=0,
+                      total_interested=0, active_campaigns=0)
+    user_stats = []
+
+    for user in users:
+        campaigns = (await db.execute(
+            select(Campaign).where(
+                Campaign.created_by_id == user.id,
+                Campaign.deleted_at.is_(None),
+            )
+        )).scalars().all()
+
+        u_campaigns  = len(campaigns)
+        u_active     = sum(1 for c in campaigns if c.status == CampaignStatus.RUNNING)
+        u_calls      = sum(c.completed_calls  for c in campaigns)
+        u_interested = sum(c.interested_count for c in campaigns)
+
+        if user.role == "member":
+            org_totals["total_members"] += 1
+        org_totals["total_campaigns"]  += u_campaigns
+        org_totals["total_calls"]      += u_calls
+        org_totals["total_interested"] += u_interested
+        org_totals["active_campaigns"] += u_active
+
+        user_stats.append({
+            "user_id":         str(user.id),
+            "full_name":       user.full_name,
+            "email":           user.email,
+            "role":            user.role,
+            "is_active":       user.is_active,
+            "total_campaigns": u_campaigns,
+            "active_campaigns": u_active,
+            "total_calls":     u_calls,
+            "total_interested": u_interested,
+            "last_login_at":   user.last_login_at.isoformat() if user.last_login_at else None,
+        })
+
+    return {"totals": org_totals, "users": user_stats}
 
 
 @router.get("/users", response_model=list[AdminUserOut])
