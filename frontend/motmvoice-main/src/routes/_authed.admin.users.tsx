@@ -41,18 +41,23 @@ function AdminUsersPage() {
   async function load() {
     setLoading(true);
     try {
-      const [usersRes, orgRes, reqsRes] = await Promise.all([
+      const [usersRes, orgRes] = await Promise.all([
         adminApi.listUsers(),
         adminApi.getOrg(),
-        adminApi.listAgentRequests(),
       ]);
       setUsers(usersRes.data);
       setOrg(orgRes.data);
-      setAgentReqs(reqsRes.data);
     } catch {
       toast.error("Failed to load team data");
     } finally {
       setLoading(false);
+    }
+    // Load agent requests separately so a missing table doesn't break the page
+    try {
+      const reqsRes = await adminApi.listAgentRequests();
+      setAgentReqs(reqsRes.data);
+    } catch {
+      // Table may not exist yet if migration 0004 hasn't run — silently ignore
     }
   }
 
