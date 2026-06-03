@@ -19,6 +19,7 @@ from app.models.base import OrgScopedMixin, SoftDeleteMixin, TimestampMixin
 
 class UserRole(StrEnum):
     ADMIN = "admin"
+    MEMBER = "member"   # sales team — limited access
     MANAGER = "manager"
     AGENT = "agent"
 

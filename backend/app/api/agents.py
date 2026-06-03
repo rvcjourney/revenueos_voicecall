@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import TokenPayload, get_current_user
+from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.agent import AgentTemplate
@@ -85,7 +85,7 @@ async def list_agents(
 @router.post("", response_model=AgentOut, status_code=201)
 async def create_agent(
     body: AgentCreate,
-    token: TokenPayload = Depends(get_current_user),
+    token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     agent = AgentTemplate(
@@ -115,7 +115,7 @@ async def get_agent(
 async def update_agent(
     agent_id: UUID,
     body: AgentUpdate,
-    token: TokenPayload = Depends(get_current_user),
+    token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await db.get(AgentTemplate, agent_id)
@@ -133,7 +133,7 @@ async def update_agent(
 @router.delete("/{agent_id}", status_code=204)
 async def delete_agent(
     agent_id: UUID,
-    token: TokenPayload = Depends(get_current_user),
+    token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await db.get(AgentTemplate, agent_id)

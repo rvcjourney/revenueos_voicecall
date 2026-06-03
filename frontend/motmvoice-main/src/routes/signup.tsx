@@ -4,72 +4,74 @@ import { AuthLayout } from "@/components/marketing/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/lib/auth";
+import { authApi } from "@/lib/api";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/signup")({
-  head: () => ({ meta: [{ title: "Create account — MOTMVoice" }] }),
+  head: () => ({ meta: [{ title: "Join Team — MOTMVoice" }] }),
   component: SignupPage,
 });
 
 function SignupPage() {
-  const [form, setForm] = useState({ name: "", company: "", email: "", phone: "", password: "", confirm: "", terms: false });
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "", org_code: "" });
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
-  function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
+  function set<K extends keyof typeof form>(k: K, v: string) {
     setForm((f) => ({ ...f, [k]: v }));
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    if (!form.name || !form.email || !form.company) return setErr("Please fill all required fields");
+    if (!form.name || !form.email || !form.org_code) return setErr("Please fill all required fields");
     if (form.password.length < 6) return setErr("Password must be at least 6 characters");
     if (form.password !== form.confirm) return setErr("Passwords do not match");
-    if (!form.terms) return setErr("Please accept the terms");
 
     setLoading(true);
     try {
-      await register({
+      await authApi.registerMember({
         full_name: form.name,
-        company_name: form.company,
         email: form.email,
         password: form.password,
-        phone: form.phone,
+        org_code: form.org_code.trim().toUpperCase(),
       });
-      toast.success("Account created! Welcome aboard.");
+      // Log them in immediately after registration
+      await login(form.email, form.password);
+      toast.success("Welcome! Your account is ready.");
       navigate({ to: "/dashboard" });
     } catch (e: any) {
-      setErr(e?.response?.data?.detail ?? "Registration failed. Please try again.");
+      setErr(e?.response?.data?.detail ?? "Registration failed. Check your invite code.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <AuthLayout title="Create your account" subtitle="Start running AI voice calls in under 5 minutes">
+    <AuthLayout title="Join your team" subtitle="Enter your invite code from your admin to get started">
       <form onSubmit={onSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="name">Full name *</Label>
-            <Input id="name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Aniket Sharma" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="company">Company *</Label>
-            <Input id="company" value={form.company} onChange={(e) => set("company", e.target.value)} placeholder="Baba Valves" />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="name">Full Name *</Label>
+          <Input id="name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Priya Sharma" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="email">Work email *</Label>
-          <Input id="email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+          <Label htmlFor="email">Work Email *</Label>
+          <Input id="email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="priya@yourcompany.com" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="phone">Phone</Label>
-          <Input id="phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+91 98765 43210" />
+          <Label htmlFor="org_code">Team Invite Code *</Label>
+          <Input
+            id="org_code"
+            value={form.org_code}
+            onChange={(e) => set("org_code", e.target.value.toUpperCase())}
+            placeholder="8-character code from your admin"
+            className="font-mono tracking-widest"
+            maxLength={8}
+          />
+          <p className="text-xs text-muted-foreground">Ask your admin for this code (visible on their Team page).</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -81,15 +83,9 @@ function SignupPage() {
             <Input id="confirm" type="password" value={form.confirm} onChange={(e) => set("confirm", e.target.value)} />
           </div>
         </div>
-        <div className="flex items-start gap-2">
-          <Checkbox id="terms" checked={form.terms} onCheckedChange={(v) => set("terms", !!v)} />
-          <Label htmlFor="terms" className="text-sm font-normal leading-relaxed">
-            I agree to the <a className="text-primary hover:underline" href="#">Terms</a> and <a className="text-primary hover:underline" href="#">Privacy Policy</a>
-          </Label>
-        </div>
         {err && <p className="text-sm text-destructive">{err}</p>}
         <Button type="submit" disabled={loading} className="w-full bg-gradient-primary text-white shadow-glow">
-          {loading ? "Creating account…" : "Create Account"}
+          {loading ? "Creating account…" : "Join Team"}
         </Button>
         <p className="text-center text-sm text-muted-foreground pt-2">
           Already have an account?{" "}

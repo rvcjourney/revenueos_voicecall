@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import Depends
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 
-from app.core.exceptions import AuthenticationError
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.security import decode_token
 
 _bearer = HTTPBearer(auto_error=False)
@@ -41,3 +42,19 @@ async def get_current_user(
         org_id=UUID(payload["org_id"]),
         role=payload["role"],
     )
+
+
+async def require_admin(
+    token: TokenPayload = Depends(get_current_user),
+) -> TokenPayload:
+    if token.role != "admin":
+        raise PermissionDeniedError("Admin access required")
+    return token
+
+
+async def require_member_or_admin(
+    token: TokenPayload = Depends(get_current_user),
+) -> TokenPayload:
+    if token.role not in ("admin", "member"):
+        raise PermissionDeniedError("Access denied")
+    return token

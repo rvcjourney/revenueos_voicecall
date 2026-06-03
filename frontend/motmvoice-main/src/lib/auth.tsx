@@ -3,16 +3,20 @@ import { authApi, type UserOut, type RegisterRequest } from "@/lib/api";
 
 interface AuthCtx {
   user: UserOut | null;
+  isAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (data: RegisterRequest) => Promise<void>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const Ctx = createContext<AuthCtx>({
   user: null,
+  isAdmin: false,
   login: async () => {},
   register: async () => {},
   logout: () => {},
+  refreshUser: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -38,13 +42,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(resp.user);
   }
 
+  async function refreshUser() {
+    try {
+      const { data } = await authApi.me();
+      localStorage.setItem("motm_user", JSON.stringify(data));
+      setUser(data);
+    } catch {
+      // token expired — leave state as-is, route guard will redirect
+    }
+  }
+
   function logout() {
     localStorage.removeItem("motm_token");
     localStorage.removeItem("motm_user");
     setUser(null);
   }
 
-  return <Ctx.Provider value={{ user, login, register, logout }}>{children}</Ctx.Provider>;
+  const isAdmin = user?.role === "admin";
+
+  return (
+    <Ctx.Provider value={{ user, isAdmin, login, register, logout, refreshUser }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export const useAuth = () => useContext(Ctx);

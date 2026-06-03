@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { voices } from "@/lib/mock-data";
@@ -47,6 +48,7 @@ const EMPTY_FORM: AgentCreate = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 function Agents() {
+  const { isAdmin } = useAuth();
   const [agents, setAgents]         = useState<AgentOut[]>([]);
   const [loading, setLoading]       = useState(true);
   const [showModal, setShowModal]   = useState(false);
@@ -91,9 +93,11 @@ function Agents() {
             Reusable agent templates with AI-optimized system prompts
           </p>
         </div>
-        <Button className="bg-gradient-primary text-white shadow-glow" onClick={openCreate}>
-          <Plus className="h-4 w-4" /> Create Agent
-        </Button>
+        {isAdmin && (
+          <Button className="bg-gradient-primary text-white shadow-glow" onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Create Agent
+          </Button>
+        )}
       </div>
 
       {/* Grid */}
@@ -104,8 +108,8 @@ function Agents() {
       ) : agents.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-60 text-muted-foreground gap-3 border border-dashed border-border rounded-xl">
           <Bot className="h-12 w-12 opacity-30" />
-          <p className="text-sm">No agents yet. Create your first agent template.</p>
-          <Button variant="outline" onClick={openCreate}><Plus className="h-4 w-4" /> Create Agent</Button>
+          <p className="text-sm">{isAdmin ? "No agents yet. Create your first agent template." : "No agent templates available yet. Ask your admin to create one."}</p>
+          {isAdmin && <Button variant="outline" onClick={openCreate}><Plus className="h-4 w-4" /> Create Agent</Button>}
         </div>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -132,26 +136,30 @@ function Agents() {
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(a)}>
-                    <Edit className="h-3 w-3" /> Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300"
-                    title="Test Call"
-                    onClick={() => openTestCall(a)}
-                  >
-                    <Phone className="h-3 w-3" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => {
-                    navigator.clipboard.writeText(a.system_prompt);
-                  }}>
-                    <Copy className="h-3 w-3" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDelete(a.id)}>
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
+                  {isAdmin ? (
+                    <>
+                      <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(a)}>
+                        <Edit className="h-3 w-3" /> Edit
+                      </Button>
+                      <Button
+                        variant="outline" size="sm"
+                        className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300"
+                        title="Test Call" onClick={() => openTestCall(a)}
+                      >
+                        <Phone className="h-3 w-3" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(a.system_prompt)}>
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                      <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDelete(a.id)}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="outline" size="sm" className="flex-1" onClick={() => navigator.clipboard.writeText(a.system_prompt)}>
+                      <Copy className="h-3 w-3" /> Copy Prompt
+                    </Button>
+                  )}
                 </div>
               </div>
             );

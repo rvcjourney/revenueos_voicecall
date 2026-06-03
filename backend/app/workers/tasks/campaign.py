@@ -134,8 +134,8 @@ async def _is_dnc_blocked(session, org_id, phone: str) -> bool:
 
 # ── Contact queue ──────────────────────────────────────────────────────────────
 
-async def _next_pending(session, campaign_id) -> CampaignContact | None:
-    """Lock and return one PENDING contact (FIFO by created_at)."""
+async def _next_pending_batch(session, campaign_id, limit: int) -> list[CampaignContact]:
+    """Lock and return up to `limit` PENDING contacts (FIFO by created_at)."""
     result = await session.execute(
         select(CampaignContact)
         .where(
@@ -143,14 +143,14 @@ async def _next_pending(session, campaign_id) -> CampaignContact | None:
             CampaignContact.status == ContactStatus.PENDING,
         )
         .order_by(CampaignContact.created_at)
-        .limit(1)
+        .limit(limit)
         .with_for_update(skip_locked=True)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().all()
 
 
-async def _next_retry(session, campaign_id, retry_after_minutes: int) -> CampaignContact | None:
-    """Return a NO_ANSWER contact that is past its retry delay, or None."""
+async def _next_retry_batch(session, campaign_id, retry_after_minutes: int, limit: int) -> list[CampaignContact]:
+    """Return up to `limit` NO_ANSWER contacts past their retry delay."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=retry_after_minutes)
     result = await session.execute(
         select(CampaignContact)
@@ -160,10 +160,10 @@ async def _next_retry(session, campaign_id, retry_after_minutes: int) -> Campaig
             CampaignContact.last_attempted_at <= cutoff,
         )
         .order_by(CampaignContact.last_attempted_at)
-        .limit(1)
+        .limit(limit)
         .with_for_update(skip_locked=True)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().all()
 
 
 # ── SIP trunk resolution ───────────────────────────────────────────────────────
@@ -439,15 +439,99 @@ async def _save_recording_async(
     log.warning("recording_fetch_gave_up", call_id=str(call_id), to=to_number)
 
 
+# ── Per-call coroutine (runs in parallel inside the dispatch loop) ────────────
+
+async def _run_one_call(
+    http: aiohttp.ClientSession,
+    *,
+    campaign_id: str,
+    org_id: uuid.UUID,
+    agent_template_id: uuid.UUID,
+    call_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    contact_phone: str,
+    contact_name: str,
+    room_name: str,
+    livekit_trunk_id: str,
+    max_duration: int,
+    system_prompt: str,
+    welcome_message: str,
+    voice_id: str,
+    voice_provider: str,
+    language: str,
+    llm_model: str,
+    llm_temperature: float,
+) -> None:
+    """Place one call, wait for it to finish, and finalize — all with its own DB session."""
+    place_result = await _place_call(
+        http,
+        room_name=room_name,
+        phone=contact_phone,
+        contact_name=contact_name,
+        livekit_trunk_id=livekit_trunk_id,
+        call_id=str(call_id),
+        campaign_id=campaign_id,
+        org_id=str(org_id),
+        agent_template_id=str(agent_template_id),
+        system_prompt=system_prompt,
+        welcome_message=welcome_message,
+        voice_id=voice_id,
+        voice_provider=voice_provider,
+        language=language,
+        llm_model=llm_model,
+        llm_temperature=llm_temperature,
+    )
+
+    if place_result == "placed":
+        wait_result = await _wait_for_room_empty(
+            http,
+            room_name=room_name,
+            timeout_seconds=max_duration + 60,
+            campaign_id=campaign_id,
+        )
+    else:
+        wait_result = "skipped"
+
+    log.info("call_done", room=room_name, place=place_result, wait=wait_result)
+
+    call_started_at_utc: datetime | None = None
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            call_row = await session.get(Call, call_id)
+            contact_row = await session.get(CampaignContact, contact_id)
+            campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
+            if call_row:
+                call_started_at_utc = call_row.started_at
+            await _finalize(
+                session,
+                call=call_row,
+                contact=contact_row,
+                campaign=campaign_row,
+                place_result=place_result,
+                wait_result=wait_result,
+            )
+
+    if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
+        asyncio.create_task(_save_recording_async(
+            call_id=call_id,
+            to_number=contact_phone,
+            called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
+            auth_id=settings.VOBIZ_AUTH_ID,
+            auth_token=settings.VOBIZ_AUTH_TOKEN,
+        ))
+
+
 # ── Main dispatcher loop ───────────────────────────────────────────────────────
 
 async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
     """
-    Infinite loop: pick a contact → call it → wait for it to finish → repeat.
-    Exits when the campaign is done, paused, or the calling window closes.
+    Parallel-call dispatcher.
+    Each iteration picks up to `calls_per_minute` contacts and runs them
+    simultaneously with asyncio.gather().  Exits when the campaign is done,
+    paused, or outside the calling window.
     """
     while True:
-        # ── Re-read campaign status at the top of every iteration ──────────
+        # ── Re-read campaign at the top of every iteration ─────────────────
         async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, uuid.UUID(campaign_id))
 
@@ -459,28 +543,26 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
             return
         if not _in_calling_window(campaign):
             log.info("outside_calling_window_waiting", campaign_id=campaign_id)
-            await asyncio.sleep(60)  # re-check every minute until window opens
+            await asyncio.sleep(60)
             continue
 
-        # ── Pick next contact + resolve trunk (one transaction) ────────────
-        room_name = f"camp-{campaign_id[:8]}-{uuid.uuid4().hex[:8]}"
-        call_id: uuid.UUID | None = None
-        contact_phone: str = ""
-        contact_name: str = ""
-        contact_id: uuid.UUID | None = None
-        livekit_trunk_id: str = ""
-        max_duration: int = 600
-
+        concurrency = max(1, campaign.calls_per_minute)
         needs_retry_wait = False
+        batch: list[dict] = []           # call kwargs to pass to _run_one_call
+        livekit_trunk_id: str = ""
+        tmpl_kwargs: dict = {}
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
-                contact = await _next_pending(session, campaign.id)
-                if contact is None:
-                    contact = await _next_retry(session, campaign.id, campaign.retry_after_minutes)
+                # Pick up to `concurrency` contacts (PENDING first, then retries)
+                contacts = await _next_pending_batch(session, campaign.id, concurrency)
+                remaining = concurrency - len(contacts)
+                if remaining > 0:
+                    contacts += await _next_retry_batch(
+                        session, campaign.id, campaign.retry_after_minutes, remaining
+                    )
 
-                if contact is None:
-                    # Check whether any NO_ANSWER contacts are still within retry cooldown
+                if not contacts:
                     no_answer_waiting = await session.scalar(
                         select(func.count()).where(
                             CampaignContact.campaign_id == campaign.id,
@@ -488,10 +570,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         )
                     )
                     if no_answer_waiting:
-                        # Contacts exist but retry delay hasn't elapsed yet — wait and re-check
                         needs_retry_wait = True
                     else:
-                        # Truly no contacts left — campaign is done
                         await session.execute(
                             update(Campaign)
                             .where(Campaign.id == campaign.id)
@@ -504,146 +584,95 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         return
 
                 if not needs_retry_wait:
-                    # DNC check — done inside the transaction so the status update
-                    # is committed atomically with the DIALING mark below.
-                    if await _is_dnc_blocked(session, campaign.org_id, contact.phone):
+                    livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
+                    tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
+
+                    if not livekit_trunk_id:
+                        log.error("no_sip_trunk_configured", campaign_id=campaign_id)
+                        await session.execute(
+                            update(Campaign)
+                            .where(Campaign.id == campaign.id)
+                            .values(status=CampaignStatus.FAILED)
+                        )
+                        return
+
+                    tmpl_kwargs = dict(
+                        agent_template_id=campaign.agent_template_id,
+                        max_duration=tmpl.max_call_duration_seconds if tmpl else 600,
+                        system_prompt=(tmpl.system_prompt or "") if tmpl else "",
+                        welcome_message=(tmpl.welcome_message or "") if tmpl else "",
+                        voice_id=(tmpl.voice_id or "") if tmpl else "",
+                        voice_provider=str(tmpl.voice_provider) if tmpl else "elevenlabs",
+                        language=str(tmpl.language) if tmpl else "hinglish",
+                        llm_model=(tmpl.llm_model or "") if tmpl else "",
+                        llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
+                    )
+
+                    for contact in contacts:
+                        # DNC check
+                        if await _is_dnc_blocked(session, campaign.org_id, contact.phone):
+                            await session.execute(
+                                update(CampaignContact)
+                                .where(CampaignContact.id == contact.id)
+                                .values(status=ContactStatus.DO_NOT_CALL)
+                            )
+                            log.info("contact_dnc_blocked", phone=contact.phone)
+                            continue
+
+                        room_name = f"camp-{campaign_id[:8]}-{uuid.uuid4().hex[:8]}"
+
                         await session.execute(
                             update(CampaignContact)
                             .where(CampaignContact.id == contact.id)
-                            .values(status=ContactStatus.DO_NOT_CALL)
+                            .values(status=ContactStatus.DIALING)
                         )
-                        log.info("contact_dnc_blocked", phone=contact.phone)
-                        # session.begin() commits on exit even via continue
-                        continue
 
-                    # Mark DIALING to prevent another worker picking the same contact
-                    await session.execute(
-                        update(CampaignContact)
-                        .where(CampaignContact.id == contact.id)
-                        .values(status=ContactStatus.DIALING)
-                    )
+                        call_obj = Call(
+                            org_id=campaign.org_id,
+                            campaign_id=campaign.id,
+                            contact_id=contact.id,
+                            livekit_room_name=room_name,
+                            phone_number=contact.phone,
+                            direction=CallDirection.OUTBOUND,
+                            status=CallStatus.INITIATED,
+                            started_at=datetime.now(timezone.utc),
+                        )
+                        session.add(call_obj)
+                        await session.flush()
 
-                    # Create the Call record before touching LiveKit
-                    call_obj = Call(
-                        org_id=campaign.org_id,
-                        campaign_id=campaign.id,
-                        contact_id=contact.id,
-                        livekit_room_name=room_name,
-                        phone_number=contact.phone,
-                        direction=CallDirection.OUTBOUND,
-                        status=CallStatus.INITIATED,
-                        started_at=datetime.now(timezone.utc),
-                    )
-                    session.add(call_obj)
-                    await session.flush()
-
-                    # Capture all values we need after the session closes
-                    call_id = call_obj.id
-                    contact_id = contact.id
-                    contact_phone = contact.phone
-                    contact_name = contact.name
-
-                    # Resolve SIP trunk and template inside the same session
-                    livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
-                    tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
-                    max_duration = tmpl.max_call_duration_seconds if tmpl else 600
-                    tmpl_system_prompt   = (tmpl.system_prompt or "") if tmpl else ""
-                    tmpl_welcome_message = (tmpl.welcome_message or "") if tmpl else ""
-                    tmpl_voice_id        = (tmpl.voice_id or "") if tmpl else ""
-                    tmpl_voice_provider  = str(tmpl.voice_provider) if tmpl else "elevenlabs"
-                    tmpl_language        = str(tmpl.language) if tmpl else "hinglish"
-                    tmpl_llm_model       = (tmpl.llm_model or "") if tmpl else ""
-                    tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
-
-                    if not tmpl:
-                        log.error("agent_template_not_found", campaign_id=campaign_id,
-                                  agent_template_id=str(campaign.agent_template_id))
-                    elif not tmpl_system_prompt:
-                        log.warning("agent_template_has_empty_system_prompt", campaign_id=campaign_id,
-                                    agent_template_id=str(campaign.agent_template_id),
-                                    template_name=tmpl.name)
+                        batch.append(dict(
+                            call_id=call_obj.id,
+                            contact_id=contact.id,
+                            contact_phone=contact.phone,
+                            contact_name=contact.name,
+                            room_name=room_name,
+                        ))
 
         if needs_retry_wait:
             log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id)
             await asyncio.sleep(60)
             continue
 
-        if not livekit_trunk_id:
-            log.error("no_sip_trunk_configured", campaign_id=campaign_id)
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    await session.execute(
-                        update(Campaign)
-                        .where(Campaign.id == campaign.id)
-                        .values(status=CampaignStatus.FAILED)
-                    )
-            return
+        if not batch:
+            continue  # all contacts in this batch were DNC-blocked
 
-        log.info("placing_call", room=room_name, phone=contact_phone, contact_id=str(contact_id))
+        log.info("placing_calls", campaign_id=campaign_id, count=len(batch),
+                 phones=[d["contact_phone"] for d in batch])
 
-        # ── Place the call ─────────────────────────────────────────────────
-        # The SIP call setup can take several seconds; no DB session is held.
-        place_result = await _place_call(
-            http,
-            room_name=room_name,
-            phone=contact_phone,
-            contact_name=contact_name,
-            livekit_trunk_id=livekit_trunk_id,
-            call_id=str(call_id),
-            campaign_id=str(campaign.id),
-            org_id=str(campaign.org_id),
-            agent_template_id=str(campaign.agent_template_id),
-            system_prompt=tmpl_system_prompt,
-            welcome_message=tmpl_welcome_message,
-            voice_id=tmpl_voice_id,
-            voice_provider=tmpl_voice_provider,
-            language=tmpl_language,
-            llm_model=tmpl_llm_model,
-            llm_temperature=tmpl_llm_temperature,
-        )
-
-        # ── Wait for the call to end before dialling the next contact ──────
-        if place_result == "placed":
-            wait_result = await _wait_for_room_empty(
+        # ── Run all calls in this batch simultaneously ─────────────────────
+        await asyncio.gather(*[
+            _run_one_call(
                 http,
-                room_name=room_name,
-                # Extra 60 s grace beyond max duration for TTS/hangup to complete
-                timeout_seconds=max_duration + 60,
                 campaign_id=campaign_id,
+                org_id=campaign.org_id,
+                livekit_trunk_id=livekit_trunk_id,
+                **tmpl_kwargs,
+                **d,
             )
-        else:
-            wait_result = "skipped"
+            for d in batch
+        ])
 
-        log.info("call_done", room=room_name, place=place_result, wait=wait_result)
-
-        # ── Record outcome ─────────────────────────────────────────────────
-        call_started_at_utc: datetime | None = None
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                call_row = await session.get(Call, call_id)
-                contact_row = await session.get(CampaignContact, contact_id)
-                campaign_row = await session.get(Campaign, campaign.id)
-                call_started_at_utc = call_row.started_at if call_row else None
-                await _finalize(
-                    session,
-                    call=call_row,
-                    contact=contact_row,
-                    campaign=campaign_row,
-                    place_result=place_result,
-                    wait_result=wait_result,
-                )
-
-        # ── Fetch recording URL from Vobiz (background — recordings take ~2 min) ──
-        if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
-            asyncio.create_task(_save_recording_async(
-                call_id=call_id,
-                to_number=contact_phone,
-                called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
-                auth_id=settings.VOBIZ_AUTH_ID,
-                auth_token=settings.VOBIZ_AUTH_TOKEN,
-            ))
-
-        # Loop: next contact starts immediately after previous room is empty
+        # Loop immediately — pick next batch while previous results are written
 
 
 async def _reset_stale_dialing(campaign_id: str) -> None:

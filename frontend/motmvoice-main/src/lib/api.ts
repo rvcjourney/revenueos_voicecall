@@ -30,7 +30,22 @@ export const authApi = {
     api.post<LoginResponse>("/api/auth/login", { email, password }),
   register: (data: RegisterRequest) =>
     api.post<LoginResponse>("/api/auth/register", data),
+  registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) =>
+    api.post<LoginResponse>("/api/auth/register-member", data),
   me: () => api.get<UserOut>("/api/auth/me"),
+  updateProfile: (data: { full_name?: string; password?: string }) =>
+    api.patch<UserOut>("/api/auth/profile", data),
+};
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+export const adminApi = {
+  getOrg: () => api.get<OrgInfo>("/api/admin/org"),
+  listUsers: () => api.get<AdminUserOut[]>("/api/admin/users"),
+  createUser: (data: { full_name: string; email: string; password: string; role: string }) =>
+    api.post<AdminUserOut>("/api/admin/users", data),
+  updateUser: (id: string, data: { full_name?: string; role?: string; is_active?: boolean }) =>
+    api.patch<AdminUserOut>(`/api/admin/users/${id}`, data),
+  deleteUser: (id: string) => api.delete(`/api/admin/users/${id}`),
 };
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
@@ -259,6 +274,25 @@ export interface ContactOut {
   status: string;
   attempt_count: number;
   last_attempted_at: string | null;
+}
+
+export interface AdminUserOut {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface OrgInfo {
+  id: string;
+  name: string;
+  plan_tier: string;
+  monthly_call_quota: number;
+  calls_used_this_period: number;
+  invite_code: string;
 }
 
 export interface DashboardStats {

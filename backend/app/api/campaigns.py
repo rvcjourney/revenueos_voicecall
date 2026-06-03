@@ -61,6 +61,9 @@ async def list_campaigns(
         Campaign.org_id == token.org_id,
         Campaign.deleted_at.is_(None),
     )
+    # Members see only their own campaigns; admins see all
+    if token.role != "admin":
+        q = q.where(Campaign.created_by_id == token.user_id)
     if status:
         q = q.where(Campaign.status == status)
 
@@ -86,6 +89,14 @@ async def create_campaign(
     return _to_out(campaign)
 
 
+def _check_campaign_access(campaign: Campaign, token: TokenPayload) -> None:
+    """Raise NotFoundError if this user cannot access the campaign."""
+    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
+        raise NotFoundError("Campaign not found")
+    if token.role != "admin" and str(campaign.created_by_id) != str(token.user_id):
+        raise NotFoundError("Campaign not found")
+
+
 @router.get("/{campaign_id}", response_model=CampaignOut)
 async def get_campaign(
     campaign_id: UUID,
@@ -93,8 +104,7 @@ async def get_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
-        raise NotFoundError("Campaign not found")
+    _check_campaign_access(campaign, token)
     return _to_out(campaign)
 
 
@@ -106,8 +116,7 @@ async def update_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
-        raise NotFoundError("Campaign not found")
+    _check_campaign_access(campaign, token)
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(campaign, field, value)
@@ -124,8 +133,7 @@ async def delete_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
-        raise NotFoundError("Campaign not found")
+    _check_campaign_access(campaign, token)
 
     campaign.deleted_at = datetime.now(timezone.utc)
     await db.commit()
@@ -263,8 +271,7 @@ async def launch_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
-        raise NotFoundError("Campaign not found")
+    _check_campaign_access(campaign, token)
 
     if campaign.status == CampaignStatus.RUNNING:
         # Campaign is already RUNNING but dispatcher may have died — clear stale
@@ -293,6 +300,17 @@ async def launch_campaign(
     )
     if not contact_count:
         raise AppValidationError("Campaign has no pending contacts to call", errors=[])
+
+    # Enforce one running campaign at a time per org
+    running_count = await db.scalar(
+        select(func.count()).where(
+            Campaign.org_id == token.org_id,
+            Campaign.status == CampaignStatus.RUNNING,
+            Campaign.deleted_at.is_(None),
+        )
+    )
+    if running_count:
+        raise CampaignStateError("Another campaign is already running. Pause it before launching a new one.")
 
     campaign.status = CampaignStatus.RUNNING
     campaign.started_at = datetime.now(timezone.utc)
@@ -430,8 +448,7 @@ async def pause_campaign(
     db: AsyncSession = Depends(get_db),
 ):
     campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
-        raise NotFoundError("Campaign not found")
+    _check_campaign_access(campaign, token)
 
     if campaign.status != CampaignStatus.RUNNING:
         raise CampaignStateError("Only a running campaign can be paused")

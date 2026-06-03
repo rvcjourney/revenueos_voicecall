@@ -1,25 +1,11 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   LayoutDashboard, Megaphone, Phone,
-  Bot, BarChart3, Settings, LogOut, Zap,
+  Bot, BarChart3, Settings, LogOut, Zap, Users, Shield,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/Logo";
 
-// ── Nav config ───────────────────────────────────────────────────────────────
-const mainNav = [
-  { to: "/dashboard",  label: "Dashboard",    icon: LayoutDashboard },
-  { to: "/campaigns",  label: "Campaigns",    icon: Megaphone       },
-  { to: "/calls",      label: "Call History", icon: Phone           },
-  { to: "/agents",     label: "AI Agents",    icon: Bot             },
-  { to: "/analytics",  label: "Analytics",    icon: BarChart3       },
-] as const;
-
-const bottomNav = [
-  { to: "/settings", label: "Settings", icon: Settings },
-] as const;
-
-// ── Nav link ─────────────────────────────────────────────────────────────────
 function NavLink({
   to, label, icon: Icon, path, delay = 0,
 }: {
@@ -39,18 +25,14 @@ function NavLink({
               color: "oklch(0.990 0.003 280)",
               boxShadow: "0 4px 20px oklch(0.565 0.240 284 / 0.30), inset 0 1px 0 oklch(1 0 0 / 0.10)",
             }
-          : {
-              color: "var(--muted-foreground)",
-            }),
+          : { color: "var(--muted-foreground)" }),
       }}
     >
-      {/* Hover background — only shown when not active */}
       {!active && (
         <span className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-150"
           style={{ background: "var(--sidebar-accent)" }}
         />
       )}
-
       <Icon
         className="relative z-10 shrink-0 transition-all duration-200"
         style={{
@@ -59,35 +41,47 @@ function NavLink({
           filter: active ? "drop-shadow(0 0 6px oklch(0.90 0.10 280 / 0.6))" : undefined,
         }}
       />
-
       <span className="relative z-10 tracking-tight">{label}</span>
-
-      {/* Active glow indicator dot */}
       {active && (
         <span
           className="relative z-10 ml-auto h-1.5 w-1.5 rounded-full"
           style={{ background: "oklch(0.90 0.08 280)", boxShadow: "0 0 6px oklch(0.90 0.10 280)" }}
         />
       )}
-
-      {/* Hover text colour shift */}
       {!active && (
-        <style>{`
-          [href="${to}"]:hover span { color: var(--foreground); }
-        `}</style>
+        <style>{`[href="${to}"]:hover span { color: var(--foreground); }`}</style>
       )}
     </Link>
   );
 }
 
-// ── Sidebar ───────────────────────────────────────────────────────────────────
 export function Sidebar() {
   const path             = useRouterState({ select: (s) => s.location.pathname });
-  const { user, logout } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
   const navigate         = useNavigate();
   const initials         = user?.full_name
     ? user.full_name.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
     : "U";
+
+  // Navigation visible to everyone
+  const commonNav = [
+    { to: "/dashboard",  label: "Dashboard",    icon: LayoutDashboard },
+    { to: "/campaigns",  label: "Campaigns",    icon: Megaphone       },
+    { to: "/calls",      label: "Call History", icon: Phone           },
+    { to: "/analytics",  label: "Analytics",    icon: BarChart3       },
+  ] as const;
+
+  // Admin-only nav items
+  const adminNav = [
+    { to: "/agents",     label: "AI Agents",    icon: Bot             },
+    { to: "/admin/users",label: "Team",         icon: Users           },
+    { to: "/settings",   label: "Settings",     icon: Settings        },
+  ] as const;
+
+  // Member-only bottom nav
+  const memberNav = [
+    { to: "/agents",     label: "AI Agents",    icon: Bot             }, // read-only view
+  ] as const;
 
   return (
     <aside
@@ -97,11 +91,7 @@ export function Sidebar() {
         borderRight: "1px solid var(--sidebar-border)",
       }}
     >
-
-      {/* ── Noise/dot-grid background texture ─────────────────────────────── */}
       <div className="absolute inset-0 dot-grid opacity-[0.06] pointer-events-none" />
-
-      {/* ── Subtle purple radial glow (top-left) ─────────────────────────── */}
       <div
         className="absolute pointer-events-none"
         style={{
@@ -111,7 +101,7 @@ export function Sidebar() {
         }}
       />
 
-      {/* ── Logo ──────────────────────────────────────────────────────────── */}
+      {/* Logo */}
       <Link
         to="/dashboard"
         className="relative flex items-center gap-3 px-4 h-[62px] shrink-0"
@@ -141,41 +131,41 @@ export function Sidebar() {
         </div>
       </Link>
 
-      {/* ── Nav ───────────────────────────────────────────────────────────── */}
+      {/* Nav */}
       <nav className="relative flex-1 flex flex-col px-2.5 py-4 overflow-y-auto">
-
-        {/* MENU */}
         <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
           style={{ color: "var(--muted-foreground)" }}>
           Menu
         </p>
         <div className="space-y-0.5">
-          {mainNav.map((it, i) => (
+          {commonNav.map((it, i) => (
             <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={i * 40} />
           ))}
-        </div>
-
-        {/* Divider */}
-        <div className="my-4 mx-3" style={{ borderTop: "1px solid var(--sidebar-border)" }} />
-
-        {/* ACCOUNT */}
-        <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
-          style={{ color: "var(--muted-foreground)" }}>
-          Account
-        </p>
-        <div className="space-y-0.5">
-          {bottomNav.map((it, i) => (
-            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(mainNav.length + 1 + i) * 40} />
+          {/* Members see agents page (read-only) */}
+          {!isAdmin && memberNav.map((it, i) => (
+            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + i) * 40} />
           ))}
         </div>
+
+        {isAdmin && (
+          <>
+            <div className="my-4 mx-3" style={{ borderTop: "1px solid var(--sidebar-border)" }} />
+            <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
+              style={{ color: "var(--muted-foreground)" }}>
+              Admin
+            </p>
+            <div className="space-y-0.5">
+              {adminNav.map((it, i) => (
+                <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + 1 + i) * 40} />
+              ))}
+            </div>
+          </>
+        )}
       </nav>
 
-      {/* ── User card — glassmorphism ──────────────────────────────────────── */}
+      {/* User card */}
       <div className="px-2.5 pb-3 pt-2 shrink-0" style={{ borderTop: "1px solid var(--sidebar-border)" }}>
-        <div
-          className="glass-card flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 hover:shadow-glow cursor-default"
-        >
-          {/* Gradient avatar */}
+        <div className="glass-card flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 hover:shadow-glow cursor-default">
           <div
             className="h-7 w-7 rounded-full grid place-items-center text-[11px] font-bold shrink-0"
             style={{
@@ -186,29 +176,23 @@ export function Sidebar() {
           >
             {initials}
           </div>
-
-          {/* Name + role */}
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold truncate leading-tight text-foreground">
               {user?.full_name ?? "Guest"}
             </div>
             <div className="flex items-center gap-1 mt-0.5">
-              <span
-                className="text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase"
-                style={{
-                  backgroundImage: "var(--gradient-primary)",
-                  color: "oklch(0.990 0.003 280)",
-                }}
-              >
-                PRO
-              </span>
-              <span className="text-[11px] capitalize truncate text-muted-foreground">
-                {user?.role ?? "member"}
-              </span>
+              {isAdmin ? (
+                <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase"
+                  style={{ backgroundImage: "var(--gradient-primary)", color: "oklch(0.990 0.003 280)" }}>
+                  <Shield className="h-2 w-2" /> Admin
+                </span>
+              ) : (
+                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase border border-border text-muted-foreground">
+                  Member
+                </span>
+              )}
             </div>
           </div>
-
-          {/* Logout */}
           <button
             onClick={() => { logout(); navigate({ to: "/login" }); }}
             title="Sign out"
@@ -218,7 +202,6 @@ export function Sidebar() {
           </button>
         </div>
       </div>
-
     </aside>
   );
 }

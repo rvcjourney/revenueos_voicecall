@@ -294,8 +294,10 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.calls import router as calls_router
     from app.api.analytics import router as analytics_router
     from app.api.webhooks import router as webhooks_router
+    from app.api.admin import router as admin_router
 
     app.include_router(auth_router,      prefix="/api/auth",      tags=["auth"])
+    app.include_router(admin_router,     prefix="/api/admin",     tags=["admin"])
     app.include_router(agents_router,    prefix="/api/agents",    tags=["agents"])
     app.include_router(campaigns_router, prefix="/api/campaigns", tags=["campaigns"])
     app.include_router(calls_router,     prefix="/api/calls",     tags=["calls"])
