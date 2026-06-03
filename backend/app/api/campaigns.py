@@ -318,16 +318,16 @@ async def launch_campaign(
     if not contact_count:
         raise AppValidationError("Campaign has no pending contacts to call", errors=[])
 
-    # Enforce one running campaign at a time per org
+    # Each user can run only 1 campaign at a time (but different users run in parallel)
     running_count = await db.scalar(
         select(func.count()).where(
-            Campaign.org_id == token.org_id,
+            Campaign.created_by_id == token.user_id,
             Campaign.status == CampaignStatus.RUNNING,
             Campaign.deleted_at.is_(None),
         )
     )
     if running_count:
-        raise CampaignStateError("Another campaign is already running. Pause it before launching a new one.")
+        raise CampaignStateError("You already have a running campaign. Pause it before launching another.")
 
     campaign.status = CampaignStatus.RUNNING
     campaign.started_at = datetime.now(timezone.utc)
