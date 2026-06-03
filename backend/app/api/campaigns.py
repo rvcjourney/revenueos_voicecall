@@ -34,6 +34,7 @@ def _to_out(c: Campaign) -> CampaignOut:
         description=c.description,
         status=c.status,
         goal=c.goal,
+        folder_id=str(c.folder_id) if c.folder_id else None,
         agent_template_id=str(c.agent_template_id),
         total_contacts=c.total_contacts,
         completed_calls=c.completed_calls,
@@ -54,6 +55,7 @@ def _to_out(c: Campaign) -> CampaignOut:
 @router.get("", response_model=CampaignListResponse)
 async def list_campaigns(
     status: str | None = Query(None),
+    folder_id: str | None = Query(None),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -66,6 +68,10 @@ async def list_campaigns(
         q = q.where(Campaign.created_by_id == token.user_id)
     if status:
         q = q.where(Campaign.status == status)
+    if folder_id == "none":
+        q = q.where(Campaign.folder_id.is_(None))
+    elif folder_id:
+        q = q.where(Campaign.folder_id == UUID(folder_id))
 
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
     rows = (await db.execute(q.order_by(Campaign.created_at.desc()))).scalars().all()

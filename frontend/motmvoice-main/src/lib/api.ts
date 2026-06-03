@@ -135,10 +135,28 @@ export const adminApi = {
     api.patch(`/api/admin/agent-creation-requests/${id}/review`, { admin_notes }),
 };
 
+// ── Folder types ──────────────────────────────────────────────────────────────
+export interface FolderOut {
+  id: string;
+  name: string;
+  color: string | null;
+  campaign_count: number;
+  created_at: string;
+}
+
+// ── Folders ───────────────────────────────────────────────────────────────────
+export const foldersApi = {
+  list: () => api.get<FolderOut[]>("/api/folders"),
+  create: (data: { name: string; color?: string }) => api.post<FolderOut>("/api/folders", data),
+  update: (id: string, data: { name?: string; color?: string }) =>
+    api.patch<FolderOut>(`/api/folders/${id}`, data),
+  delete: (id: string) => api.delete(`/api/folders/${id}`),
+};
+
 // ── Campaigns ─────────────────────────────────────────────────────────────────
 export const campaignsApi = {
-  list: (status?: string) =>
-    api.get<ListResponse<CampaignOut>>("/api/campaigns", { params: { status } }),
+  list: (status?: string, folder_id?: string) =>
+    api.get<ListResponse<CampaignOut>>("/api/campaigns", { params: { status, folder_id } }),
   get: (id: string) => api.get<CampaignOut>(`/api/campaigns/${id}`),
   create: (data: CampaignCreate) => api.post<CampaignOut>("/api/campaigns", data),
   update: (id: string, data: Partial<CampaignOut>) =>
@@ -277,6 +295,7 @@ export interface CampaignOut {
   description: string | null;
   status: string;
   goal: string;
+  folder_id: string | null;
   agent_template_id: string;
   total_contacts: number;
   completed_calls: number;
@@ -297,6 +316,7 @@ export interface CampaignCreate {
   name: string;
   description?: string;
   goal?: string;
+  folder_id?: string;
   agent_template_id: string;
   calling_window_start?: string;
   calling_window_end?: string;

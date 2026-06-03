@@ -7,12 +7,31 @@ from uuid import UUID
 from pydantic import BaseModel, field_validator
 
 
+class FolderOut(BaseModel):
+    id: str
+    name: str
+    color: str | None
+    campaign_count: int
+    created_at: datetime
+
+
+class FolderCreate(BaseModel):
+    name: str
+    color: str | None = None
+
+
+class FolderUpdate(BaseModel):
+    name: str | None = None
+    color: str | None = None
+
+
 class CampaignOut(BaseModel):
     id: str
     name: str
     description: str | None
     status: str
     goal: str
+    folder_id: str | None
     agent_template_id: str
     total_contacts: int
     completed_calls: int
@@ -38,6 +57,7 @@ class CampaignCreate(BaseModel):
     name: str
     description: str | None = None
     goal: str = "lead_generation"
+    folder_id: UUID | None = None
     agent_template_id: UUID
     sip_trunk_id: UUID | None = None
     calling_window_start: time = time(9, 0, 0)

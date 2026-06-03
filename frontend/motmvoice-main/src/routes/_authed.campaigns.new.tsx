@@ -18,6 +18,10 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/campaigns/new")({
   head: () => ({ meta: [{ title: "New Campaign — MOTMVoice" }] }),
+  validateSearch: (search: Record<string, unknown>) => ({
+    folderId:   typeof search.folderId   === "string" ? search.folderId   : undefined,
+    folderName: typeof search.folderName === "string" ? search.folderName : undefined,
+  }),
   component: NewCampaign,
 });
 
@@ -43,6 +47,7 @@ const DAY_CODE: Record<string, string> = {
 
 function NewCampaign() {
   const { isAdmin } = useAuth();
+  const { folderId, folderName } = Route.useSearch();
   const [step, setStep]           = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const navigate                  = useNavigate();
@@ -106,7 +111,8 @@ function NewCampaign() {
         name:                  basics.name,
         description:           basics.description || undefined,
         goal:                  GOAL_MAP[basics.goal] ?? "lead_generation",
-        agent_template_id:     selectedAgentId,          // ← reuse existing agent
+        folder_id:             folderId,
+        agent_template_id:     selectedAgentId,
         calling_window_start:  schedule.start + ":00",
         calling_window_end:    schedule.end   + ":00",
         calling_days:          callingDays,
@@ -145,7 +151,11 @@ function NewCampaign() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Create New Campaign</h1>
-          <p className="text-sm text-muted-foreground mt-1">Set up an AI calling campaign in 4 steps</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {folderName
+              ? <>Adding to folder: <span className="font-medium text-foreground">{folderName}</span></>
+              : "Set up an AI calling campaign in 4 steps"}
+          </p>
         </div>
         <Button variant="ghost" onClick={() => navigate({ to: "/campaigns" })}>
           <X className="h-4 w-4" /> Cancel

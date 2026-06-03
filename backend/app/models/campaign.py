@@ -46,6 +46,20 @@ class ContactStatus(StrEnum):
     DO_NOT_CALL = "do_not_call"  # blocked by org DNC or system DNC
 
 
+class CampaignFolder(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
+    """Organizes campaigns under a company/client name. Soft-deleted; campaigns SET NULL on folder delete."""
+    __tablename__ = "campaign_folders"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+
 class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     """
     Orchestrates a batch of outbound AI calls.
@@ -81,6 +95,13 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         nullable=False,
         index=True,
     )
+    folder_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("campaign_folders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Overrides org default SIP trunk if set
     sip_trunk_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),

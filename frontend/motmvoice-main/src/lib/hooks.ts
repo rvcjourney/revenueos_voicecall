@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, analyticsApi, callsApi, campaignsApi, type AgentCreate, type CampaignCreate } from "@/lib/api";
+import { agentsApi, analyticsApi, callsApi, campaignsApi, foldersApi, type AgentCreate, type CampaignCreate } from "@/lib/api";
 
 export function useCampaignContacts(campaignId: string, params?: { status?: string; limit?: number }) {
   return useQuery({
@@ -18,11 +18,49 @@ export function useDashboard() {
   });
 }
 
+// ── Folders ───────────────────────────────────────────────────────────────────
+export function useFolders() {
+  return useQuery({
+    queryKey: ["folders"],
+    queryFn: () => foldersApi.list().then((r) => r.data),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; color?: string }) =>
+      foldersApi.create(data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["folders"] }),
+  });
+}
+
+export function useUpdateFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; name?: string; color?: string }) =>
+      foldersApi.update(id, data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["folders"] }),
+  });
+}
+
+export function useDeleteFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => foldersApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["folders"] });
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+  });
+}
+
 // ── Campaigns ─────────────────────────────────────────────────────────────────
-export function useCampaigns(status?: string) {
+export function useCampaigns(status?: string, folder_id?: string) {
   const result = useQuery({
-    queryKey: ["campaigns", status],
-    queryFn: () => campaignsApi.list(status).then((r) => r.data),
+    queryKey: ["campaigns", status, folder_id],
+    queryFn: () => campaignsApi.list(status, folder_id).then((r) => r.data),
     refetchInterval: (query) => {
       const items = (query.state.data as any)?.items ?? [];
       const hasRunning = items.some((c: any) => c.status === "running");
