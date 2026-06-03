@@ -138,6 +138,18 @@ function CampaignDetail() {
               <Play className="h-4 w-4" /> Launch
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              campaignsApi.exportAllResults(
+                id,
+                `${campaign.name.replace(/\s+/g, "_")}_full_results.csv`
+              ).catch(() => toast.error("Export failed"))
+            }
+          >
+            <Download className="h-4 w-4" /> Download Results CSV
+          </Button>
         </div>
       </div>
 

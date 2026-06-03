@@ -464,6 +464,60 @@ async def export_callback_leads(
     )
 
 
+@router.get("/{campaign_id}/export/all")
+async def export_all_results(
+    campaign_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a full CSV of every call made in this campaign."""
+    campaign = await db.get(Campaign, campaign_id)
+    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
+        raise NotFoundError("Campaign not found")
+
+    # Fetch all calls with optional contact info via left-join
+    from sqlalchemy.orm import aliased
+    contact_alias = aliased(CampaignContact)
+    rows = (await db.execute(
+        select(Call, contact_alias)
+        .outerjoin(contact_alias, Call.contact_id == contact_alias.id)
+        .where(Call.campaign_id == campaign_id)
+        .order_by(Call.started_at.asc())
+    )).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Phone Number", "Contact Name", "Company",
+        "Call Date", "Duration (min)", "Status", "Outcome",
+        "Sentiment", "Summary", "Cost (INR)", "Recording URL",
+    ])
+    for call, contact in rows:
+        date_str = call.started_at.strftime("%Y-%m-%d %H:%M") if call.started_at else ""
+        duration = f"{round(call.duration_seconds / 60, 2)}" if call.duration_seconds else ""
+        writer.writerow([
+            call.phone_number,
+            contact.name if contact else "",
+            contact.company if contact else "",
+            date_str,
+            duration,
+            str(call.status),
+            str(call.outcome),
+            str(call.sentiment) if call.sentiment else "",
+            call.summary or "",
+            str(call.cost_inr) if call.cost_inr is not None else "",
+            call.recording_url or "",
+        ])
+
+    buf.seek(0)
+    filename = f"{campaign.name.replace(' ', '_')}_full_results.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{campaign_id}/pause", response_model=CampaignOut)
 async def pause_campaign(
     campaign_id: UUID,

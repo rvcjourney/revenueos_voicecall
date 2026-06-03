@@ -202,6 +202,20 @@ export const campaignsApi = {
     a.click();
     URL.revokeObjectURL(url);
   },
+  exportAllResults: async (id: string, filename: string) => {
+    const token = localStorage.getItem("motm_token");
+    const res = await fetch(`${BASE}/api/campaigns/${id}/export/all`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   exportInterestedLeads: async (id: string, filename: string) => {
     const token = localStorage.getItem("motm_token");
     const res = await fetch(`${BASE}/api/campaigns/${id}/export/interested`, {
