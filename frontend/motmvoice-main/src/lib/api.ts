@@ -68,6 +68,27 @@ export interface AgentAccessRequestOut {
   created_at: string;
 }
 
+export interface AgentCreationRequestOut {
+  id: string;
+  agent_name: string;
+  company_name: string;
+  status: string;
+  admin_notes: string | null;
+  has_file: boolean;
+  file_name: string | null;
+  created_at: string;
+}
+
+export interface AgentCreationRequestAdminOut extends AgentCreationRequestOut {
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  product_service: string;
+  target_customers: string;
+  key_points: string;
+  file_url: string | null;
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 export const adminApi = {
   getOrg: () => api.get<OrgInfo>("/api/admin/org"),
@@ -83,6 +104,10 @@ export const adminApi = {
     api.post(`/api/admin/agent-requests/${id}/approve`),
   rejectAgentRequest: (id: string) =>
     api.post(`/api/admin/agent-requests/${id}/reject`),
+  listAgentCreationRequests: (status?: string) =>
+    api.get<AgentCreationRequestAdminOut[]>("/api/admin/agent-creation-requests", { params: { status } }),
+  reviewAgentCreationRequest: (id: string, admin_notes?: string) =>
+    api.patch(`/api/admin/agent-creation-requests/${id}/review`, { admin_notes }),
 };
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
@@ -169,6 +194,12 @@ export const agentsApi = {
   delete: (id: string) => api.delete(`/api/agents/${id}`),
   requestAccess: (id: string) =>
     api.post<{ message: string }>(`/api/agents/${id}/request-access`),
+  requestCreation: (form: FormData) =>
+    api.post<{ id: string; message: string }>("/api/agents/creation-request", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  myCreationRequests: () =>
+    api.get<AgentCreationRequestOut[]>("/api/agents/my-creation-requests"),
   optimizePrompt: (rawInput: string) =>
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", {
       raw_input: rawInput,

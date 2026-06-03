@@ -3,7 +3,7 @@ import { useAuth } from "@/lib/auth";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { voices } from "@/lib/mock-data";
-import { agentsApi, callsApi, type AgentOut, type AgentCreate } from "@/lib/api";
+import { agentsApi, callsApi, type AgentOut, type AgentCreate, type AgentCreationRequestOut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +47,116 @@ const EMPTY_FORM: AgentCreate = {
   max_call_duration_seconds: 600,
 };
 
+// ── Agent Request Form — defined before Agents() so JSX can reference it ─────
+
+function AgentRequestForm({ onClose, onSubmitted }: { onClose: () => void; onSubmitted: () => void }) {
+  const [form, setForm] = useState({
+    agent_name: "", company_name: "", product_service: "", target_customers: "", key_points: "",
+  });
+  const [file, setFile]      = useState<File | null>(null);
+  const [submitting, setSub] = useState(false);
+  const fileRef              = useRef<HTMLInputElement>(null);
+
+  function setF(k: keyof typeof form, v: string) { setForm(f => ({ ...f, [k]: v })); }
+
+  async function handleSubmit() {
+    if (!form.agent_name.trim() || !form.company_name.trim() || !form.product_service.trim()
+        || !form.target_customers.trim() || !form.key_points.trim()) {
+      toast.error("Please fill all fields"); return;
+    }
+    setSub(true);
+    try {
+      const fd = new FormData();
+      fd.append("agent_name",       form.agent_name.trim());
+      fd.append("company_name",     form.company_name.trim());
+      fd.append("product_service",  form.product_service.trim());
+      fd.append("target_customers", form.target_customers.trim());
+      fd.append("key_points",       form.key_points.trim());
+      if (file) fd.append("file", file);
+      await agentsApi.requestCreation(fd);
+      onSubmitted();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? "Failed to submit request");
+    } finally {
+      setSub(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-card border border-primary/30 p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Bot className="h-4 w-4 text-primary" /> Request a New AI Agent
+        </h2>
+        <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Fill in your company details. The admin will create a customized AI agent for your campaigns.
+      </p>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1.5">
+          <Label>Agent / Campaign Name *</Label>
+          <Input value={form.agent_name} onChange={e => setF("agent_name", e.target.value)}
+            placeholder="e.g. Sales Bot for B2B" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Company Name *</Label>
+          <Input value={form.company_name} onChange={e => setF("company_name", e.target.value)}
+            placeholder="e.g. Baba Valves Pvt Ltd" />
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>What do you sell? *</Label>
+        <Textarea rows={2} value={form.product_service} onChange={e => setF("product_service", e.target.value)}
+          placeholder="e.g. Industrial valves for manufacturing plants — gate valves, ball valves, check valves" />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Who are your target customers? *</Label>
+        <Textarea rows={2} value={form.target_customers} onChange={e => setF("target_customers", e.target.value)}
+          placeholder="e.g. Purchase managers at factories, plant engineers in Gujarat & Maharashtra" />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Key selling points / talking points *</Label>
+        <Textarea rows={3} value={form.key_points} onChange={e => setF("key_points", e.target.value)}
+          placeholder="e.g. ISI certified, 5-year warranty, bulk discounts above 500 units, free site visit" />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Product catalogue / brochure <span className="text-muted-foreground text-xs">(optional — PDF, Word, image)</span></Label>
+        <div className="border border-dashed border-border rounded-lg p-4 flex items-center gap-3 cursor-pointer hover:border-primary/50 transition-colors"
+          onClick={() => fileRef.current?.click()}>
+          <input ref={fileRef} type="file" className="hidden" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
+            onChange={e => setFile(e.target.files?.[0] ?? null)} />
+          {file ? (
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle className="h-4 w-4 text-green-400" />
+              <span>{file.name}</span>
+              <span className="text-muted-foreground text-xs">({(file.size / 1024).toFixed(0)} KB)</span>
+              <Button variant="ghost" size="sm" className="h-6 text-xs text-destructive ml-2"
+                onClick={e => { e.stopPropagation(); setFile(null); }}>Remove</Button>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">Click to upload a file (max 10MB)</span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button className="bg-gradient-primary text-white" onClick={handleSubmit} disabled={submitting}>
+          {submitting
+            ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</>
+            : <><Send className="h-4 w-4" /> Submit Request</>}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 function AccessBadge({ status }: { status: string }) {
   if (status === "approved") return (
@@ -68,12 +178,14 @@ function AccessBadge({ status }: { status: string }) {
 
 function Agents() {
   const { isAdmin } = useAuth();
-  const [agents, setAgents]         = useState<AgentOut[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [requesting, setRequesting] = useState<string | null>(null);
-  const [showModal, setShowModal]   = useState(false);
-  const [editTarget, setEditTarget] = useState<AgentOut | null>(null);
-  const [testCallAgent, setTestCallAgent] = useState<AgentOut | null>(null);
+  const [agents, setAgents]                 = useState<AgentOut[]>([]);
+  const [myRequests, setMyRequests]         = useState<AgentCreationRequestOut[]>([]);
+  const [loading, setLoading]               = useState(true);
+  const [requesting, setRequesting]         = useState<string | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showModal, setShowModal]           = useState(false);
+  const [editTarget, setEditTarget]         = useState<AgentOut | null>(null);
+  const [testCallAgent, setTestCallAgent]   = useState<AgentOut | null>(null);
 
   function loadAgents() {
     agentsApi.list()
@@ -82,7 +194,15 @@ function Agents() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { loadAgents(); }, []);
+  function loadMyRequests() {
+    if (!isAdmin) {
+      agentsApi.myCreationRequests()
+        .then((r) => setMyRequests(r.data))
+        .catch(() => {});
+    }
+  }
+
+  useEffect(() => { loadAgents(); loadMyRequests(); }, [isAdmin]);
 
   const handleSaved = (agent: AgentOut) => {
     setAgents((prev) => {
@@ -123,7 +243,7 @@ function Agents() {
         <div>
           <h1 className="text-2xl font-bold">AI Agents</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {isAdmin ? "Manage AI agent templates for your team" : "Request access to use an agent in your campaigns"}
+            {isAdmin ? "Manage AI agent templates for your team" : "Request a new agent or access an existing one for your campaigns"}
           </p>
         </div>
         {isAdmin && (
@@ -131,7 +251,52 @@ function Agents() {
             <Plus className="h-4 w-4" /> Create Agent
           </Button>
         )}
+        {!isAdmin && (
+          <Button className="bg-gradient-primary text-white shadow-glow" onClick={() => setShowCreateForm(true)}>
+            <Send className="h-4 w-4" /> Request New Agent
+          </Button>
+        )}
       </div>
+
+      {/* Member: Request New Agent Form */}
+      {!isAdmin && showCreateForm && (
+        <AgentRequestForm
+          onClose={() => setShowCreateForm(false)}
+          onSubmitted={() => { setShowCreateForm(false); loadMyRequests(); toast.success("Request submitted! Your admin will create the agent."); }}
+        />
+      )}
+
+      {/* Member: My Submitted Requests */}
+      {!isAdmin && myRequests.length > 0 && (
+        <div className="rounded-xl bg-card border border-border p-5">
+          <h2 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-400" /> My Agent Requests
+          </h2>
+          <div className="space-y-2">
+            {myRequests.map((r) => (
+              <div key={r.id} className="flex items-center justify-between rounded-lg bg-surface-2/50 px-4 py-3 text-sm">
+                <div>
+                  <span className="font-medium">{r.agent_name}</span>
+                  <span className="text-muted-foreground ml-2 text-xs">— {r.company_name}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {r.has_file && <span className="text-[10px] text-muted-foreground border border-border px-2 py-0.5 rounded">{r.file_name}</span>}
+                  {r.status === "pending" ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                      <Clock className="h-2.5 w-2.5" /> Pending
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/30">
+                      <CheckCircle className="h-2.5 w-2.5" /> Done
+                    </span>
+                  )}
+                  {r.admin_notes && <span className="text-xs text-muted-foreground italic">"{r.admin_notes}"</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Grid */}
       {loading ? (

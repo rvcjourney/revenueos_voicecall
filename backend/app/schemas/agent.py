@@ -40,6 +40,27 @@ class AgentAccessRequestOut(BaseModel):
     created_at: datetime
 
 
+class AgentCreationRequestOut(BaseModel):
+    id: str
+    agent_name: str
+    company_name: str
+    status: str   # pending | reviewed
+    admin_notes: str | None
+    has_file: bool
+    file_name: str | None
+    created_at: datetime
+
+
+class AgentCreationRequestAdminOut(AgentCreationRequestOut):
+    user_id: str
+    user_name: str
+    user_email: str
+    product_service: str
+    target_customers: str
+    key_points: str
+    file_url: str | None = None   # presigned download URL
+
+
 class AgentCreate(BaseModel):
     name: str
     description: str | None = None

@@ -4,19 +4,21 @@ import uuid as _uuid_module
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError
+from app.config import settings
 from app.database import get_db
 from app.models.agent import AgentTemplate
 from app.models.agent_access import AgentAccessRequest
+from app.models.agent_creation_request import AgentCreationRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
 from app.models.user import User
-from app.schemas.agent import AgentAccessRequestOut, AgentCreate, AgentListResponse, AgentOut, AgentUpdate
+from app.schemas.agent import AgentAccessRequestOut, AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
 
@@ -148,6 +150,81 @@ async def request_agent_access(
     db.add(req)
     await db.commit()
     return {"message": "Access requested. Waiting for admin approval."}
+
+
+@router.post("/creation-request", status_code=201)
+async def request_agent_creation(
+    agent_name: str = Form(...),
+    company_name: str = Form(...),
+    product_service: str = Form(...),
+    target_customers: str = Form(...),
+    key_points: str = Form(...),
+    file: UploadFile | None = File(None),
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Member requests a new AI Agent by submitting company info + optional file."""
+    file_key: str | None = None
+    file_name: str | None = None
+
+    if file and file.filename:
+        contents = await file.read()
+        if len(contents) > 10 * 1024 * 1024:
+            raise AppValidationError("File must be under 10MB", errors=[])
+        key = f"agent-requests/{token.org_id}/{_uuid_module.uuid4().hex}/{file.filename}"
+        from app.storage.backend import get_storage
+        storage = get_storage()
+        await storage.upload(
+            settings.BUCKET_EXPORTS,
+            key,
+            contents,
+            content_type=file.content_type or "application/octet-stream",
+        )
+        file_key = key
+        file_name = file.filename
+
+    creation_req = AgentCreationRequest(
+        org_id=token.org_id,
+        user_id=token.user_id,
+        agent_name=agent_name.strip(),
+        company_name=company_name.strip(),
+        product_service=product_service.strip(),
+        target_customers=target_customers.strip(),
+        key_points=key_points.strip(),
+        file_key=file_key,
+        file_name=file_name,
+        status="pending",
+    )
+    db.add(creation_req)
+    await db.commit()
+    await db.refresh(creation_req)
+    return {"id": str(creation_req.id), "message": "Request submitted. Admin will create your agent soon."}
+
+
+@router.get("/my-creation-requests", response_model=list[AgentCreationRequestOut])
+async def my_creation_requests(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Member sees their own submitted creation requests."""
+    rows = (await db.execute(
+        select(AgentCreationRequest)
+        .where(AgentCreationRequest.user_id == token.user_id)
+        .order_by(AgentCreationRequest.created_at.desc())
+    )).scalars().all()
+    return [
+        AgentCreationRequestOut(
+            id=str(r.id),
+            agent_name=r.agent_name,
+            company_name=r.company_name,
+            status=r.status,
+            admin_notes=r.admin_notes,
+            has_file=bool(r.file_key),
+            file_name=r.file_name,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 @router.post("", response_model=AgentOut, status_code=201)

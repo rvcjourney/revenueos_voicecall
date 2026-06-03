@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut } from "@/lib/api";
+import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut, type AgentCreationRequestAdminOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,11 +27,13 @@ function AdminUsersPage() {
   const { isAdmin, user: me } = useAuth();
   const navigate = useNavigate();
 
-  const [users, setUsers]             = useState<AdminUserOut[]>([]);
-  const [org, setOrg]                 = useState<OrgInfo | null>(null);
-  const [agentRequests, setAgentReqs] = useState<AgentAccessRequestOut[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [showCreate, setShowCreate]   = useState(false);
+  const [users, setUsers]                   = useState<AdminUserOut[]>([]);
+  const [org, setOrg]                       = useState<OrgInfo | null>(null);
+  const [agentRequests, setAgentReqs]       = useState<AgentAccessRequestOut[]>([]);
+  const [creationRequests, setCreationReqs] = useState<AgentCreationRequestAdminOut[]>([]);
+  const [loading, setLoading]               = useState(true);
+  const [showCreate, setShowCreate]         = useState(false);
+  const [expandedReq, setExpandedReq]       = useState<string | null>(null);
 
   // Redirect members away
   useEffect(() => {
@@ -52,13 +54,25 @@ function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-    // Load agent requests separately so a missing table doesn't break the page
+    // Load agent access + creation requests (fail silently if table missing)
     try {
-      const reqsRes = await adminApi.listAgentRequests();
-      setAgentReqs(reqsRes.data);
+      const [accessRes, creationRes] = await Promise.all([
+        adminApi.listAgentRequests(),
+        adminApi.listAgentCreationRequests(),
+      ]);
+      setAgentReqs(accessRes.data);
+      setCreationReqs(creationRes.data);
     } catch {
-      // Table may not exist yet if migration 0004 hasn't run — silently ignore
+      // silently ignore if migrations not yet run
     }
+  }
+
+  async function handleReview(id: string) {
+    try {
+      await adminApi.reviewAgentCreationRequest(id);
+      toast.success("Marked as reviewed");
+      load();
+    } catch { toast.error("Failed to update"); }
   }
 
   useEffect(() => { load(); }, []);
@@ -319,6 +333,70 @@ function AdminUsersPage() {
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+
+      {/* Agent Creation Requests */}
+      <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <Bot className="h-4 w-4 text-primary" />
+            New Agent Requests
+            {creationRequests.length > 0 && (
+              <span className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
+                {creationRequests.length}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted-foreground">Members requesting a new AI Agent to be created</span>
+        </div>
+
+        {creationRequests.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">No pending agent creation requests</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {creationRequests.map((r) => (
+              <div key={r.id} className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm">{r.agent_name}</span>
+                      <span className="text-xs text-muted-foreground">— {r.company_name}</span>
+                      <span className="text-[10px] border border-border px-2 py-0.5 rounded text-muted-foreground">
+                        {r.user_name} · {r.user_email}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">{new Date(r.created_at).toLocaleDateString()}</span>
+                    </div>
+
+                    {expandedReq === r.id && (
+                      <div className="mt-3 space-y-2 text-xs bg-surface-2/50 rounded-lg p-3">
+                        <div><span className="text-muted-foreground font-medium">What they sell:</span> <span>{r.product_service}</span></div>
+                        <div><span className="text-muted-foreground font-medium">Target customers:</span> <span>{r.target_customers}</span></div>
+                        <div><span className="text-muted-foreground font-medium">Key points:</span> <span>{r.key_points}</span></div>
+                        {r.file_url && (
+                          <a href={r.file_url} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-primary hover:underline font-medium">
+                            ↓ Download {r.file_name ?? "attachment"}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button variant="outline" size="sm" className="h-7 text-xs"
+                      onClick={() => setExpandedReq(expandedReq === r.id ? null : r.id)}>
+                      {expandedReq === r.id ? "Hide" : "View Details"}
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-green-500/25"
+                      variant="outline" onClick={() => handleReview(r.id)}>
+                      <CheckCircle className="h-3 w-3" /> Mark Done
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
