@@ -499,6 +499,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
+    campaign_id     = meta.get("campaign_id", "")
+
+    if meta.get("system_prompt"):
+        logger.info("system_prompt | source=room_metadata campaign=%s len=%d", campaign_id, len(raw_prompt))
+    else:
+        logger.warning(
+            "system_prompt | source=CONFIG_FALLBACK — room metadata had no system_prompt! "
+            "campaign=%s meta_keys=%s",
+            campaign_id, list(meta.keys()),
+        )
 
     system_prompt = _build_prompt(raw_prompt, welcome_message, language)
     logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)

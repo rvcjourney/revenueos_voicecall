@@ -547,13 +547,21 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
                     tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
                     max_duration = tmpl.max_call_duration_seconds if tmpl else 600
-                    tmpl_system_prompt = tmpl.system_prompt if tmpl else ""
-                    tmpl_welcome_message = tmpl.welcome_message if tmpl else ""
-                    tmpl_voice_id       = tmpl.voice_id if tmpl else ""
-                    tmpl_voice_provider = str(tmpl.voice_provider) if tmpl else "elevenlabs"
-                    tmpl_language       = str(tmpl.language) if tmpl else "hinglish"
-                    tmpl_llm_model      = tmpl.llm_model if tmpl else ""
+                    tmpl_system_prompt   = (tmpl.system_prompt or "") if tmpl else ""
+                    tmpl_welcome_message = (tmpl.welcome_message or "") if tmpl else ""
+                    tmpl_voice_id        = (tmpl.voice_id or "") if tmpl else ""
+                    tmpl_voice_provider  = str(tmpl.voice_provider) if tmpl else "elevenlabs"
+                    tmpl_language        = str(tmpl.language) if tmpl else "hinglish"
+                    tmpl_llm_model       = (tmpl.llm_model or "") if tmpl else ""
                     tmpl_llm_temperature = tmpl.llm_temperature if tmpl else 0.7
+
+                    if not tmpl:
+                        log.error("agent_template_not_found", campaign_id=campaign_id,
+                                  agent_template_id=str(campaign.agent_template_id))
+                    elif not tmpl_system_prompt:
+                        log.warning("agent_template_has_empty_system_prompt", campaign_id=campaign_id,
+                                    agent_template_id=str(campaign.agent_template_id),
+                                    template_name=tmpl.name)
 
         if needs_retry_wait:
             log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id)
