@@ -10,11 +10,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError
 from app.database import get_db
 from app.models.agent import AgentTemplate
+from app.models.agent_access import AgentAccessRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
-from app.schemas.agent import AgentCreate, AgentListResponse, AgentOut, AgentUpdate
+from app.models.user import User
+from app.schemas.agent import AgentAccessRequestOut, AgentCreate, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
 
@@ -79,7 +81,73 @@ async def list_agents(
     )
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
     rows = (await db.execute(q.order_by(AgentTemplate.created_at.desc()))).scalars().all()
-    return AgentListResponse(items=[_to_out(r) for r in rows], total=total)
+
+    # For members, attach the access_status from agent_access_requests
+    if token.role == "admin":
+        access_map: dict[str, tuple[str, str | None]] = {}  # agent_id → (status, request_id)
+    else:
+        req_rows = (await db.execute(
+            select(AgentAccessRequest).where(
+                AgentAccessRequest.user_id == token.user_id,
+                AgentAccessRequest.org_id == token.org_id,
+            )
+        )).scalars().all()
+        access_map = {str(r.agent_id): (r.status, str(r.id)) for r in req_rows}
+
+    items = []
+    for agent in rows:
+        out = _to_out(agent)
+        if token.role == "admin":
+            out.access_status = "approved"
+            out.access_request_id = None
+        else:
+            status, req_id = access_map.get(str(agent.id), ("locked", None))
+            out.access_status = status
+            out.access_request_id = req_id
+        items.append(out)
+
+    return AgentListResponse(items=items, total=total)
+
+
+@router.post("/{agent_id}/request-access", status_code=201)
+async def request_agent_access(
+    agent_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Member requests access to an AI Agent. Admin approves/rejects from admin panel."""
+    if token.role == "admin":
+        raise AppValidationError("Admins already have full access to all agents", errors=[])
+
+    agent = await db.get(AgentTemplate, agent_id)
+    if not agent or agent.org_id != token.org_id or agent.deleted_at:
+        raise NotFoundError("Agent not found")
+
+    existing = await db.scalar(
+        select(AgentAccessRequest).where(
+            AgentAccessRequest.agent_id == agent_id,
+            AgentAccessRequest.user_id == token.user_id,
+        )
+    )
+    if existing:
+        if existing.status == "approved":
+            raise ConflictError("You already have access to this agent")
+        if existing.status == "pending":
+            raise ConflictError("Your access request is already pending admin approval")
+        # rejected → allow re-requesting
+        existing.status = "pending"
+        await db.commit()
+        return {"message": "Access re-requested. Waiting for admin approval."}
+
+    req = AgentAccessRequest(
+        agent_id=agent_id,
+        user_id=token.user_id,
+        org_id=token.org_id,
+        status="pending",
+    )
+    db.add(req)
+    await db.commit()
+    return {"message": "Access requested. Waiting for admin approval."}
 
 
 @router.post("", response_model=AgentOut, status_code=201)

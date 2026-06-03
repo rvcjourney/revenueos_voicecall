@@ -19,11 +19,25 @@ class AgentOut(BaseModel):
     llm_temperature: float
     max_call_duration_seconds: int
     created_at: datetime
+    # access_status: "approved" (admin / access granted), "pending" (requested), "locked" (not requested)
+    access_status: str = "approved"
+    access_request_id: str | None = None  # used by admin to approve/reject
 
 
 class AgentListResponse(BaseModel):
     items: list[AgentOut]
     total: int
+
+
+class AgentAccessRequestOut(BaseModel):
+    id: str
+    agent_id: str
+    agent_name: str
+    user_id: str
+    user_name: str
+    user_email: str
+    status: str
+    created_at: datetime
 
 
 class AgentCreate(BaseModel):

@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { adminApi, authApi, type AdminUserOut, type OrgInfo } from "@/lib/api";
+import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import {
 import { toast } from "sonner";
 import {
   Users, Plus, Shield, UserCheck, UserX, Trash2, Copy, Loader2,
-  RefreshCw, Key,
+  RefreshCw, Key, Bot, CheckCircle, XCircle, Clock,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/admin/users")({
@@ -27,10 +27,11 @@ function AdminUsersPage() {
   const { isAdmin, user: me } = useAuth();
   const navigate = useNavigate();
 
-  const [users, setUsers]     = useState<AdminUserOut[]>([]);
-  const [org, setOrg]         = useState<OrgInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
+  const [users, setUsers]             = useState<AdminUserOut[]>([]);
+  const [org, setOrg]                 = useState<OrgInfo | null>(null);
+  const [agentRequests, setAgentReqs] = useState<AgentAccessRequestOut[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [showCreate, setShowCreate]   = useState(false);
 
   // Redirect members away
   useEffect(() => {
@@ -40,20 +41,38 @@ function AdminUsersPage() {
   async function load() {
     setLoading(true);
     try {
-      const [usersRes, orgRes] = await Promise.all([
+      const [usersRes, orgRes, reqsRes] = await Promise.all([
         adminApi.listUsers(),
         adminApi.getOrg(),
+        adminApi.listAgentRequests(),
       ]);
       setUsers(usersRes.data);
       setOrg(orgRes.data);
+      setAgentReqs(reqsRes.data);
     } catch {
-      toast.error("Failed to load users");
+      toast.error("Failed to load team data");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => { load(); }, []);
+
+  async function handleApprove(req: AgentAccessRequestOut) {
+    try {
+      await adminApi.approveAgentRequest(req.id);
+      toast.success(`${req.user_name} now has access to "${req.agent_name}"`);
+      load();
+    } catch { toast.error("Failed to approve"); }
+  }
+
+  async function handleReject(req: AgentAccessRequestOut) {
+    try {
+      await adminApi.rejectAgentRequest(req.id);
+      toast.success("Request rejected");
+      load();
+    } catch { toast.error("Failed to reject"); }
+  }
 
   async function toggleActive(u: AdminUserOut) {
     try {
@@ -224,6 +243,77 @@ function AdminUsersPage() {
           <div className="p-12 text-center text-muted-foreground text-sm">
             No team members yet. Add one above.
           </div>
+        )}
+      </div>
+
+      {/* Agent Access Requests */}
+      <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <Bot className="h-4 w-4 text-primary" />
+            Agent Access Requests
+            {agentRequests.length > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {agentRequests.length}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted-foreground">Pending approvals from your team</span>
+        </div>
+
+        {agentRequests.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No pending access requests
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground bg-surface-2/40 border-b border-border">
+                <th className="px-4 py-2 font-medium">Member</th>
+                <th className="px-4 py-2 font-medium">Requested Agent</th>
+                <th className="px-4 py-2 font-medium">Requested</th>
+                <th className="px-4 py-2 font-medium text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agentRequests.map((r) => (
+                <tr key={r.id} className="border-t border-border/60 hover:bg-surface-2/30">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-xs">{r.user_name}</div>
+                    <div className="text-[11px] text-muted-foreground">{r.user_email}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <Bot className="h-3 w-3" /> {r.agent_name}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {new Date(r.created_at).toLocaleDateString()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        size="sm" className="h-7 text-xs bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-green-500/25"
+                        variant="outline"
+                        onClick={() => handleApprove(r)}
+                      >
+                        <CheckCircle className="h-3 w-3" /> Approve
+                      </Button>
+                      <Button
+                        size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive"
+                        onClick={() => handleReject(r)}
+                      >
+                        <XCircle className="h-3 w-3" /> Reject
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

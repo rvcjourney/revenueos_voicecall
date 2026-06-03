@@ -37,6 +37,37 @@ export const authApi = {
     api.patch<UserOut>("/api/auth/profile", data),
 };
 
+// ── Types needed before API objects ──────────────────────────────────────────
+export interface AdminUserOut {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface OrgInfo {
+  id: string;
+  name: string;
+  plan_tier: string;
+  monthly_call_quota: number;
+  calls_used_this_period: number;
+  invite_code: string;
+}
+
+export interface AgentAccessRequestOut {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  status: string;
+  created_at: string;
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 export const adminApi = {
   getOrg: () => api.get<OrgInfo>("/api/admin/org"),
@@ -46,6 +77,12 @@ export const adminApi = {
   updateUser: (id: string, data: { full_name?: string; role?: string; is_active?: boolean }) =>
     api.patch<AdminUserOut>(`/api/admin/users/${id}`, data),
   deleteUser: (id: string) => api.delete(`/api/admin/users/${id}`),
+  listAgentRequests: (status?: string) =>
+    api.get<AgentAccessRequestOut[]>("/api/admin/agent-requests", { params: { status } }),
+  approveAgentRequest: (id: string) =>
+    api.post(`/api/admin/agent-requests/${id}/approve`),
+  rejectAgentRequest: (id: string) =>
+    api.post(`/api/admin/agent-requests/${id}/reject`),
 };
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
@@ -130,6 +167,8 @@ export const agentsApi = {
   update: (id: string, data: Partial<AgentOut>) =>
     api.patch<AgentOut>(`/api/agents/${id}`, data),
   delete: (id: string) => api.delete(`/api/agents/${id}`),
+  requestAccess: (id: string) =>
+    api.post<{ message: string }>(`/api/agents/${id}/request-access`),
   optimizePrompt: (rawInput: string) =>
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", {
       raw_input: rawInput,
@@ -250,6 +289,8 @@ export interface AgentOut {
   llm_temperature: number;
   max_call_duration_seconds: number;
   created_at: string;
+  access_status: "approved" | "pending" | "locked";
+  access_request_id: string | null;
 }
 
 export interface AgentCreate {
@@ -274,25 +315,6 @@ export interface ContactOut {
   status: string;
   attempt_count: number;
   last_attempted_at: string | null;
-}
-
-export interface AdminUserOut {
-  id: string;
-  email: string;
-  full_name: string;
-  role: string;
-  is_active: boolean;
-  last_login_at: string | null;
-  created_at: string;
-}
-
-export interface OrgInfo {
-  id: string;
-  name: string;
-  plan_tier: string;
-  monthly_call_quota: number;
-  calls_used_this_period: number;
-  invite_code: string;
 }
 
 export interface DashboardStats {

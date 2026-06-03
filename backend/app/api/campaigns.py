@@ -78,6 +78,23 @@ async def create_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Members must have approved access to the selected AI Agent
+    if token.role != "admin":
+        from app.models.agent_access import AgentAccessRequest
+        access = await db.scalar(
+            select(AgentAccessRequest).where(
+                AgentAccessRequest.agent_id == body.agent_template_id,
+                AgentAccessRequest.user_id == token.user_id,
+                AgentAccessRequest.status == "approved",
+            )
+        )
+        if not access:
+            raise AppValidationError(
+                "You don't have access to this AI Agent. "
+                "Request access from the AI Agents page and wait for admin approval.",
+                errors=[],
+            )
+
     campaign = Campaign(
         org_id=token.org_id,
         created_by_id=token.user_id,

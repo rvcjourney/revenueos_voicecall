@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { voices } from "@/lib/mock-data";
 import { agentsApi, campaignsApi, type AgentOut } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/campaigns/new")({
@@ -41,6 +42,7 @@ const DAY_CODE: Record<string, string> = {
 };
 
 function NewCampaign() {
+  const { isAdmin } = useAuth();
   const [step, setStep]           = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const navigate                  = useNavigate();
@@ -60,15 +62,18 @@ function NewCampaign() {
   useEffect(() => {
     agentsApi.list()
       .then(({ data }) => {
-        setAgents(data.items);
-        // Auto-select the first agent for convenience
-        if (data.items.length > 0 && !selectedAgentId) {
-          setSelectedAgentId(data.items[0].id);
+        // Members can only use agents they have approved access to
+        const usable = isAdmin
+          ? data.items
+          : data.items.filter((a) => a.access_status === "approved");
+        setAgents(usable);
+        if (usable.length > 0 && !selectedAgentId) {
+          setSelectedAgentId(usable[0].id);
         }
       })
       .catch(() => {})
       .finally(() => setAgentsLoading(false));
-  }, []);
+  }, [isAdmin]);
 
   // ── Step 4: Schedule ────────────────────────────────────────────────────────
   const [schedule, setSchedule] = useState({

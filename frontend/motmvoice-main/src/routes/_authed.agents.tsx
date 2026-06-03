@@ -24,7 +24,8 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import {
-  Plus, Bot, Edit, Copy, Trash2, Sparkles, Loader2, CheckCircle, Phone, PhoneCall, PhoneOff,
+  Plus, Bot, Edit, Trash2, Sparkles, Loader2, CheckCircle, Phone, PhoneCall, PhoneOff,
+  Lock, Unlock, Clock, Send,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/agents")({
@@ -47,27 +48,46 @@ const EMPTY_FORM: AgentCreate = {
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
+function AccessBadge({ status }: { status: string }) {
+  if (status === "approved") return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/30">
+      <Unlock className="h-2.5 w-2.5" /> Available
+    </span>
+  );
+  if (status === "pending") return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
+      <Clock className="h-2.5 w-2.5" /> Pending
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-2 text-muted-foreground border border-border">
+      <Lock className="h-2.5 w-2.5" /> Locked
+    </span>
+  );
+}
+
 function Agents() {
   const { isAdmin } = useAuth();
   const [agents, setAgents]         = useState<AgentOut[]>([]);
   const [loading, setLoading]       = useState(true);
+  const [requesting, setRequesting] = useState<string | null>(null);
   const [showModal, setShowModal]   = useState(false);
   const [editTarget, setEditTarget] = useState<AgentOut | null>(null);
   const [testCallAgent, setTestCallAgent] = useState<AgentOut | null>(null);
 
-  useEffect(() => {
+  function loadAgents() {
     agentsApi.list()
       .then((r) => setAgents(r.data.items))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { loadAgents(); }, []);
 
   const handleSaved = (agent: AgentOut) => {
     setAgents((prev) => {
       const idx = prev.findIndex((a) => a.id === agent.id);
-      return idx >= 0
-        ? prev.map((a) => (a.id === agent.id ? agent : a))
-        : [agent, ...prev];
+      return idx >= 0 ? prev.map((a) => (a.id === agent.id ? agent : a)) : [agent, ...prev];
     });
     setShowModal(false);
     setEditTarget(null);
@@ -79,9 +99,22 @@ function Agents() {
     setAgents((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const openCreate    = () => { setEditTarget(null); setShowModal(true); };
-  const openEdit      = (a: AgentOut) => { setEditTarget(a); setShowModal(true); };
-  const openTestCall  = (a: AgentOut) => setTestCallAgent(a);
+  const handleRequestAccess = async (agentId: string) => {
+    setRequesting(agentId);
+    try {
+      await agentsApi.requestAccess(agentId);
+      toast.success("Access request sent! Your admin will review it.");
+      loadAgents(); // refresh access_status
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? "Failed to request access");
+    } finally {
+      setRequesting(null);
+    }
+  };
+
+  const openCreate   = () => { setEditTarget(null); setShowModal(true); };
+  const openEdit     = (a: AgentOut) => { setEditTarget(a); setShowModal(true); };
+  const openTestCall = (a: AgentOut) => setTestCallAgent(a);
 
   return (
     <div className="space-y-6 max-w-[1500px]">
@@ -90,7 +123,7 @@ function Agents() {
         <div>
           <h1 className="text-2xl font-bold">AI Agents</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Reusable agent templates with AI-optimized system prompts
+            {isAdmin ? "Manage AI agent templates for your team" : "Request access to use an agent in your campaigns"}
           </p>
         </div>
         {isAdmin && (
@@ -115,18 +148,31 @@ function Agents() {
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.map((a) => {
             const voice = voices.find((v) => v.id === a.voice_id) ?? voices[0];
+            const isLocked = !isAdmin && a.access_status !== "approved";
             return (
-              <div key={a.id} className="rounded-xl bg-card border border-border p-5 hover:border-primary/40 transition-colors flex flex-col">
+              <div
+                key={a.id}
+                className={`rounded-xl bg-card border p-5 transition-colors flex flex-col ${
+                  isLocked ? "border-border opacity-80" : "border-border hover:border-primary/40"
+                }`}
+              >
                 <div className="flex items-start justify-between mb-3">
-                  <div className="h-12 w-12 rounded-lg bg-gradient-primary grid place-items-center text-white flex-shrink-0">
-                    <Bot className="h-6 w-6" />
+                  <div className={`h-12 w-12 rounded-lg grid place-items-center text-white flex-shrink-0 ${
+                    isLocked ? "bg-surface-2" : "bg-gradient-primary"
+                  }`}>
+                    {isLocked ? <Lock className="h-5 w-5 text-muted-foreground" /> : <Bot className="h-6 w-6" />}
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded bg-surface-3 text-muted-foreground">{a.language}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-0.5 rounded bg-surface-3 text-muted-foreground">{a.language}</span>
+                    {!isAdmin && <AccessBadge status={a.access_status ?? "locked"} />}
+                  </div>
                 </div>
+
                 <h3 className="font-semibold">{a.name}</h3>
                 {a.description && (
                   <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{a.description}</p>
                 )}
+
                 <div className="mt-3 text-xs text-muted-foreground space-y-1 flex-1">
                   <div>Voice: <span className="text-foreground">{voice.name}</span></div>
                   <div>Model: <span className="text-foreground">{a.llm_model.split("/").pop()}</span></div>
@@ -135,6 +181,7 @@ function Agents() {
                     Created {new Date(a.created_at).toLocaleDateString()}
                   </div>
                 </div>
+
                 <div className="mt-4 flex gap-2">
                   {isAdmin ? (
                     <>
@@ -148,16 +195,28 @@ function Agents() {
                       >
                         <Phone className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(a.system_prompt)}>
-                        <Copy className="h-3 w-3" />
-                      </Button>
                       <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDelete(a.id)}>
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </>
+                  ) : a.access_status === "approved" ? (
+                    <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
+                      <CheckCircle className="h-3.5 w-3.5" /> Ready to use in campaigns
+                    </div>
+                  ) : a.access_status === "pending" ? (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
+                      <Clock className="h-3.5 w-3.5" /> Waiting for admin approval…
+                    </div>
                   ) : (
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => navigator.clipboard.writeText(a.system_prompt)}>
-                      <Copy className="h-3 w-3" /> Copy Prompt
+                    <Button
+                      size="sm"
+                      className="flex-1 bg-gradient-primary text-white"
+                      disabled={requesting === a.id}
+                      onClick={() => handleRequestAccess(a.id)}
+                    >
+                      {requesting === a.id
+                        ? <><Loader2 className="h-3 w-3 animate-spin" /> Requesting…</>
+                        : <><Send className="h-3 w-3" /> Request Access</>}
                     </Button>
                   )}
                 </div>

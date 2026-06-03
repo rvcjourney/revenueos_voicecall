@@ -16,7 +16,10 @@ from app.core.deps import TokenPayload, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
 from app.core.security import hash_password
 from app.database import get_db
+from app.models.agent import AgentTemplate
+from app.models.agent_access import AgentAccessRequest
 from app.models.user import Organization, User, UserRole
+from app.schemas.agent import AgentAccessRequestOut
 from app.schemas.auth import AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserOut
 
 router = APIRouter()
@@ -143,3 +146,64 @@ async def delete_user(
 
     user.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+# ── Agent access request management ──────────────────────────────────────────
+
+@router.get("/agent-requests", response_model=list[AgentAccessRequestOut])
+async def list_agent_requests(
+    status: str | None = None,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all agent access requests for this org (default: pending only)."""
+    q = select(AgentAccessRequest).where(AgentAccessRequest.org_id == token.org_id)
+    if status:
+        q = q.where(AgentAccessRequest.status == status)
+    else:
+        q = q.where(AgentAccessRequest.status == "pending")
+    rows = (await db.execute(q.order_by(AgentAccessRequest.created_at))).scalars().all()
+
+    result = []
+    for r in rows:
+        agent = await db.get(AgentTemplate, r.agent_id)
+        user = await db.get(User, r.user_id)
+        result.append(AgentAccessRequestOut(
+            id=str(r.id),
+            agent_id=str(r.agent_id),
+            agent_name=agent.name if agent else "Unknown",
+            user_id=str(r.user_id),
+            user_name=user.full_name if user else "Unknown",
+            user_email=user.email if user else "",
+            status=r.status,
+            created_at=r.created_at,
+        ))
+    return result
+
+
+@router.post("/agent-requests/{request_id}/approve", status_code=200)
+async def approve_agent_request(
+    request_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(AgentAccessRequest, request_id)
+    if not req or req.org_id != token.org_id:
+        raise NotFoundError("Access request not found")
+    req.status = "approved"
+    await db.commit()
+    return {"message": "Access approved"}
+
+
+@router.post("/agent-requests/{request_id}/reject", status_code=200)
+async def reject_agent_request(
+    request_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(AgentAccessRequest, request_id)
+    if not req or req.org_id != token.org_id:
+        raise NotFoundError("Access request not found")
+    req.status = "rejected"
+    await db.commit()
+    return {"message": "Access rejected"}
