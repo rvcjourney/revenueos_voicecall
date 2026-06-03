@@ -19,6 +19,7 @@ import { Route as AuthedDashboardRouteImport } from './routes/_authed.dashboard'
 import { Route as AuthedContactsRouteImport } from './routes/_authed.contacts'
 import { Route as AuthedAnalyticsRouteImport } from './routes/_authed.analytics'
 import { Route as AuthedAgentsRouteImport } from './routes/_authed.agents'
+import { Route as AuthedAdminUsersRouteImport } from './routes/_authed.admin.users'
 import { Route as AuthedCampaignsIndexRouteImport } from './routes/_authed.campaigns.index'
 import { Route as AuthedCallsIndexRouteImport } from './routes/_authed.calls.index'
 import { Route as AuthedCampaignsNewRouteImport } from './routes/_authed.campaigns.new'
@@ -74,6 +75,11 @@ const AuthedAgentsRoute = AuthedAgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedAdminUsersRoute = AuthedAdminUsersRouteImport.update({
+  id: '/admin/users',
+  path: '/admin/users',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedCampaignsIndexRoute = AuthedCampaignsIndexRouteImport.update({
   id: '/campaigns/',
   path: '/campaigns/',
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthedDashboardRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/settings': typeof AuthedSettingsRoute
+  '/admin/users': typeof AuthedAdminUsersRoute
   '/calls/$id': typeof AuthedCallsIdRoute
   '/campaigns/$id': typeof AuthedCampaignsIdRoute
   '/campaigns/new': typeof AuthedCampaignsNewRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthedDashboardRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/settings': typeof AuthedSettingsRoute
+  '/admin/users': typeof AuthedAdminUsersRoute
   '/calls/$id': typeof AuthedCallsIdRoute
   '/campaigns/$id': typeof AuthedCampaignsIdRoute
   '/campaigns/new': typeof AuthedCampaignsNewRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/_authed/dashboard': typeof AuthedDashboardRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/settings': typeof AuthedSettingsRoute
+  '/_authed/admin/users': typeof AuthedAdminUsersRoute
   '/_authed/calls/$id': typeof AuthedCallsIdRoute
   '/_authed/campaigns/$id': typeof AuthedCampaignsIdRoute
   '/_authed/campaigns/new': typeof AuthedCampaignsNewRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/integrations'
     | '/settings'
+    | '/admin/users'
     | '/calls/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/integrations'
     | '/settings'
+    | '/admin/users'
     | '/calls/$id'
     | '/campaigns/$id'
     | '/campaigns/new'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/_authed/dashboard'
     | '/_authed/integrations'
     | '/_authed/settings'
+    | '/_authed/admin/users'
     | '/_authed/calls/$id'
     | '/_authed/campaigns/$id'
     | '/_authed/campaigns/new'
@@ -281,6 +293,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/admin/users': {
+      id: '/_authed/admin/users'
+      path: '/admin/users'
+      fullPath: '/admin/users'
+      preLoaderRoute: typeof AuthedAdminUsersRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/campaigns/': {
       id: '/_authed/campaigns/'
       path: '/campaigns'
@@ -326,6 +345,7 @@ interface AuthedRouteChildren {
   AuthedDashboardRoute: typeof AuthedDashboardRoute
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
+  AuthedAdminUsersRoute: typeof AuthedAdminUsersRoute
   AuthedCallsIdRoute: typeof AuthedCallsIdRoute
   AuthedCampaignsIdRoute: typeof AuthedCampaignsIdRoute
   AuthedCampaignsNewRoute: typeof AuthedCampaignsNewRoute
@@ -340,6 +360,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedDashboardRoute: AuthedDashboardRoute,
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
+  AuthedAdminUsersRoute: AuthedAdminUsersRoute,
   AuthedCallsIdRoute: AuthedCallsIdRoute,
   AuthedCampaignsIdRoute: AuthedCampaignsIdRoute,
   AuthedCampaignsNewRoute: AuthedCampaignsNewRoute,
