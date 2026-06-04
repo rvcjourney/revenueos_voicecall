@@ -352,6 +352,7 @@ export interface CampaignOut {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  created_by_name: string | null;
 }
 
 export interface CampaignCreate {

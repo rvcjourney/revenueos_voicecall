@@ -16,6 +16,7 @@ from app.core.exceptions import NotFoundError, ValidationError as AppValidationE
 from app.database import get_db
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from app.models.call import Call, CallOutcome
+from app.models.user import User
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignListResponse,
@@ -27,7 +28,7 @@ from app.workers.tasks.campaign import run_campaign
 router = APIRouter()
 
 
-def _to_out(c: Campaign) -> CampaignOut:
+def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
     return CampaignOut(
         id=str(c.id),
         name=c.name,
@@ -49,6 +50,7 @@ def _to_out(c: Campaign) -> CampaignOut:
         started_at=c.started_at,
         completed_at=c.completed_at,
         created_at=c.created_at,
+        created_by_name=created_by_name,
     )
 
 
@@ -75,7 +77,18 @@ async def list_campaigns(
 
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
     rows = (await db.execute(q.order_by(Campaign.created_at.desc()))).scalars().all()
-    return CampaignListResponse(items=[_to_out(r) for r in rows], total=total)
+
+    # Batch-load creator names in one query
+    user_ids = {c.created_by_id for c in rows if c.created_by_id}
+    name_map: dict[str, str] = {}
+    if user_ids:
+        users = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        name_map = {str(u.id): u.full_name for u in users}
+
+    return CampaignListResponse(
+        items=[_to_out(r, name_map.get(str(r.created_by_id))) for r in rows],
+        total=total,
+    )
 
 
 @router.post("", response_model=CampaignOut, status_code=201)
@@ -128,7 +141,8 @@ async def get_campaign(
 ):
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
-    return _to_out(campaign)
+    creator = await db.get(User, campaign.created_by_id) if campaign.created_by_id else None
+    return _to_out(campaign, creator.full_name if creator else None)
 
 
 @router.patch("/{campaign_id}", response_model=CampaignOut)
@@ -293,6 +307,9 @@ async def launch_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if token.role == "admin":
+        raise AppValidationError("Admins cannot run campaigns. Assign this campaign to a team member.", errors=[])
+
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
 
@@ -524,6 +541,9 @@ async def pause_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if token.role == "admin":
+        raise AppValidationError("Admins cannot pause campaigns. Only the campaign owner can.", errors=[])
+
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
 

@@ -7,6 +7,7 @@ import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, V
 import { toast } from "sonner";
 import { useCampaign, useCalls } from "@/lib/hooks";
 import { campaignsApi, type CallOut, type CampaignOut } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ function CampaignDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showEdit, setShowEdit] = useState(false);
+  const { isAdmin } = useAuth();
 
   const { data: campaign, isLoading: campLoading } = useCampaign(id);
   const { data: callsData } = useCalls({ campaign_id: id, limit: 200 });
@@ -105,7 +107,7 @@ function CampaignDetail() {
           )}
         </div>
         <div className="flex gap-2">
-          {campaign.status === "running" && (
+          {!isAdmin && campaign.status === "running" && (
             <>
               <Button variant="outline" size="sm" onClick={handlePause}>
                 <Pause className="h-4 w-4" /> Pause
@@ -121,7 +123,7 @@ function CampaignDetail() {
             </>
           )}
           {/* Edit — only enabled when paused or draft */}
-          {campaign.status !== "completed" && (
+          {!isAdmin && campaign.status !== "completed" && (
             <Button
               variant="outline"
               size="sm"
@@ -133,7 +135,7 @@ function CampaignDetail() {
               {campaign.status === "running" ? "Pause to Edit" : "Edit"}
             </Button>
           )}
-          {(campaign.status === "paused" || campaign.status === "draft") && (
+          {!isAdmin && (campaign.status === "paused" || campaign.status === "draft") && (
             <Button size="sm" className="bg-gradient-primary text-white" onClick={handleLaunch}>
               <Play className="h-4 w-4" /> Launch
             </Button>
@@ -167,10 +169,21 @@ function CampaignDetail() {
           <div className="font-mono text-sm">{pct}% — {campaign.completed_calls} / {campaign.total_contacts}</div>
         </div>
         <Progress value={pct} className="h-2.5" />
-        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
           <span>Window: {campaign.calling_window_start}–{campaign.calling_window_end} {campaign.timezone}</span>
           <span>Days: {campaign.calling_days.join(", ")}</span>
           <span>{campaign.calls_per_minute} call/min</span>
+          {campaign.created_by_name && (
+            <span className="ml-auto font-medium text-foreground/70">
+              Launched by: {campaign.created_by_name}
+            </span>
+          )}
+          {campaign.started_at && (
+            <span>Started: {new Date(campaign.started_at).toLocaleString()}</span>
+          )}
+          {campaign.completed_at && (
+            <span>Completed: {new Date(campaign.completed_at).toLocaleString()}</span>
+          )}
         </div>
       </div>
 

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCampaigns, useFolders, useCreateFolder, useUpdateFolder, useDeleteFolder } from "@/lib/hooks";
 import { campaignsApi, type FolderOut } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -109,6 +110,7 @@ function CampaignCard({ c, onPause, onLaunch }: {
   onPause: (id: string) => void;
   onLaunch: (id: string) => void;
 }) {
+  const { isAdmin } = useAuth();
   const pct = c.total_contacts > 0 ? Math.round((c.completed_calls / c.total_contacts) * 100) : 0;
   return (
     <div className="rounded-xl bg-card border border-border p-5 hover:border-primary/40 transition-colors group">
@@ -126,6 +128,11 @@ function CampaignCard({ c, onPause, onLaunch }: {
           </Link>
           {c.description && (
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{c.description}</p>
+          )}
+          {c.created_by_name && (
+            <p className="text-[11px] text-muted-foreground mt-1">
+              by {c.created_by_name}
+            </p>
           )}
         </div>
         <button className="text-muted-foreground hover:text-foreground">
@@ -153,7 +160,7 @@ function CampaignCard({ c, onPause, onLaunch }: {
         <Link to="/campaigns/$id" params={{ id: c.id }} className="flex-1">
           <Button variant="outline" size="sm" className="w-full">View Details</Button>
         </Link>
-        {c.status === "running" && (
+        {!isAdmin && c.status === "running" && (
           <>
             <Button variant="ghost" size="sm" title="Pause" onClick={() => onPause(c.id)}>
               <Pause className="h-3.5 w-3.5" />
@@ -163,7 +170,7 @@ function CampaignCard({ c, onPause, onLaunch }: {
             </Button>
           </>
         )}
-        {(c.status === "paused" || c.status === "draft") && (
+        {!isAdmin && (c.status === "paused" || c.status === "draft") && (
           <Button variant="ghost" size="sm" onClick={() => onLaunch(c.id)}>
             <Play className="h-3.5 w-3.5" />
           </Button>

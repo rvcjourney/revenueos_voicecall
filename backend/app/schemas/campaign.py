@@ -46,6 +46,7 @@ class CampaignOut(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    created_by_name: str | None = None
 
 
 class CampaignListResponse(BaseModel):

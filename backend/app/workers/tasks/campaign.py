@@ -543,6 +543,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
             return
         if not _in_calling_window(campaign):
             log.info("outside_calling_window_waiting", campaign_id=campaign_id)
+            await _refresh_lock(campaign_id)  # prevent lock expiry while waiting for window
             await asyncio.sleep(60)
             continue
 

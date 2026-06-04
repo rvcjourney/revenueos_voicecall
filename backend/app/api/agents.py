@@ -311,6 +311,9 @@ async def test_call(
     Place a real outbound test call using the given agent template.
     Returns immediately with a call_id; poll GET /api/calls/{call_id} for status.
     """
+    if token.role == "admin":
+        raise AppValidationError("Admins cannot make calls. Use a member account to test calls.", errors=[])
+
     agent = await db.get(AgentTemplate, agent_id)
     if not agent or agent.org_id != token.org_id or agent.deleted_at:
         raise NotFoundError("Agent template not found")
