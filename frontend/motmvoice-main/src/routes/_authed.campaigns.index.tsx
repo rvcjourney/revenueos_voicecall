@@ -185,6 +185,7 @@ function FolderDetailView({ folder, onBack }: { folder: FolderOut; onBack: () =>
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
 
   const { data, isLoading } = useCampaigns(
     filter === "all" ? undefined : filter,
@@ -223,11 +224,13 @@ function FolderDetailView({ folder, onBack }: { folder: FolderOut; onBack: () =>
             <h1 className="text-2xl font-bold">{folder.name}</h1>
           </div>
         </div>
-        <Link to="/campaigns/new" search={{ folderId: folder.id, folderName: folder.name }}>
-          <Button className="bg-gradient-primary text-white shadow-glow">
-            <Plus className="h-4 w-4" /> New Campaign
-          </Button>
-        </Link>
+        {!isAdmin && (
+          <Link to="/campaigns/new" search={{ folderId: folder.id, folderName: folder.name }}>
+            <Button className="bg-gradient-primary text-white shadow-glow">
+              <Plus className="h-4 w-4" /> New Campaign
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Filters */}
@@ -263,12 +266,16 @@ function FolderDetailView({ folder, onBack }: { folder: FolderOut; onBack: () =>
             <Folder className="h-6 w-6 text-white" />
           </div>
           <h3 className="font-semibold text-lg">No campaigns in {folder.name}</h3>
-          <p className="text-sm text-muted-foreground mt-1 mb-6">Create the first campaign for this company</p>
-          <Link to="/campaigns/new" search={{ folderId: folder.id, folderName: folder.name }}>
-            <Button className="bg-gradient-primary text-white shadow-glow">
-              <Plus className="h-4 w-4" /> Create Campaign
-            </Button>
-          </Link>
+          <p className="text-sm text-muted-foreground mt-1 mb-6">
+            {isAdmin ? "Members can create campaigns in this folder." : "Create the first campaign for this company"}
+          </p>
+          {!isAdmin && (
+            <Link to="/campaigns/new" search={{ folderId: folder.id, folderName: folder.name }}>
+              <Button className="bg-gradient-primary text-white shadow-glow">
+                <Plus className="h-4 w-4" /> Create Campaign
+              </Button>
+            </Link>
+          )}
         </div>
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -290,6 +297,7 @@ function CampaignsList() {
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
 
   const { data: folders, isLoading: foldersLoading } = useFolders();
   const createFolder = useCreateFolder();
@@ -335,11 +343,13 @@ function CampaignsList() {
           <Button variant="outline" onClick={() => setShowNewFolder(true)}>
             <Folder className="h-4 w-4" /> New Folder
           </Button>
-          <Link to="/campaigns/new" search={{ folderId: undefined, folderName: undefined }}>
-            <Button className="bg-gradient-primary text-white shadow-glow">
-              <Plus className="h-4 w-4" /> Create Campaign
-            </Button>
-          </Link>
+          {!isAdmin && (
+            <Link to="/campaigns/new" search={{ folderId: undefined, folderName: undefined }}>
+              <Button className="bg-gradient-primary text-white shadow-glow">
+                <Plus className="h-4 w-4" /> Create Campaign
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
