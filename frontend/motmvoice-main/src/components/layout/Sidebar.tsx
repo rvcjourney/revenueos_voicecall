@@ -2,10 +2,171 @@ import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   LayoutDashboard, Megaphone, Phone,
   Bot, BarChart3, Settings, LogOut, Zap, Users, Shield, PhoneOff, ClipboardList,
+  Bell, CheckCircle, Clock, Play, X, Loader2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/Logo";
+import { adminApi, campaignsApi, type ActivityEvent, type CampaignOut } from "@/lib/api";
+import { useState, useEffect, useRef } from "react";
 
+// ── Notification helpers ──────────────────────────────────────────────────────
+interface NotifItem {
+  id: string;
+  icon: React.ElementType;
+  iconColor: string;
+  title: string;
+  body: string;
+  timestamp: string;
+}
+
+function activityToNotif(e: ActivityEvent, idx: number): NotifItem {
+  const map: Record<string, { icon: React.ElementType; color: string }> = {
+    campaign_created:       { icon: Megaphone,   color: "text-primary"            },
+    campaign_launched:      { icon: Play,        color: "text-success"            },
+    campaign_completed:     { icon: CheckCircle, color: "text-success"            },
+    agent_access_approved:  { icon: Bot,         color: "text-primary"            },
+    agent_access_pending:   { icon: Clock,       color: "text-amber-400"          },
+    agent_access_rejected:  { icon: X,           color: "text-destructive"        },
+  };
+  const meta = map[e.type] ?? { icon: Megaphone, color: "text-muted-foreground" };
+  return {
+    id: `${e.timestamp}-${idx}`,
+    icon: meta.icon,
+    iconColor: meta.color,
+    title: e.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    body: `${e.user_name} — ${e.detail}`,
+    timestamp: e.timestamp,
+  };
+}
+
+function campaignToNotif(c: CampaignOut): NotifItem {
+  const map: Record<string, { icon: React.ElementType; color: string; body: string }> = {
+    running:   { icon: Play,        color: "text-primary",          body: `${c.completed_calls}/${c.total_contacts} calls done` },
+    completed: { icon: CheckCircle, color: "text-success",          body: `Finished — ${c.interested_count} interested`         },
+    scheduled: { icon: Clock,       color: "text-amber-400",        body: `Scheduled for ${c.start_time ? new Date(c.start_time).toLocaleString() : "—"}` },
+    paused:    { icon: Megaphone,   color: "text-muted-foreground", body: "Campaign is paused"                                  },
+  };
+  const meta = map[c.status] ?? { icon: Megaphone, color: "text-muted-foreground", body: c.status };
+  return { id: c.id, icon: meta.icon, iconColor: meta.color, title: c.name, body: meta.body, timestamp: c.started_at ?? c.created_at };
+}
+
+function formatAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// ── Notification Bell ─────────────────────────────────────────────────────────
+function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
+  const [open, setOpen]       = useState(false);
+  const [items, setItems]     = useState<NotifItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [hasNew, setHasNew]   = useState(true);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const seen = parseInt(localStorage.getItem("motm_notif_seen") ?? "0", 10);
+    if (Date.now() - seen < 60 * 60 * 1000) setHasNew(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [open]);
+
+  async function toggleOpen() {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    setLoading(true);
+    try {
+      if (isAdmin) {
+        const { data } = await adminApi.getActivity();
+        setItems(data.slice(0, 12).map((e, i) => activityToNotif(e, i)));
+      } else {
+        const { data } = await campaignsApi.list();
+        setItems(
+          (data.items ?? [])
+            .filter((c) => ["running", "completed", "scheduled", "paused"].includes(c.status))
+            .slice(0, 12)
+            .map(campaignToNotif)
+        );
+      }
+      localStorage.setItem("motm_notif_seen", String(Date.now()));
+      setHasNew(false);
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={toggleOpen}
+        title="Notifications"
+        className="relative p-1 rounded-md text-muted-foreground hover:text-foreground transition-all duration-150 hover:bg-sidebar-accent"
+      >
+        <Bell className="h-3.5 w-3.5" />
+        {hasNew && (
+          <span
+            className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full"
+            style={{ background: "var(--primary)", boxShadow: "0 0 5px var(--primary)" }}
+          />
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute left-full bottom-0 ml-2 z-50 w-72 rounded-xl bg-card border border-border shadow-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+            <span className="text-sm font-semibold">Notifications</span>
+            <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : items.length === 0 ? (
+              <div className="py-8 text-center">
+                <Bell className="h-7 w-7 mx-auto text-muted-foreground/30 mb-2" />
+                <p className="text-xs text-muted-foreground">No recent activity</p>
+              </div>
+            ) : (
+              <ul>
+                {items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <li key={item.id} className="flex items-start gap-3 px-4 py-2.5 border-b border-border/50 last:border-0 hover:bg-surface-2/40 transition-colors">
+                      <span className={`mt-0.5 shrink-0 ${item.iconColor}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold truncate">{item.title}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">{item.body}</p>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground shrink-0 mt-0.5">{formatAgo(item.timestamp)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── NavLink ───────────────────────────────────────────────────────────────────
 function NavLink({
   to, label, icon: Icon, path, delay = 0,
 }: {
@@ -55,6 +216,7 @@ function NavLink({
   );
 }
 
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 export function Sidebar() {
   const path             = useRouterState({ select: (s) => s.location.pathname });
   const { user, isAdmin, logout } = useAuth();
@@ -63,7 +225,6 @@ export function Sidebar() {
     ? user.full_name.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
     : "U";
 
-  // Navigation visible to everyone
   const commonNav = [
     { to: "/dashboard",  label: "Dashboard",    icon: LayoutDashboard },
     { to: "/campaigns",  label: "Campaigns",    icon: Megaphone       },
@@ -71,7 +232,6 @@ export function Sidebar() {
     { to: "/analytics",  label: "Analytics",    icon: BarChart3       },
   ] as const;
 
-  // Admin-only nav items
   const adminNav = [
     { to: "/agents",      label: "AI Agents",  icon: Bot             },
     { to: "/admin/users", label: "Team",        icon: Users           },
@@ -80,9 +240,8 @@ export function Sidebar() {
     { to: "/settings",    label: "Settings",   icon: Settings        },
   ] as const;
 
-  // Member-only bottom nav
   const memberNav = [
-    { to: "/agents",     label: "AI Agents",    icon: Bot             }, // read-only view
+    { to: "/agents",     label: "AI Agents",    icon: Bot             },
   ] as const;
 
   return (
@@ -143,7 +302,6 @@ export function Sidebar() {
           {commonNav.map((it, i) => (
             <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={i * 40} />
           ))}
-          {/* Members see agents page (read-only) */}
           {!isAdmin && memberNav.map((it, i) => (
             <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + i) * 40} />
           ))}
@@ -195,6 +353,9 @@ export function Sidebar() {
               )}
             </div>
           </div>
+          {/* Bell notification */}
+          <NotificationBell isAdmin={isAdmin} />
+          {/* Logout */}
           <button
             onClick={() => { logout(); navigate({ to: "/login" }); }}
             title="Sign out"

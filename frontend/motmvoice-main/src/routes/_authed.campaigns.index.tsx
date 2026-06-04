@@ -340,9 +340,11 @@ function CampaignsList() {
           <p className="text-sm text-muted-foreground mt-1">Organise campaigns by company folder</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowNewFolder(true)}>
-            <Folder className="h-4 w-4" /> New Folder
-          </Button>
+          {!isAdmin && (
+            <Button variant="outline" onClick={() => setShowNewFolder(true)}>
+              <Folder className="h-4 w-4" /> New Folder
+            </Button>
+          )}
           {!isAdmin && (
             <Link to="/campaigns/new" search={{ folderId: undefined, folderName: undefined }}>
               <Button className="bg-gradient-primary text-white shadow-glow">
@@ -413,16 +415,18 @@ function CampaignsList() {
               </div>
             ))}
 
-            {/* New folder card */}
-            <button
-              onClick={() => setShowNewFolder(true)}
-              className="rounded-xl border border-dashed border-border p-5 flex items-center gap-3 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-            >
-              <div className="h-10 w-10 rounded-lg border-2 border-dashed border-current grid place-items-center shrink-0">
-                <Plus className="h-5 w-5" />
-              </div>
-              <span className="text-sm font-medium">New Folder</span>
-            </button>
+            {/* New folder card — members only */}
+            {!isAdmin && (
+              <button
+                onClick={() => setShowNewFolder(true)}
+                className="rounded-xl border border-dashed border-border p-5 flex items-center gap-3 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+              >
+                <div className="h-10 w-10 rounded-lg border-2 border-dashed border-current grid place-items-center shrink-0">
+                  <Plus className="h-5 w-5" />
+                </div>
+                <span className="text-sm font-medium">New Folder</span>
+              </button>
+            )}
           </div>
         )}
       </section>
