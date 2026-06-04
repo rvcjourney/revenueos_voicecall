@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
-import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut, type AgentCreationRequestAdminOut, type OrgStatsOut, type UserStatOut } from "@/lib/api";
+import React, { useState, useEffect } from "react";
+import { adminApi, type AdminUserOut, type OrgInfo, type AgentAccessRequestOut, type AgentCreationRequestAdminOut, type OrgStatsOut, type UserStatOut, type ApprovedAccessOut, type ActivityEvent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import {
   Users, Plus, Shield, UserCheck, UserX, Trash2, Copy, Loader2,
   RefreshCw, Key, Bot, CheckCircle, XCircle, Clock,
-  Phone, Heart, Megaphone, Activity, TrendingUp,
+  Phone, Heart, Megaphone, Activity, TrendingUp, Ban, Zap, History,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/admin/users")({
@@ -31,11 +31,13 @@ function AdminUsersPage() {
   const [users, setUsers]                   = useState<AdminUserOut[]>([]);
   const [org, setOrg]                       = useState<OrgInfo | null>(null);
   const [stats, setStats]                   = useState<OrgStatsOut | null>(null);
-  const [agentRequests, setAgentReqs]       = useState<AgentAccessRequestOut[]>([]);
-  const [creationRequests, setCreationReqs] = useState<AgentCreationRequestAdminOut[]>([]);
-  const [loading, setLoading]               = useState(true);
-  const [showCreate, setShowCreate]         = useState(false);
-  const [expandedReq, setExpandedReq]       = useState<string | null>(null);
+  const [agentRequests, setAgentReqs]         = useState<AgentAccessRequestOut[]>([]);
+  const [creationRequests, setCreationReqs]   = useState<AgentCreationRequestAdminOut[]>([]);
+  const [approvedAccess, setApprovedAccess]   = useState<ApprovedAccessOut[]>([]);
+  const [activity, setActivity]               = useState<ActivityEvent[]>([]);
+  const [loading, setLoading]                 = useState(true);
+  const [showCreate, setShowCreate]           = useState(false);
+  const [expandedReq, setExpandedReq]         = useState<string | null>(null);
 
   // Redirect members away
   useEffect(() => {
@@ -59,12 +61,16 @@ function AdminUsersPage() {
       setLoading(false);
     }
     try {
-      const [accessRes, creationRes] = await Promise.all([
+      const [accessRes, creationRes, approvedRes, activityRes] = await Promise.all([
         adminApi.listAgentRequests(),
         adminApi.listAgentCreationRequests(),
+        adminApi.listApprovedAccess(),
+        adminApi.getActivity(),
       ]);
       setAgentReqs(accessRes.data);
       setCreationReqs(creationRes.data);
+      setApprovedAccess(approvedRes.data);
+      setActivity(activityRes.data);
     } catch { /* silently ignore if migrations not yet run */ }
   }
 
@@ -92,6 +98,15 @@ function AdminUsersPage() {
       toast.success("Request rejected");
       load();
     } catch { toast.error("Failed to reject"); }
+  }
+
+  async function handleRevoke(access: ApprovedAccessOut) {
+    if (!confirm(`Remove ${access.user_name}'s access to "${access.agent_name}"? They will need to request access again.`)) return;
+    try {
+      await adminApi.revokeAgentAccess(access.request_id);
+      toast.success(`Access to "${access.agent_name}" revoked from ${access.user_name}`);
+      load();
+    } catch { toast.error("Failed to revoke access"); }
   }
 
   async function toggleActive(u: AdminUserOut) {
@@ -484,6 +499,131 @@ function AdminUsersPage() {
         )}
       </div>
 
+      {/* Approved Agent Access */}
+      <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <Shield className="h-4 w-4 text-primary" />
+            Agent Access — Who Has Access
+            {approvedAccess.length > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400 border border-green-500/30">
+                {approvedAccess.length}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-muted-foreground">Currently approved accesses — remove to revoke instantly</span>
+        </div>
+
+        {approvedAccess.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No approved agent accesses yet
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground bg-surface-2/40 border-b border-border">
+                  <th className="px-4 py-2 font-medium">Member</th>
+                  <th className="px-4 py-2 font-medium">Agent</th>
+                  <th className="px-4 py-2 font-medium">Granted</th>
+                  <th className="px-4 py-2 font-medium">Last Used In</th>
+                  <th className="px-4 py-2 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvedAccess.map((a) => (
+                  <tr key={a.request_id} className="border-t border-border/60 hover:bg-surface-2/30">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-xs">{a.user_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{a.user_email}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+                        <Bot className="h-3 w-3" /> {a.agent_name}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {new Date(a.granted_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {a.last_campaign_name ? (
+                        <div>
+                          <div className="text-foreground truncate max-w-[160px]">{a.last_campaign_name}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {a.last_used_at ? new Date(a.last_used_at).toLocaleDateString() : ""}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Never used</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Button
+                        size="sm" variant="ghost"
+                        className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleRevoke(a)}
+                      >
+                        <Ban className="h-3 w-3" /> Revoke
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Recent Activity Feed */}
+      <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <History className="h-4 w-4 text-primary" /> Recent Activity
+          </div>
+          <span className="text-xs text-muted-foreground">All user actions across your org</span>
+        </div>
+
+        {activity.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">No activity yet</div>
+        ) : (
+          <div className="divide-y divide-border/60 max-h-[480px] overflow-y-auto">
+            {activity.map((ev, i) => {
+              const { icon: Icon, color, label } = activityMeta(ev.type);
+              return (
+                <div key={i} className="px-4 py-3 flex items-start gap-3 hover:bg-surface-2/20">
+                  <div className={`mt-0.5 flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center ${color}`}>
+                    <Icon className="h-3 w-3" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-1.5 flex-wrap">
+                      <span className="font-medium text-xs text-foreground">{ev.user_name}</span>
+                      <span className="text-xs text-muted-foreground">{label}</span>
+                      <span className="text-xs font-medium text-primary truncate max-w-[200px]">"{ev.detail}"</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
+                      <span>{ev.user_email}</span>
+                      {ev.agent_name && ev.type.startsWith("campaign") && (
+                        <span className="inline-flex items-center gap-1">
+                          <Bot className="h-2.5 w-2.5" /> {ev.agent_name}
+                        </span>
+                      )}
+                      {ev.campaign_status === "running" && (
+                        <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse inline-block" /> Live
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                    {formatRelative(ev.timestamp)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {showCreate && (
         <CreateUserDialog
           onClose={() => setShowCreate(false)}
@@ -492,6 +632,39 @@ function AdminUsersPage() {
       )}
     </div>
   );
+}
+
+// ── Activity helpers ──────────────────────────────────────────────────────────
+
+function activityMeta(type: string): { icon: React.ElementType; color: string; label: string } {
+  switch (type) {
+    case "campaign_created":
+      return { icon: Megaphone, color: "bg-primary/15 text-primary", label: "created campaign" };
+    case "campaign_launched":
+      return { icon: Zap, color: "bg-green-500/15 text-green-400", label: "launched campaign" };
+    case "campaign_completed":
+      return { icon: CheckCircle, color: "bg-muted/40 text-muted-foreground", label: "completed campaign" };
+    case "agent_access_pending":
+      return { icon: Clock, color: "bg-amber-500/15 text-amber-400", label: "requested access to agent" };
+    case "agent_access_approved":
+      return { icon: UserCheck, color: "bg-green-500/15 text-green-400", label: "was granted access to agent" };
+    case "agent_access_rejected":
+      return { icon: XCircle, color: "bg-destructive/15 text-destructive", label: "was denied access to agent" };
+    default:
+      return { icon: Activity, color: "bg-muted/40 text-muted-foreground", label: type.replace(/_/g, " ") };
+  }
+}
+
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 // ── Create User Dialog ────────────────────────────────────────────────────────

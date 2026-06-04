@@ -266,6 +266,145 @@ async def reject_agent_request(
     return {"message": "Access rejected"}
 
 
+@router.get("/agent-access")
+async def list_approved_access(
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all currently approved agent accesses in this org."""
+    rows = (await db.execute(
+        select(AgentAccessRequest)
+        .where(
+            AgentAccessRequest.org_id == token.org_id,
+            AgentAccessRequest.status == "approved",
+        )
+        .order_by(AgentAccessRequest.updated_at.desc())
+    )).scalars().all()
+
+    result = []
+    for r in rows:
+        agent = await db.get(AgentTemplate, r.agent_id)
+        user = await db.get(User, r.user_id)
+        last_camp = await db.scalar(
+            select(Campaign)
+            .where(
+                Campaign.created_by_id == r.user_id,
+                Campaign.agent_template_id == r.agent_id,
+                Campaign.deleted_at.is_(None),
+            )
+            .order_by(Campaign.created_at.desc())
+            .limit(1)
+        )
+        result.append({
+            "request_id": str(r.id),
+            "user_id": str(r.user_id),
+            "user_name": user.full_name if user else "Unknown",
+            "user_email": user.email if user else "",
+            "agent_id": str(r.agent_id),
+            "agent_name": agent.name if agent else "Deleted Agent",
+            "granted_at": r.updated_at.isoformat(),
+            "last_campaign_name": last_camp.name if last_camp else None,
+            "last_used_at": last_camp.created_at.isoformat() if last_camp else None,
+        })
+    return result
+
+
+@router.post("/agent-requests/{request_id}/revoke", status_code=200)
+async def revoke_agent_access(
+    request_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke a previously approved agent access."""
+    req = await db.get(AgentAccessRequest, request_id)
+    if not req or req.org_id != token.org_id:
+        raise NotFoundError("Access request not found")
+    if req.status != "approved":
+        raise AppValidationError("Can only revoke approved access", errors=[])
+    req.status = "rejected"
+    await db.commit()
+    return {"message": "Access revoked"}
+
+
+@router.get("/activity")
+async def get_activity(
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent activity feed: campaign lifecycle events + agent access events for this org."""
+    activities = []
+
+    # Campaign events: created, launched, completed
+    campaign_rows = (await db.execute(
+        select(Campaign, User)
+        .join(User, Campaign.created_by_id == User.id)
+        .where(
+            Campaign.org_id == token.org_id,
+            Campaign.deleted_at.is_(None),
+        )
+        .order_by(Campaign.created_at.desc())
+        .limit(30)
+    )).all()
+
+    for campaign, creator in campaign_rows:
+        agent = await db.get(AgentTemplate, campaign.agent_template_id)
+        agent_name = agent.name if agent else "Unknown"
+
+        activities.append({
+            "type": "campaign_created",
+            "user_name": creator.full_name,
+            "user_email": creator.email,
+            "detail": campaign.name,
+            "agent_name": agent_name,
+            "campaign_status": str(campaign.status),
+            "timestamp": campaign.created_at.isoformat(),
+        })
+        if campaign.started_at:
+            activities.append({
+                "type": "campaign_launched",
+                "user_name": creator.full_name,
+                "user_email": creator.email,
+                "detail": campaign.name,
+                "agent_name": agent_name,
+                "campaign_status": str(campaign.status),
+                "timestamp": campaign.started_at.isoformat(),
+            })
+        if campaign.completed_at:
+            activities.append({
+                "type": "campaign_completed",
+                "user_name": creator.full_name,
+                "user_email": creator.email,
+                "detail": campaign.name,
+                "agent_name": agent_name,
+                "campaign_status": str(campaign.status),
+                "timestamp": campaign.completed_at.isoformat(),
+            })
+
+    # Agent access events
+    access_rows = (await db.execute(
+        select(AgentAccessRequest, User, AgentTemplate)
+        .join(User, AgentAccessRequest.user_id == User.id)
+        .join(AgentTemplate, AgentAccessRequest.agent_id == AgentTemplate.id)
+        .where(AgentAccessRequest.org_id == token.org_id)
+        .order_by(AgentAccessRequest.updated_at.desc())
+        .limit(20)
+    )).all()
+
+    for req, user, agent in access_rows:
+        activities.append({
+            "type": f"agent_access_{req.status}",
+            "user_name": user.full_name,
+            "user_email": user.email,
+            "detail": agent.name,
+            "agent_name": agent.name,
+            "campaign_status": None,
+            "timestamp": req.updated_at.isoformat(),
+        })
+
+    activities.sort(key=lambda x: x["timestamp"], reverse=True)
+    return activities[:60]
+
+
 # ── Agent creation request management ────────────────────────────────────────
 
 class ReviewCreationRequestBody(BaseModel):

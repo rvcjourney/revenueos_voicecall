@@ -114,6 +114,28 @@ export interface OrgStatsOut {
   users: UserStatOut[];
 }
 
+export interface ApprovedAccessOut {
+  request_id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  agent_id: string;
+  agent_name: string;
+  granted_at: string;
+  last_campaign_name: string | null;
+  last_used_at: string | null;
+}
+
+export interface ActivityEvent {
+  type: string;
+  user_name: string;
+  user_email: string;
+  detail: string;
+  agent_name: string;
+  campaign_status: string | null;
+  timestamp: string;
+}
+
 export const adminApi = {
   getOrg: () => api.get<OrgInfo>("/api/admin/org"),
   getStats: () => api.get<OrgStatsOut>("/api/admin/stats"),
@@ -133,6 +155,12 @@ export const adminApi = {
     api.get<AgentCreationRequestAdminOut[]>("/api/admin/agent-creation-requests", { params: { status } }),
   reviewAgentCreationRequest: (id: string, admin_notes?: string) =>
     api.patch(`/api/admin/agent-creation-requests/${id}/review`, { admin_notes }),
+  listApprovedAccess: () =>
+    api.get<ApprovedAccessOut[]>("/api/admin/agent-access"),
+  revokeAgentAccess: (requestId: string) =>
+    api.post(`/api/admin/agent-requests/${requestId}/revoke`),
+  getActivity: () =>
+    api.get<ActivityEvent[]>("/api/admin/activity"),
 };
 
 // ── Folder types ──────────────────────────────────────────────────────────────
