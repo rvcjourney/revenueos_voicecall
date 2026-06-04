@@ -25,6 +25,14 @@ api.interceptors.response.use(
 );
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
+export interface OrgQuotaInfo {
+  id: string;
+  name: string;
+  plan_tier: string;
+  monthly_call_quota: number;
+  calls_used_this_period: number;
+}
+
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<LoginResponse>("/api/auth/login", { email, password }),
@@ -35,6 +43,7 @@ export const authApi = {
   me: () => api.get<UserOut>("/api/auth/me"),
   updateProfile: (data: { full_name?: string; password?: string }) =>
     api.patch<UserOut>("/api/auth/profile", data),
+  getOrgInfo: () => api.get<OrgQuotaInfo>("/api/auth/org-info"),
 };
 
 // ── Types needed before API objects ──────────────────────────────────────────
@@ -136,6 +145,14 @@ export interface ActivityEvent {
   timestamp: string;
 }
 
+export interface DncEntry {
+  id: string;
+  phone_number: string;
+  reason: string;
+  notes: string | null;
+  created_at: string;
+}
+
 export const adminApi = {
   getOrg: () => api.get<OrgInfo>("/api/admin/org"),
   getStats: () => api.get<OrgStatsOut>("/api/admin/stats"),
@@ -161,6 +178,12 @@ export const adminApi = {
     api.post(`/api/admin/agent-requests/${requestId}/revoke`),
   getActivity: () =>
     api.get<ActivityEvent[]>("/api/admin/activity"),
+  listDnc: (q?: string) =>
+    api.get<DncEntry[]>("/api/admin/dnc", { params: q ? { q } : undefined }),
+  addDnc: (data: { phone_number: string; notes?: string }) =>
+    api.post("/api/admin/dnc", data),
+  removeDnc: (id: string) =>
+    api.delete(`/api/admin/dnc/${id}`),
 };
 
 // ── Folder types ──────────────────────────────────────────────────────────────
@@ -202,6 +225,7 @@ export const campaignsApi = {
     api.get<{ items: ContactOut[]; total: number }>(`/api/campaigns/${id}/contacts`, { params }),
   launch: (id: string) => api.post<CampaignOut>(`/api/campaigns/${id}/launch`),
   pause: (id: string) => api.post<CampaignOut>(`/api/campaigns/${id}/pause`),
+  duplicate: (id: string) => api.post<CampaignOut>(`/api/campaigns/${id}/duplicate`),
   exportCallbackLeads: async (id: string, filename: string) => {
     const token = localStorage.getItem("motm_token");
     const res = await fetch(`${BASE}/api/campaigns/${id}/export/callback_requested`, {
@@ -335,6 +359,7 @@ export interface CampaignOut {
   id: string;
   name: string;
   description: string | null;
+  notes: string | null;
   status: string;
   goal: string;
   folder_id: string | null;
@@ -349,6 +374,8 @@ export interface CampaignOut {
   timezone: string;
   calls_per_minute: number;
   max_retries: number;
+  start_time: string | null;
+  end_time: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -358,6 +385,7 @@ export interface CampaignOut {
 export interface CampaignCreate {
   name: string;
   description?: string;
+  notes?: string;
   goal?: string;
   folder_id?: string;
   agent_template_id: string;
@@ -368,6 +396,8 @@ export interface CampaignCreate {
   calls_per_minute?: number;
   max_retries?: number;
   retry_after_minutes?: number;
+  start_time?: string;
+  end_time?: string;
 }
 
 export interface CallOut {

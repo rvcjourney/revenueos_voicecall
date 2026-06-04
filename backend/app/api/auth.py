@@ -196,6 +196,25 @@ async def me(
     )
 
 
+@router.get("/org-info")
+async def get_my_org_info(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return org quota info available to all authenticated users."""
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Organization not found")
+    return {
+        "id": str(org.id),
+        "name": org.name,
+        "plan_tier": org.plan_tier,
+        "monthly_call_quota": org.monthly_call_quota,
+        "calls_used_this_period": org.calls_used_this_period,
+    }
+
+
 @router.patch("/profile", response_model=UserOut)
 async def update_profile(
     body: ProfileUpdateRequest,

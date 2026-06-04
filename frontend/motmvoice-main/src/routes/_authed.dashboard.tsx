@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight, Zap as ZapIcon } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { useDashboard, useCalls } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
+import { authApi, type OrgQuotaInfo } from "@/lib/api";
 
 export const Route = createFileRoute("/_authed/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — MOTMVoice" }] }),
@@ -29,8 +30,13 @@ function Dashboard() {
   const { theme }           = useTheme();
   const { data: stats }     = useDashboard();
   const { data: callsData } = useCalls({ limit: 8 });
+  const [orgInfo, setOrgInfo] = useState<OrgQuotaInfo | null>(null);
 
   const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    authApi.getOrgInfo().then(({ data }) => setOrgInfo(data)).catch(() => {});
+  }, []);
 
   // Chart colours that adapt to theme
   const axisColor  = theme === "dark" ? "oklch(0.45 0.012 270)" : "oklch(0.44 0.018 270)";
@@ -119,6 +125,31 @@ function Dashboard() {
           </div>
         ))}
       </div>
+
+      {/* ── Call quota bar ────────────────────────────────────────────────── */}
+      {orgInfo && orgInfo.monthly_call_quota > 0 && (
+        <div className="rounded-xl bg-card border border-border/80 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <ZapIcon className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold">Monthly Call Quota</span>
+              <span className="text-xs text-muted-foreground capitalize">· {orgInfo.plan_tier} plan</span>
+            </div>
+            <span className="font-mono text-sm font-semibold">
+              {orgInfo.calls_used_this_period.toLocaleString()}
+              <span className="text-muted-foreground font-normal"> / {orgInfo.monthly_call_quota.toLocaleString()}</span>
+            </span>
+          </div>
+          <Progress
+            value={Math.min(100, (orgInfo.calls_used_this_period / orgInfo.monthly_call_quota) * 100)}
+            className="h-2"
+          />
+          <div className="flex justify-between mt-1 text-xs text-muted-foreground">
+            <span>{Math.round((orgInfo.calls_used_this_period / orgInfo.monthly_call_quota) * 100)}% used this period</span>
+            <span>{(orgInfo.monthly_call_quota - orgInfo.calls_used_this_period).toLocaleString()} remaining</span>
+          </div>
+        </div>
+      )}
 
       {/* ── Charts row ────────────────────────────────────────────────────── */}
       <div className="grid lg:grid-cols-3 gap-4">

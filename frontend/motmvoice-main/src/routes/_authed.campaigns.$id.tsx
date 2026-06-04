@@ -3,9 +3,11 @@ import { CampaignBadge, OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed, CalendarClock, Edit2, AlertTriangle } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Pause, Play, ArrowLeft, Phone, Loader2, CheckCircle2, Heart, XCircle, Volume2, Download, PhoneMissed, CalendarClock, Edit2, AlertTriangle, Copy, TrendingUp, FileText } from "lucide-react";
 import { toast } from "sonner";
-import { useCampaign, useCalls } from "@/lib/hooks";
+import { useCampaign, useCalls, useCall } from "@/lib/hooks";
 import { campaignsApi, type CallOut, type CampaignOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
@@ -32,10 +34,18 @@ function CampaignDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showEdit, setShowEdit] = useState(false);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notes, setNotes] = useState<string | undefined>(undefined);
   const { isAdmin } = useAuth();
 
   const { data: campaign, isLoading: campLoading } = useCampaign(id);
   const { data: callsData } = useCalls({ campaign_id: id, limit: 200 });
+
+  // Initialise notes from campaign once loaded
+  if (campaign && notes === undefined) {
+    setNotes(campaign.notes ?? "");
+  }
 
   const calls = callsData?.items ?? [];
   const interestedCalls    = calls.filter((c) => c.outcome === "interested");
@@ -67,6 +77,30 @@ function CampaignDetail() {
     }
   }
 
+  async function handleDuplicate() {
+    try {
+      const { data: copy } = await campaignsApi.duplicate(id);
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      toast.success("Campaign duplicated — opening copy");
+      navigate({ to: "/campaigns/$id", params: { id: copy.id } });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail ?? "Failed to duplicate");
+    }
+  }
+
+  async function handleSaveNotes() {
+    setSavingNotes(true);
+    try {
+      await campaignsApi.update(id, { notes: notes ?? "" });
+      qc.invalidateQueries({ queryKey: ["campaigns", id] });
+      toast.success("Notes saved");
+    } catch {
+      toast.error("Failed to save notes");
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
   if (campLoading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -90,6 +124,9 @@ function CampaignDetail() {
     ? Math.round((campaign.completed_calls / campaign.total_contacts) * 100)
     : 0;
 
+  // Funnel percentages
+  const answeredCalls = interestedCalls.length + callbackCalls.length + notInterestedCalls.length;
+
   return (
     <div className="space-y-6 max-w-[1600px]">
       {/* Header */}
@@ -101,12 +138,18 @@ function CampaignDetail() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{campaign.name}</h1>
             <CampaignBadge status={campaign.status} />
+            {campaign.status === "running" && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-success font-semibold">
+                <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
+                Live
+              </span>
+            )}
           </div>
           {campaign.description && (
             <p className="text-sm text-muted-foreground mt-1">{campaign.description}</p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {!isAdmin && campaign.status === "running" && (
             <>
               <Button variant="outline" size="sm" onClick={handlePause}>
@@ -122,7 +165,6 @@ function CampaignDetail() {
               </Button>
             </>
           )}
-          {/* Edit — only enabled when paused or draft */}
           {!isAdmin && campaign.status !== "completed" && (
             <Button
               variant="outline"
@@ -140,6 +182,9 @@ function CampaignDetail() {
               <Play className="h-4 w-4" /> Launch
             </Button>
           )}
+          <Button variant="outline" size="sm" onClick={handleDuplicate}>
+            <Copy className="h-4 w-4" /> Duplicate
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -150,7 +195,7 @@ function CampaignDetail() {
               ).catch(() => toast.error("Export failed"))
             }
           >
-            <Download className="h-4 w-4" /> Download Results CSV
+            <Download className="h-4 w-4" /> Download CSV
           </Button>
         </div>
       </div>
@@ -159,32 +204,74 @@ function CampaignDetail() {
       <div className="grid grid-cols-3 gap-3">
         <KPI icon={CheckCircle2} label="Calls Done" value={campaign.completed_calls} tone="text-primary" />
         <KPI icon={Heart} label="Interested" value={campaign.interested_count} tone="text-success" />
-        <KPI icon={XCircle} label="Failed" value={campaign.failed_count} tone="text-destructive" />
+        <KPI icon={XCircle} label="Failed / DNC" value={campaign.failed_count} tone="text-destructive" />
       </div>
 
-      {/* Progress bar */}
+      {/* Progress + Funnel row */}
+      <div className="grid lg:grid-cols-5 gap-4">
+        {/* Progress */}
+        <div className="lg:col-span-3 rounded-xl bg-card border border-border p-5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-semibold">Progress</div>
+            <div className="font-mono text-sm">{pct}% — {campaign.completed_calls} / {campaign.total_contacts}</div>
+          </div>
+          <Progress value={pct} className="h-2.5" />
+          <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
+            <span>Window: {campaign.calling_window_start}–{campaign.calling_window_end} {campaign.timezone}</span>
+            <span>Days: {campaign.calling_days.join(", ")}</span>
+            <span>{campaign.calls_per_minute} call/min</span>
+            {campaign.created_by_name && (
+              <span className="ml-auto font-medium text-foreground/70">
+                Launched by: {campaign.created_by_name}
+              </span>
+            )}
+            {campaign.started_at && (
+              <span>Started: {new Date(campaign.started_at).toLocaleString()}</span>
+            )}
+            {campaign.completed_at && (
+              <span>Completed: {new Date(campaign.completed_at).toLocaleString()}</span>
+            )}
+            {campaign.start_time && campaign.status === "scheduled" && (
+              <span className="text-amber-400 font-medium">
+                Scheduled: {new Date(campaign.start_time).toLocaleString()}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Conversion funnel */}
+        <div className="lg:col-span-2 rounded-xl bg-card border border-border p-5">
+          <div className="font-semibold mb-4 flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            Conversion Funnel
+          </div>
+          <div className="space-y-3">
+            <FunnelBar label="Total Contacts" value={campaign.total_contacts} max={campaign.total_contacts} color="bg-primary/40" />
+            <FunnelBar label="Calls Made" value={campaign.completed_calls} max={campaign.total_contacts} color="bg-primary/70" />
+            <FunnelBar label="Answered" value={answeredCalls} max={campaign.total_contacts} color="bg-amber-500/70" />
+            <FunnelBar label="Interested" value={campaign.interested_count} max={campaign.total_contacts} color="bg-success/80" />
+          </div>
+        </div>
+      </div>
+
+      {/* Notes */}
       <div className="rounded-xl bg-card border border-border p-5">
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-semibold">Progress</div>
-          <div className="font-mono text-sm">{pct}% — {campaign.completed_calls} / {campaign.total_contacts}</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-semibold flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            Campaign Notes
+          </div>
+          <Button size="sm" variant="outline" onClick={handleSaveNotes} disabled={savingNotes}>
+            {savingNotes ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+          </Button>
         </div>
-        <Progress value={pct} className="h-2.5" />
-        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
-          <span>Window: {campaign.calling_window_start}–{campaign.calling_window_end} {campaign.timezone}</span>
-          <span>Days: {campaign.calling_days.join(", ")}</span>
-          <span>{campaign.calls_per_minute} call/min</span>
-          {campaign.created_by_name && (
-            <span className="ml-auto font-medium text-foreground/70">
-              Launched by: {campaign.created_by_name}
-            </span>
-          )}
-          {campaign.started_at && (
-            <span>Started: {new Date(campaign.started_at).toLocaleString()}</span>
-          )}
-          {campaign.completed_at && (
-            <span>Completed: {new Date(campaign.completed_at).toLocaleString()}</span>
-          )}
-        </div>
+        <Textarea
+          placeholder="Add internal notes about this campaign — script feedback, follow-up tasks, observations…"
+          rows={3}
+          value={notes ?? ""}
+          onChange={(e) => setNotes(e.target.value)}
+          className="resize-none text-sm"
+        />
       </div>
 
       {/* Tabs */}
@@ -210,7 +297,7 @@ function CampaignDetail() {
         </TabsList>
 
         <TabsContent value="calls" className="mt-4">
-          <CallTable calls={calls} emptyText="No calls made yet" />
+          <CallTable calls={calls} emptyText="No calls made yet" onSelect={setSelectedCallId} />
         </TabsContent>
 
         <TabsContent value="interested" className="mt-4">
@@ -230,7 +317,7 @@ function CampaignDetail() {
               </Button>
             </div>
           )}
-          <CallTable calls={interestedCalls} emptyText="No interested leads yet" highlightPhone="text-success" />
+          <CallTable calls={interestedCalls} emptyText="No interested leads yet" highlightPhone="text-success" onSelect={setSelectedCallId} />
         </TabsContent>
 
         <TabsContent value="callback" className="mt-4">
@@ -250,11 +337,11 @@ function CampaignDetail() {
               </Button>
             </div>
           )}
-          <CallTable calls={callbackCalls} emptyText="No callback requests yet" highlightPhone="text-amber-400" />
+          <CallTable calls={callbackCalls} emptyText="No callback requests yet" highlightPhone="text-amber-400" onSelect={setSelectedCallId} />
         </TabsContent>
 
         <TabsContent value="not_interested" className="mt-4">
-          <CallTable calls={notInterestedCalls} emptyText="No not-interested calls yet" highlightPhone="text-muted-foreground" />
+          <CallTable calls={notInterestedCalls} emptyText="No not-interested calls yet" highlightPhone="text-muted-foreground" onSelect={setSelectedCallId} />
         </TabsContent>
 
         <TabsContent value="no_answer" className="mt-4">
@@ -274,7 +361,7 @@ function CampaignDetail() {
               </Button>
             </div>
           )}
-          <CallTable calls={noAnswerCalls} emptyText="No unanswered calls yet" highlightPhone="text-muted-foreground" />
+          <CallTable calls={noAnswerCalls} emptyText="No unanswered calls yet" highlightPhone="text-muted-foreground" onSelect={setSelectedCallId} />
         </TabsContent>
       </Tabs>
 
@@ -290,6 +377,134 @@ function CampaignDetail() {
           }}
         />
       )}
+
+      {/* Call Detail Drawer */}
+      <Sheet open={!!selectedCallId} onOpenChange={(o) => !o && setSelectedCallId(null)}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Call Detail</SheetTitle>
+          </SheetHeader>
+          {selectedCallId && <CallDetailPanel callId={selectedCallId} />}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+// ── Funnel Bar ────────────────────────────────────────────────────────────────
+
+function FunnelBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-mono font-semibold">{value.toLocaleString()} <span className="text-muted-foreground font-normal">({pct}%)</span></span>
+      </div>
+      <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Call Detail Panel (inside Sheet) ─────────────────────────────────────────
+
+function CallDetailPanel({ callId }: { callId: string }) {
+  const { data: call, isLoading } = useCall(callId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!call) return <p className="text-muted-foreground text-sm mt-4">Call not found.</p>;
+
+  const sentimentColor = call.sentiment === "positive" ? "text-success" : call.sentiment === "negative" ? "text-destructive" : "text-muted-foreground";
+
+  return (
+    <div className="space-y-5 mt-4">
+      {/* Meta */}
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <div className="text-xs text-muted-foreground">Phone</div>
+          <div className="font-mono font-medium">{call.phone_number}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Outcome</div>
+          <OutcomeBadge outcome={call.outcome} />
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Duration</div>
+          <div className="font-mono">
+            {call.duration_seconds ? `${Math.floor(call.duration_seconds / 60)}m ${call.duration_seconds % 60}s` : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">Sentiment</div>
+          <div className={`font-semibold capitalize ${sentimentColor}`}>{call.sentiment ?? "—"}</div>
+        </div>
+        <div className="col-span-2">
+          <div className="text-xs text-muted-foreground">Started</div>
+          <div>{call.started_at ? new Date(call.started_at).toLocaleString() : "—"}</div>
+        </div>
+      </div>
+
+      {/* Recording */}
+      {call.recording_url && (
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">Recording</div>
+          <audio controls src={call.recording_url} className="w-full rounded-lg" />
+        </div>
+      )}
+
+      {/* Summary */}
+      {call.summary && (
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">Summary</div>
+          <div className="text-sm rounded-lg bg-surface-2 p-3 leading-relaxed">{call.summary}</div>
+        </div>
+      )}
+
+      {/* Transcript */}
+      {call.transcript_segments && call.transcript_segments.length > 0 && (
+        <div>
+          <div className="text-xs text-muted-foreground mb-2">Transcript</div>
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            {call.transcript_segments.map((seg, i) => (
+              <div key={i} className={`text-sm flex gap-2 ${seg.speaker === "agent" ? "flex-row" : "flex-row-reverse"}`}>
+                <div className={`text-[10px] font-bold uppercase mt-0.5 shrink-0 w-10 text-center ${seg.speaker === "agent" ? "text-primary" : "text-amber-400"}`}>
+                  {seg.speaker === "agent" ? "AI" : "User"}
+                </div>
+                <div className={`rounded-lg px-3 py-1.5 max-w-[85%] ${seg.speaker === "agent" ? "bg-primary/10 text-foreground" : "bg-surface-2 text-foreground"}`}>
+                  {seg.text}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Extracted data */}
+      {call.extracted_data && Object.keys(call.extracted_data).length > 0 && (
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">Extracted Data</div>
+          <div className="rounded-lg bg-surface-2 p-3 text-xs font-mono space-y-1">
+            {Object.entries(call.extracted_data).map(([k, v]) => (
+              <div key={k}><span className="text-primary">{k}:</span> {String(v)}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Link to="/calls/$id" params={{ id: callId }}>
+        <Button variant="outline" size="sm" className="w-full">
+          <Phone className="h-3 w-3" /> Open Full Call Page
+        </Button>
+      </Link>
     </div>
   );
 }
@@ -322,7 +537,7 @@ function EditCampaignDialog({
   );
   const [saving, setSaving]     = useState(false);
 
-  const canEdit = campaign.status === "paused" || campaign.status === "draft";
+  const canEdit = campaign.status === "paused" || campaign.status === "draft" || campaign.status === "scheduled";
 
   async function handleSave() {
     if (!canEdit) return;
@@ -359,7 +574,6 @@ function EditCampaignDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {/* Pause warning */}
         {!canEdit && (
           <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm text-amber-300">
             <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -368,19 +582,14 @@ function EditCampaignDialog({
         )}
 
         <div className="space-y-4 py-1">
-          {/* Name */}
           <div className="space-y-1.5">
             <Label>Campaign Name</Label>
             <Input value={name} onChange={e => setName(e.target.value)} disabled={!canEdit} />
           </div>
-
-          {/* Description */}
           <div className="space-y-1.5">
             <Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
             <Input value={desc} onChange={e => setDesc(e.target.value)} disabled={!canEdit} placeholder="e.g. Q3 outbound drive" />
           </div>
-
-          {/* Time window */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Start Time</Label>
@@ -391,8 +600,6 @@ function EditCampaignDialog({
               <Input type="time" value={end} onChange={e => setEnd(e.target.value)} disabled={!canEdit} />
             </div>
           </div>
-
-          {/* Timezone */}
           <div className="space-y-1.5">
             <Label>Timezone</Label>
             <Select value={tz} onValueChange={setTz} disabled={!canEdit}>
@@ -405,8 +612,6 @@ function EditCampaignDialog({
               </SelectContent>
             </Select>
           </div>
-
-          {/* Days */}
           <div className="space-y-1.5">
             <Label>Calling Days</Label>
             <div className="flex flex-wrap gap-2">
@@ -427,8 +632,6 @@ function EditCampaignDialog({
               ))}
             </div>
           </div>
-
-          {/* CPM + Retries */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Calls / Minute</Label>
@@ -474,10 +677,12 @@ function CallTable({
   calls,
   emptyText,
   highlightPhone = "",
+  onSelect,
 }: {
   calls: CallOut[];
   emptyText: string;
   highlightPhone?: string;
+  onSelect: (id: string) => void;
 }) {
   return (
     <div className="rounded-xl bg-card border border-border overflow-hidden">
@@ -491,19 +696,23 @@ function CallTable({
               <th className="px-4 py-2 font-medium">Outcome</th>
               <th className="px-4 py-2 font-medium">Recording</th>
               <th className="px-4 py-2 font-medium">Summary</th>
-              <th className="px-4 py-2 font-medium text-right">Action</th>
+              <th className="px-4 py-2 font-medium text-right">Detail</th>
             </tr>
           </thead>
           <tbody>
             {calls.map((c) => (
-              <tr key={c.id} className="border-t border-border/60 hover:bg-surface-2/40 align-top">
+              <tr
+                key={c.id}
+                className="border-t border-border/60 hover:bg-surface-2/40 align-top cursor-pointer"
+                onClick={() => onSelect(c.id)}
+              >
                 <td className={`px-4 py-3 font-mono text-xs ${highlightPhone}`}>{c.phone_number}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                   {c.started_at ? new Date(c.started_at).toLocaleString() : "—"}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">{fmtDur(c.duration_seconds)}</td>
                 <td className="px-4 py-3"><OutcomeBadge outcome={c.outcome} /></td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   {c.recording_url ? (
                     <a
                       href={c.recording_url}
@@ -524,12 +733,10 @@ function CallTable({
                     <span className="italic">Pending…</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  <Link to="/calls/$id" params={{ id: c.id }}>
-                    <Button variant="ghost" size="sm" className="h-7">
-                      <Phone className="h-3 w-3" /> View
-                    </Button>
-                  </Link>
+                <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                  <Button variant="ghost" size="sm" className="h-7" onClick={() => onSelect(c.id)}>
+                    <Phone className="h-3 w-3" /> View
+                  </Button>
                 </td>
               </tr>
             ))}

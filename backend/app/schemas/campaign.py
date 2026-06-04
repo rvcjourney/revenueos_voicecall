@@ -29,6 +29,7 @@ class CampaignOut(BaseModel):
     id: str
     name: str
     description: str | None
+    notes: str | None = None
     status: str
     goal: str
     folder_id: str | None
@@ -43,6 +44,8 @@ class CampaignOut(BaseModel):
     timezone: str
     calls_per_minute: int
     max_retries: int
+    start_time: datetime | None = None
+    end_time: datetime | None = None
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
@@ -57,6 +60,7 @@ class CampaignListResponse(BaseModel):
 class CampaignCreate(BaseModel):
     name: str
     description: str | None = None
+    notes: str | None = None
     goal: str = "lead_generation"
     folder_id: UUID | None = None
     agent_template_id: UUID
@@ -68,6 +72,8 @@ class CampaignCreate(BaseModel):
     calls_per_minute: int = 5
     max_retries: int = 2
     retry_after_minutes: int = 60
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
     @field_validator("calling_window_start", "calling_window_end", mode="before")
     @classmethod
@@ -80,6 +86,7 @@ class CampaignCreate(BaseModel):
 class CampaignUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    notes: str | None = None
     status: str | None = None
     calling_window_start: time | None = None
     calling_window_end: time | None = None

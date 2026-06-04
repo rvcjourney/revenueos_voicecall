@@ -33,5 +33,10 @@ celery_app.conf.update(
             "task": "app.workers.tasks.campaign.resume_stalled_campaigns",
             "schedule": 60.0,
         },
+        # Every 60 s: auto-launch SCHEDULED campaigns whose start_time has passed.
+        "launch-scheduled-campaigns": {
+            "task": "app.workers.tasks.campaign.launch_scheduled_campaigns",
+            "schedule": 60.0,
+        },
     },
 )

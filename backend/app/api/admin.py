@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from app.models.agent import AgentTemplate
 from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.campaign import Campaign, CampaignStatus
+from app.models.dnc import DoNotCallEntry, DNCReason
 from app.models.user import Organization, User, UserRole
 from app.schemas.agent import AgentAccessRequestOut, AgentCreationRequestAdminOut
 from app.schemas.auth import AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserOut
@@ -403,6 +404,84 @@ async def get_activity(
 
     activities.sort(key=lambda x: x["timestamp"], reverse=True)
     return activities[:60]
+
+
+# ── DNC list management ───────────────────────────────────────────────────────
+
+class DNCAddBody(BaseModel):
+    phone_number: str
+    notes: str | None = None
+
+
+@router.get("/dnc")
+async def list_dnc(
+    q: str | None = Query(None),
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all org-level DNC entries (up to 200)."""
+    query = select(DoNotCallEntry).where(DoNotCallEntry.org_id == token.org_id)
+    if q:
+        query = query.where(DoNotCallEntry.phone_number.contains(q))
+    rows = (await db.execute(
+        query.order_by(DoNotCallEntry.created_at.desc()).limit(200)
+    )).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "phone_number": r.phone_number,
+            "reason": str(r.reason),
+            "notes": r.notes,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@router.post("/dnc", status_code=201)
+async def add_dnc(
+    body: DNCAddBody,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually add a phone number to the org DNC list."""
+    phone = body.phone_number.strip().replace(" ", "").replace("-", "")
+    if not phone.startswith("+"):
+        phone = "+91" + phone.lstrip("0")
+
+    existing = await db.scalar(
+        select(DoNotCallEntry.id).where(
+            DoNotCallEntry.org_id == token.org_id,
+            DoNotCallEntry.phone_number == phone,
+        )
+    )
+    if existing:
+        raise ConflictError("Number already in DNC list")
+
+    entry = DoNotCallEntry(
+        org_id=token.org_id,
+        phone_number=phone,
+        reason=DNCReason.MANUAL_BLOCK,
+        added_by_user_id=token.user_id,
+        notes=body.notes,
+    )
+    db.add(entry)
+    await db.commit()
+    return {"message": "Added to DNC list", "phone_number": phone}
+
+
+@router.delete("/dnc/{entry_id}", status_code=204)
+async def remove_dnc(
+    entry_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a number from the org DNC list."""
+    entry = await db.get(DoNotCallEntry, entry_id)
+    if not entry or entry.org_id != token.org_id:
+        raise NotFoundError("DNC entry not found")
+    await db.delete(entry)
+    await db.commit()
 
 
 # ── Agent creation request management ────────────────────────────────────────

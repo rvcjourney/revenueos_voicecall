@@ -87,6 +87,7 @@ function NewCampaign() {
     timezone: "Asia/Kolkata",
     cpm: 1,
     retries: 1,
+    scheduledFor: "",   // ISO datetime-local string; empty = launch immediately
   });
 
   function next() {
@@ -119,6 +120,7 @@ function NewCampaign() {
         timezone:              schedule.timezone,
         calls_per_minute:      schedule.cpm,
         max_retries:           schedule.retries,
+        start_time:            schedule.scheduledFor || undefined,
       });
 
       // 2. Upload contacts
@@ -127,11 +129,14 @@ function NewCampaign() {
         toast.success(`Uploaded ${uploadData.count} contacts`);
       }
 
-      // 3. Launch or save as draft
-      if (launch) {
+      // 3. Launch or save as draft (skip launch if scheduled for future)
+      if (launch && !schedule.scheduledFor) {
         await campaignsApi.launch(campaignData.id);
         toast.success("Campaign launched! AI is starting calls.");
         navigate({ to: "/dashboard" });
+      } else if (schedule.scheduledFor) {
+        toast.success(`Campaign scheduled for ${new Date(schedule.scheduledFor).toLocaleString()}`);
+        navigate({ to: "/campaigns" });
       } else {
         toast.success("Campaign saved as draft");
         navigate({ to: "/campaigns" });
@@ -459,6 +464,25 @@ function NewCampaign() {
                 </div>
               </div>
 
+              {/* Auto-schedule */}
+              <div className="space-y-1.5">
+                <Label>
+                  Schedule for a future date{" "}
+                  <span className="text-muted-foreground text-xs">(optional — leave blank to launch manually)</span>
+                </Label>
+                <Input
+                  type="datetime-local"
+                  value={schedule.scheduledFor}
+                  onChange={(e) => setSchedule({ ...schedule, scheduledFor: e.target.value })}
+                  min={new Date().toISOString().slice(0, 16)}
+                />
+                {schedule.scheduledFor && (
+                  <p className="text-xs text-amber-400">
+                    Campaign will auto-launch on {new Date(schedule.scheduledFor).toLocaleString()}
+                  </p>
+                )}
+              </div>
+
               {/* Review box */}
               <div className="rounded-lg bg-surface-2 border border-border p-4">
                 <div className="font-medium text-sm mb-2">Review</div>
@@ -508,7 +532,8 @@ function NewCampaign() {
                 disabled={submitting}
                 className="bg-gradient-primary text-white shadow-glow"
               >
-                <Rocket className="h-4 w-4" /> {submitting ? "Launching…" : "Launch Campaign"}
+                <Rocket className="h-4 w-4" />
+                {submitting ? "Saving…" : schedule.scheduledFor ? "Schedule Campaign" : "Launch Campaign"}
               </Button>
             </>
           ) : (

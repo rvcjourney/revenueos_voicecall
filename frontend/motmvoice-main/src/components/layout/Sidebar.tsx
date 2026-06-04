@@ -1,7 +1,7 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   LayoutDashboard, Megaphone, Phone,
-  Bot, BarChart3, Settings, LogOut, Zap, Users, Shield,
+  Bot, BarChart3, Settings, LogOut, Zap, Users, Shield, PhoneOff, ClipboardList,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/Logo";
@@ -73,9 +73,11 @@ export function Sidebar() {
 
   // Admin-only nav items
   const adminNav = [
-    { to: "/agents",     label: "AI Agents",    icon: Bot             },
-    { to: "/admin/users",label: "Team",         icon: Users           },
-    { to: "/settings",   label: "Settings",     icon: Settings        },
+    { to: "/agents",      label: "AI Agents",  icon: Bot             },
+    { to: "/admin/users", label: "Team",        icon: Users           },
+    { to: "/admin/dnc",   label: "DNC List",   icon: PhoneOff        },
+    { to: "/admin/audit", label: "Audit Log",  icon: ClipboardList   },
+    { to: "/settings",    label: "Settings",   icon: Settings        },
   ] as const;
 
   // Member-only bottom nav

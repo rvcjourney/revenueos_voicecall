@@ -829,6 +829,39 @@ def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id
     asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id))
 
 
+@celery_app.task(name="app.workers.tasks.campaign.launch_scheduled_campaigns", bind=True)
+def launch_scheduled_campaigns(self) -> None:
+    """Beat task (every 60 s): auto-launch SCHEDULED campaigns whose start_time has passed."""
+    asyncio.run(_launch_scheduled_async())
+
+
+async def _launch_scheduled_async() -> None:
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(Campaign.id, Campaign.name).where(
+                Campaign.status == CampaignStatus.SCHEDULED,
+                Campaign.start_time <= now,
+                Campaign.deleted_at.is_(None),
+            )
+        )
+        scheduled = [(str(r[0]), r[1]) for r in rows]
+
+    if not scheduled:
+        return
+
+    log.info("launching_scheduled_campaigns", count=len(scheduled))
+    for cid, cname in scheduled:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                campaign = await session.get(Campaign, uuid.UUID(cid))
+                if campaign and campaign.status == CampaignStatus.SCHEDULED:
+                    campaign.status = CampaignStatus.RUNNING
+                    campaign.started_at = now
+        run_campaign.delay(cid)
+        log.info("scheduled_campaign_launched", campaign_id=cid, name=cname)
+
+
 @celery_app.task(name="app.workers.tasks.campaign.resume_stalled_campaigns", bind=True)
 def resume_stalled_campaigns(self) -> None:
     """

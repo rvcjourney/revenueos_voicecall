@@ -83,6 +83,7 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     goal: Mapped[CampaignGoal] = mapped_column(
         SAEnum(CampaignGoal, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,

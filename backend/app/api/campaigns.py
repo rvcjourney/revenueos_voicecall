@@ -33,6 +33,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         id=str(c.id),
         name=c.name,
         description=c.description,
+        notes=c.notes,
         status=c.status,
         goal=c.goal,
         folder_id=str(c.folder_id) if c.folder_id else None,
@@ -47,6 +48,8 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         timezone=c.timezone,
         calls_per_minute=c.calls_per_minute,
         max_retries=c.max_retries,
+        start_time=c.start_time,
+        end_time=c.end_time,
         started_at=c.started_at,
         completed_at=c.completed_at,
         created_at=c.created_at,
@@ -119,6 +122,9 @@ async def create_campaign(
         created_by_id=token.user_id,
         **body.model_dump(),
     )
+    # Auto-schedule if start_time is in the future
+    if campaign.start_time and campaign.start_time > datetime.now(timezone.utc):
+        campaign.status = CampaignStatus.SCHEDULED
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
@@ -533,6 +539,64 @@ async def export_all_results(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/{campaign_id}/duplicate", response_model=CampaignOut, status_code=201)
+async def duplicate_campaign(
+    campaign_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clone a campaign (settings + contacts) into a new draft."""
+    original = await db.get(Campaign, campaign_id)
+    _check_campaign_access(original, token)
+
+    new_campaign = Campaign(
+        org_id=token.org_id,
+        created_by_id=token.user_id,
+        name=f"{original.name} (Copy)",
+        description=original.description,
+        notes=original.notes,
+        goal=original.goal,
+        folder_id=original.folder_id,
+        agent_template_id=original.agent_template_id,
+        sip_trunk_id=original.sip_trunk_id,
+        calling_window_start=original.calling_window_start,
+        calling_window_end=original.calling_window_end,
+        calling_days=list(original.calling_days),
+        timezone=original.timezone,
+        calls_per_minute=original.calls_per_minute,
+        max_retries=original.max_retries,
+        retry_after_minutes=original.retry_after_minutes,
+        status=CampaignStatus.DRAFT,
+    )
+    db.add(new_campaign)
+    await db.flush()
+
+    original_contacts = (await db.execute(
+        select(CampaignContact).where(CampaignContact.campaign_id == campaign_id)
+    )).scalars().all()
+
+    if original_contacts:
+        new_contacts = [
+            CampaignContact(
+                org_id=token.org_id,
+                campaign_id=new_campaign.id,
+                name=c.name,
+                phone=c.phone,
+                email=c.email,
+                company=c.company,
+                custom_fields=c.custom_fields,
+                status=ContactStatus.PENDING,
+            )
+            for c in original_contacts
+        ]
+        db.add_all(new_contacts)
+        new_campaign.total_contacts = len(new_contacts)
+
+    await db.commit()
+    await db.refresh(new_campaign)
+    return _to_out(new_campaign)
 
 
 @router.post("/{campaign_id}/pause", response_model=CampaignOut)
