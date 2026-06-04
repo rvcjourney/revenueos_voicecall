@@ -2,7 +2,7 @@ import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   LayoutDashboard, Megaphone, Phone,
   Bot, BarChart3, Settings, LogOut, Zap, Users, Shield, PhoneOff, ClipboardList,
-  Bell, CheckCircle, Clock, Play, X, Loader2,
+  Bell, CheckCircle, Clock, Play, X, Loader2, ChevronLeft,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/Logo";
@@ -168,16 +168,17 @@ function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
 
 // ── NavLink ───────────────────────────────────────────────────────────────────
 function NavLink({
-  to, label, icon: Icon, path, delay = 0,
+  to, label, icon: Icon, path, delay = 0, collapsed = false,
 }: {
-  to: string; label: string; icon: React.ElementType; path: string; delay?: number;
+  to: string; label: string; icon: React.ElementType; path: string; delay?: number; collapsed?: boolean;
 }) {
   const active = path === to || (to !== "/dashboard" && path.startsWith(to));
 
   return (
     <Link
       to={to}
-      className="group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 animate-slide-in"
+      title={collapsed ? label : undefined}
+      className={`group relative flex items-center px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 animate-slide-in ${collapsed ? "justify-center" : "gap-3"}`}
       style={{
         animationDelay: `${delay}ms`,
         ...(active
@@ -202,15 +203,12 @@ function NavLink({
           filter: active ? "drop-shadow(0 0 6px oklch(0.90 0.10 280 / 0.6))" : undefined,
         }}
       />
-      <span className="relative z-10 tracking-tight">{label}</span>
-      {active && (
+      {!collapsed && <span className="relative z-10 tracking-tight">{label}</span>}
+      {active && !collapsed && (
         <span
           className="relative z-10 ml-auto h-1.5 w-1.5 rounded-full"
           style={{ background: "oklch(0.90 0.08 280)", boxShadow: "0 0 6px oklch(0.90 0.10 280)" }}
         />
-      )}
-      {!active && (
-        <style>{`[href="${to}"]:hover span { color: var(--foreground); }`}</style>
       )}
     </Link>
   );
@@ -218,12 +216,25 @@ function NavLink({
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 export function Sidebar() {
-  const path             = useRouterState({ select: (s) => s.location.pathname });
+  const path                      = useRouterState({ select: (s) => s.location.pathname });
   const { user, isAdmin, logout } = useAuth();
-  const navigate         = useNavigate();
-  const initials         = user?.full_name
+  const navigate                  = useNavigate();
+
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("motm_sidebar_collapsed") === "1"
+  );
+
+  const initials = user?.full_name
     ? user.full_name.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
     : "U";
+
+  function toggleCollapsed() {
+    setCollapsed((v) => {
+      const next = !v;
+      localStorage.setItem("motm_sidebar_collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
 
   const commonNav = [
     { to: "/dashboard",  label: "Dashboard",    icon: LayoutDashboard },
@@ -233,21 +244,22 @@ export function Sidebar() {
   ] as const;
 
   const adminNav = [
-    { to: "/agents",      label: "AI Agents",  icon: Bot             },
-    { to: "/admin/users", label: "Team",        icon: Users           },
-    { to: "/admin/dnc",   label: "DNC List",   icon: PhoneOff        },
-    { to: "/admin/audit", label: "Audit Log",  icon: ClipboardList   },
-    { to: "/settings",    label: "Settings",   icon: Settings        },
+    { to: "/agents",      label: "AI Agents",  icon: Bot         },
+    { to: "/admin/users", label: "Team",        icon: Users       },
+    { to: "/admin/dnc",   label: "DNC List",   icon: PhoneOff    },
+    { to: "/admin/audit", label: "Audit Log",  icon: ClipboardList },
+    { to: "/settings",    label: "Settings",   icon: Settings    },
   ] as const;
 
   const memberNav = [
-    { to: "/agents",     label: "AI Agents",    icon: Bot             },
+    { to: "/agents", label: "AI Agents", icon: Bot },
   ] as const;
 
   return (
     <aside
-      className="hidden md:flex flex-col w-[220px] shrink-0 h-screen sticky top-0 overflow-hidden animate-slide-in"
+      className="hidden md:flex flex-col h-screen sticky top-0 overflow-hidden animate-slide-in transition-[width] duration-300"
       style={{
+        width: collapsed ? "56px" : "220px",
         background: "var(--sidebar)",
         borderRight: "1px solid var(--sidebar-border)",
       }}
@@ -262,108 +274,160 @@ export function Sidebar() {
         }}
       />
 
-      {/* Logo */}
-      <Link
-        to="/dashboard"
-        className="relative flex items-center gap-3 px-4 h-[62px] shrink-0"
+      {/* Logo + collapse toggle */}
+      <div
+        className="relative flex items-center h-[62px] shrink-0 px-3"
         style={{ borderBottom: "1px solid var(--sidebar-border)" }}
       >
-        <div className="shrink-0 float-glow" style={{ filter: "drop-shadow(0 0 10px oklch(0.55 0.24 278 / 0.55))" }}>
-          <LogoMark size={36} />
-        </div>
-        <div className="min-w-0">
-          <div
-            className="font-bold text-[14px] tracking-tight leading-none"
-            style={{
-              background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-            }}
+        <Link
+          to="/dashboard"
+          className={`flex items-center gap-3 flex-1 min-w-0 ${collapsed ? "justify-center" : ""}`}
+        >
+          <div className="shrink-0 float-glow" style={{ filter: "drop-shadow(0 0 10px oklch(0.55 0.24 278 / 0.55))" }}>
+            <LogoMark size={collapsed ? 28 : 34} />
+          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <div
+                className="font-bold text-[14px] tracking-tight leading-none"
+                style={{
+                  background: "linear-gradient(135deg, #fff 30%, oklch(0.78 0.18 268))",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
+              >
+                MOTM<span style={{ fontWeight: 300 }}>Voice</span>
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <Zap className="h-2.5 w-2.5" style={{ color: "oklch(0.70 0.18 284)" }} />
+                <span className="text-[10px] font-semibold tracking-wide" style={{ color: "oklch(0.68 0.16 270)" }}>
+                  AI Voice Platform
+                </span>
+              </div>
+            </div>
+          )}
+        </Link>
+        {!collapsed && (
+          <button
+            onClick={toggleCollapsed}
+            title="Collapse sidebar"
+            className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
           >
-            MOTM<span style={{ fontWeight: 300 }}>Voice</span>
-          </div>
-          <div className="flex items-center gap-1 mt-0.5">
-            <Zap className="h-2.5 w-2.5" style={{ color: "oklch(0.70 0.18 284)" }} />
-            <span className="text-[10px] font-semibold tracking-wide" style={{ color: "oklch(0.68 0.16 270)" }}>
-              AI Voice Platform
-            </span>
-          </div>
-        </div>
-      </Link>
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
 
       {/* Nav */}
-      <nav className="relative flex-1 flex flex-col px-2.5 py-4 overflow-y-auto">
-        <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
-          style={{ color: "var(--muted-foreground)" }}>
-          Menu
-        </p>
+      <nav className="relative flex-1 flex flex-col px-2 py-4 overflow-y-auto overflow-x-hidden">
+        {!collapsed && (
+          <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
+            style={{ color: "var(--muted-foreground)" }}>
+            Menu
+          </p>
+        )}
         <div className="space-y-0.5">
           {commonNav.map((it, i) => (
-            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={i * 40} />
+            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={i * 40} collapsed={collapsed} />
           ))}
           {!isAdmin && memberNav.map((it, i) => (
-            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + i) * 40} />
+            <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + i) * 40} collapsed={collapsed} />
           ))}
         </div>
 
         {isAdmin && (
           <>
             <div className="my-4 mx-3" style={{ borderTop: "1px solid var(--sidebar-border)" }} />
-            <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
-              style={{ color: "var(--muted-foreground)" }}>
-              Admin
-            </p>
+            {!collapsed && (
+              <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.12em] uppercase select-none"
+                style={{ color: "var(--muted-foreground)" }}>
+                Admin
+              </p>
+            )}
             <div className="space-y-0.5">
               {adminNav.map((it, i) => (
-                <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + 1 + i) * 40} />
+                <NavLink key={it.to} to={it.to} label={it.label} icon={it.icon} path={path} delay={(commonNav.length + 1 + i) * 40} collapsed={collapsed} />
               ))}
             </div>
           </>
         )}
+
+        {/* Expand button shown only when collapsed */}
+        {collapsed && (
+          <button
+            onClick={toggleCollapsed}
+            title="Expand sidebar"
+            className="mt-4 flex justify-center w-full p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5 rotate-180" />
+          </button>
+        )}
       </nav>
 
       {/* User card */}
-      <div className="px-2.5 pb-3 pt-2 shrink-0" style={{ borderTop: "1px solid var(--sidebar-border)" }}>
-        <div className="glass-card flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 hover:shadow-glow cursor-default">
-          <div
-            className="h-7 w-7 rounded-full grid place-items-center text-[11px] font-bold shrink-0"
-            style={{
-              backgroundImage: "var(--gradient-primary)",
-              color: "oklch(0.990 0.003 280)",
-              boxShadow: "0 0 12px oklch(0.565 0.240 284 / 0.40)",
-            }}
-          >
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-semibold truncate leading-tight text-foreground">
-              {user?.full_name ?? "Guest"}
+      <div className="px-2 pb-3 pt-2 shrink-0" style={{ borderTop: "1px solid var(--sidebar-border)" }}>
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2 py-1">
+            <div
+              className="h-7 w-7 rounded-full grid place-items-center text-[11px] font-bold shrink-0 cursor-default"
+              title={user?.full_name ?? ""}
+              style={{
+                backgroundImage: "var(--gradient-primary)",
+                color: "oklch(0.990 0.003 280)",
+                boxShadow: "0 0 12px oklch(0.565 0.240 284 / 0.40)",
+              }}
+            >
+              {initials}
             </div>
-            <div className="flex items-center gap-1 mt-0.5">
-              {isAdmin ? (
-                <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase"
-                  style={{ backgroundImage: "var(--gradient-primary)", color: "oklch(0.990 0.003 280)" }}>
-                  <Shield className="h-2 w-2" /> Admin
-                </span>
-              ) : (
-                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase border border-border text-muted-foreground">
-                  Member
-                </span>
-              )}
-            </div>
+            <NotificationBell isAdmin={isAdmin} />
+            <button
+              onClick={() => { logout(); navigate({ to: "/login" }); }}
+              title="Sign out"
+              className="text-muted-foreground hover:text-foreground transition-all duration-150 p-1 rounded-md hover:bg-sidebar-accent"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
           </div>
-          {/* Bell notification */}
-          <NotificationBell isAdmin={isAdmin} />
-          {/* Logout */}
-          <button
-            onClick={() => { logout(); navigate({ to: "/login" }); }}
-            title="Sign out"
-            className="text-muted-foreground hover:text-foreground transition-all duration-150 shrink-0 p-1 rounded-md hover:bg-sidebar-accent"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        ) : (
+          <div className="glass-card flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 hover:shadow-glow cursor-default">
+            <div
+              className="h-7 w-7 rounded-full grid place-items-center text-[11px] font-bold shrink-0"
+              style={{
+                backgroundImage: "var(--gradient-primary)",
+                color: "oklch(0.990 0.003 280)",
+                boxShadow: "0 0 12px oklch(0.565 0.240 284 / 0.40)",
+              }}
+            >
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] font-semibold truncate leading-tight text-foreground">
+                {user?.full_name ?? "Guest"}
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                {isAdmin ? (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase"
+                    style={{ backgroundImage: "var(--gradient-primary)", color: "oklch(0.990 0.003 280)" }}>
+                    <Shield className="h-2 w-2" /> Admin
+                  </span>
+                ) : (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold leading-none tracking-wide uppercase border border-border text-muted-foreground">
+                    Member
+                  </span>
+                )}
+              </div>
+            </div>
+            <NotificationBell isAdmin={isAdmin} />
+            <button
+              onClick={() => { logout(); navigate({ to: "/login" }); }}
+              title="Sign out"
+              className="text-muted-foreground hover:text-foreground transition-all duration-150 shrink-0 p-1 rounded-md hover:bg-sidebar-accent"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

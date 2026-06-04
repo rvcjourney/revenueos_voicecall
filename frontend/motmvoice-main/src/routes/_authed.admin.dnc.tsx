@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { PhoneOff, Plus, Trash2, Search, Loader2, Shield } from "lucide-react";
 
@@ -22,6 +26,7 @@ function DncPage() {
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; phone: string } | null>(null);
 
   useEffect(() => {
     if (!isAdmin) navigate({ to: "/dashboard" });
@@ -41,15 +46,8 @@ function DncPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleRemove(id: string, phone: string) {
-    if (!confirm(`Remove ${phone} from DNC list?`)) return;
-    try {
-      await adminApi.removeDnc(id);
-      toast.success("Removed from DNC list");
-      load();
-    } catch {
-      toast.error("Failed to remove entry");
-    }
+  function handleRemove(id: string, phone: string) {
+    setRemoveTarget({ id, phone });
   }
 
   return (
@@ -148,6 +146,39 @@ function DncPage() {
 
       {/* Add dialog */}
       {showAdd && <AddDncDialog onClose={() => setShowAdd(false)} onAdded={load} />}
+
+      {/* Remove confirmation */}
+      {removeTarget && (
+        <AlertDialog open onOpenChange={(o) => !o && setRemoveTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove from DNC list?</AlertDialogTitle>
+              <AlertDialogDescription>
+                <span className="font-mono font-medium">{removeTarget.phone}</span> will be removed and may be called again in future campaigns.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={async () => {
+                  try {
+                    await adminApi.removeDnc(removeTarget.id);
+                    toast.success("Removed from DNC list");
+                    load();
+                  } catch {
+                    toast.error("Failed to remove entry");
+                  } finally {
+                    setRemoveTarget(null);
+                  }
+                }}
+              >
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }

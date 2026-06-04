@@ -2,6 +2,7 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/lib/auth";
+import { CommandPalette } from "@/components/CommandPalette";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -28,6 +29,7 @@ function AuthedLayout() {
           <Outlet />
         </main>
       </div>
+      <CommandPalette />
     </div>
   );
 }

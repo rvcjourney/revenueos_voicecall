@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight, Zap as ZapIcon } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -25,10 +25,74 @@ function fmtDuration(s: number) {
   return `${m}m ${String(r).padStart(2, "0")}s`;
 }
 
+// ── useCountUp ────────────────────────────────────────────────────────────────
+function useCountUp(target: number, duration = 700) {
+  const [count, setCount] = useState(0);
+  const rafRef  = useRef(0);
+  const prevRef = useRef({ target: -1, count: 0 });
+
+  useEffect(() => {
+    if (target === prevRef.current.target) return;
+    const startVal  = prevRef.current.count;
+    prevRef.current.target = target;
+    const startTime = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    function tick(now: number) {
+      const p = Math.min((now - startTime) / duration, 1);
+      const e = 1 - Math.pow(1 - p, 3);
+      const n = Math.round(startVal + (target - startVal) * e);
+      prevRef.current.count = n;
+      setCount(n);
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+
+  return count;
+}
+
+// ── Skeleton helper ───────────────────────────────────────────────────────────
+function Skel({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded bg-surface-2 ${className}`} />;
+}
+
+// ── Animated KPI card ─────────────────────────────────────────────────────────
+function AnimatedKPICard({
+  label, rawValue, format, icon: Icon, tone, trend,
+}: {
+  label: string;
+  rawValue: number;
+  format: (n: number) => string;
+  icon: React.ElementType;
+  tone: string;
+  trend?: number | null;
+}) {
+  const animated = useCountUp(rawValue);
+  return (
+    <div className="card-top-accent relative rounded-xl bg-card border border-border/80 p-4 hover:border-primary/25 transition-all duration-200 overflow-hidden group">
+      <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/[0.02] transition-colors duration-300 pointer-events-none rounded-xl" />
+      <div className="relative">
+        <div className="h-9 w-9 rounded-lg bg-primary/10 grid place-items-center text-primary mb-3">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className={`text-2xl font-bold font-mono ${tone}`}>{format(animated)}</div>
+        <div className="text-xs text-muted-foreground mt-1 leading-snug">{label}</div>
+        {trend !== null && trend !== undefined && (
+          <div className={`flex items-center gap-0.5 text-[11px] font-medium mt-1.5 ${trend >= 0 ? "text-success" : "text-destructive"}`}>
+            <span>{trend >= 0 ? "↑" : "↓"} {Math.abs(trend)}%</span>
+            <span className="text-muted-foreground font-normal ml-0.5">vs yesterday</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const { user }            = useAuth();
   const { theme }           = useTheme();
-  const { data: stats }     = useDashboard();
+  const { data: stats, isLoading: statsLoading } = useDashboard();
   const { data: callsData } = useCalls({ limit: 8 });
   const [orgInfo, setOrgInfo] = useState<OrgQuotaInfo | null>(null);
 
@@ -51,11 +115,26 @@ function Dashboard() {
     boxShadow:    "var(--shadow-card)",
   };
 
+  // Trend from last 7 days data
+  const last7 = stats?.calls_last_7_days ?? [];
+  const callsTrend = (() => {
+    if (last7.length < 2) return null;
+    const t = last7[last7.length - 1]?.calls ?? 0;
+    const y = last7[last7.length - 2]?.calls ?? 0;
+    return y > 0 ? Math.round(((t - y) / y) * 100) : null;
+  })();
+  const interestTrend = (() => {
+    if (last7.length < 2) return null;
+    const t = last7[last7.length - 1]?.interested ?? 0;
+    const y = last7[last7.length - 2]?.interested ?? 0;
+    return y > 0 ? Math.round(((t - y) / y) * 100) : null;
+  })();
+
   const kpis = [
-    { label: "Total Calls Today",  value: (stats?.kpis.calls_today     ?? 0).toLocaleString(), icon: Phone,      tone: "text-foreground"  },
-    { label: "Interested Leads",   value: (stats?.kpis.interested_today ?? 0).toLocaleString(), icon: Heart,      tone: "text-success"     },
-    { label: "Avg. Call Duration", value: fmtDuration(stats?.kpis.avg_duration_seconds ?? 0),  icon: Clock,      tone: "text-foreground"  },
-    { label: "Pickup Rate",        value: `${stats?.kpis.pickup_rate ?? 0}%`,                   icon: TrendingUp, tone: "text-primary"     },
+    { label: "Total Calls Today",  rawValue: stats?.kpis.calls_today     ?? 0, format: (n: number) => n.toLocaleString(), icon: Phone,      tone: "text-foreground", trend: callsTrend    },
+    { label: "Interested Leads",   rawValue: stats?.kpis.interested_today ?? 0, format: (n: number) => n.toLocaleString(), icon: Heart,      tone: "text-success",    trend: interestTrend },
+    { label: "Avg. Call Duration", rawValue: stats?.kpis.avg_duration_seconds ?? 0, format: fmtDuration,                   icon: Clock,      tone: "text-foreground", trend: null          },
+    { label: "Pickup Rate",        rawValue: stats?.kpis.pickup_rate ?? 0, format: (n: number) => `${n}%`,                icon: TrendingUp, tone: "text-primary",    trend: null          },
   ];
 
   const topCampaigns = stats?.active_campaigns ?? [];
@@ -67,9 +146,7 @@ function Dashboard() {
 
       {/* ── Hero banner ──────────────────────────────────────────────────── */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 bg-card p-6">
-        {/* Dot grid texture */}
         <div className="absolute inset-0 dot-grid opacity-[0.15] pointer-events-none" />
-        {/* Orange radial glow */}
         <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full bg-primary/8 blur-3xl pointer-events-none" />
         <div className="absolute -bottom-16 -left-16 w-56 h-56 rounded-full bg-primary/5 blur-3xl pointer-events-none" />
 
@@ -88,7 +165,6 @@ function Dashboard() {
             </p>
           </div>
 
-          {/* Quick-stat chip */}
           <div className="hidden lg:flex items-center gap-6">
             <div className="text-right border-r border-border/60 pr-6">
               <div className="text-[28px] font-bold font-mono text-gradient leading-none">
@@ -107,24 +183,23 @@ function Dashboard() {
       </div>
 
       {/* ── KPI cards ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {kpis.map((k) => (
-          <div
-            key={k.label}
-            className="card-top-accent relative rounded-xl bg-card border border-border/80 p-4 hover:border-primary/25 transition-all duration-200 overflow-hidden group"
-          >
-            {/* Subtle glow on hover */}
-            <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/[0.02] transition-colors duration-300 pointer-events-none rounded-xl" />
-            <div className="relative">
-              <div className="h-9 w-9 rounded-lg bg-primary/10 grid place-items-center text-primary mb-3">
-                <k.icon className="h-4 w-4" />
-              </div>
-              <div className={`text-2xl font-bold font-mono ${k.tone}`}>{k.value}</div>
-              <div className="text-xs text-muted-foreground mt-1 leading-snug">{k.label}</div>
+      {statsLoading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl bg-card border border-border/80 p-4">
+              <Skel className="h-9 w-9 rounded-lg mb-3" />
+              <Skel className="h-7 w-20 mb-2" />
+              <Skel className="h-3 w-28" />
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {kpis.map((k) => (
+            <AnimatedKPICard key={k.label} {...k} />
+          ))}
+        </div>
+      )}
 
       {/* ── Call quota bar ────────────────────────────────────────────────── */}
       {orgInfo && orgInfo.monthly_call_quota > 0 && (
@@ -257,8 +332,14 @@ function Dashboard() {
               <tbody>
                 {topCampaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-5 py-10 text-center text-muted-foreground/50 text-sm">
-                      No active campaigns
+                    <td colSpan={4} className="px-5 py-12 text-center">
+                      <div className="inline-flex flex-col items-center gap-2">
+                        <div className="h-10 w-10 rounded-xl bg-surface-2 grid place-items-center">
+                          <Play className="h-5 w-5 text-muted-foreground/30" />
+                        </div>
+                        <p className="text-sm font-medium text-muted-foreground/70">No active campaigns</p>
+                        <p className="text-xs text-muted-foreground/50">Launch a campaign to see it here</p>
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -298,8 +379,14 @@ function Dashboard() {
           </div>
           <ul className="divide-y divide-border/40 max-h-[400px] overflow-y-auto">
             {recent.length === 0 ? (
-              <li className="px-5 py-10 text-center text-muted-foreground/50 text-sm">
-                No calls yet
+              <li className="px-5 py-12 text-center">
+                <div className="inline-flex flex-col items-center gap-2">
+                  <div className="h-10 w-10 rounded-xl bg-surface-2 grid place-items-center">
+                    <Phone className="h-5 w-5 text-muted-foreground/30" />
+                  </div>
+                  <p className="text-sm font-medium text-muted-foreground/70">No calls yet</p>
+                  <p className="text-xs text-muted-foreground/50">Calls will appear here in real time</p>
+                </div>
               </li>
             ) : (
               recent.map((c) => (

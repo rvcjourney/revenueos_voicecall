@@ -4,13 +4,24 @@ import { OutcomeBadge } from "@/components/layout/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Phone, Loader2 } from "lucide-react";
+import { Search, Phone } from "lucide-react";
 import { useCalls, useCampaigns } from "@/lib/hooks";
 
 export const Route = createFileRoute("/_authed/calls/")({
   head: () => ({ meta: [{ title: "Call History — MOTMVoice" }] }),
   component: CallHistory,
 });
+
+const OUTCOME_STRIPE: Record<string, string> = {
+  interested:         "oklch(0.70 0.16 160)",
+  callback_requested: "oklch(0.75 0.16 75)",
+  not_interested:     "oklch(0.60 0.18 25)",
+  do_not_call:        "oklch(0.60 0.18 25)",
+  wrong_number:       "oklch(0.60 0.18 25)",
+  failed:             "oklch(0.60 0.18 25)",
+  no_answer:          "oklch(0.42 0.01 270)",
+  voicemail:          "oklch(0.42 0.01 270)",
+};
 
 function fmtDur(s: number | null) {
   if (!s) return "—";
@@ -87,8 +98,29 @@ function CallHistory() {
 
       <div className="rounded-xl bg-card border border-border overflow-hidden">
         {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground bg-surface-2/60">
+                  {["Phone", "Campaign", "Started", "Duration", "Outcome", "Cost (₹)", "Actions"].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <tr key={i} className="border-t border-border/60 animate-pulse">
+                    <td className="px-4 py-3"><div className="h-3 w-28 rounded bg-surface-2" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-24 rounded bg-surface-2" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-32 rounded bg-surface-2" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-12 rounded bg-surface-2" /></td>
+                    <td className="px-4 py-3"><div className="h-5 w-20 rounded-full bg-surface-2" /></td>
+                    <td className="px-4 py-3"><div className="h-3 w-10 rounded bg-surface-2 ml-auto" /></td>
+                    <td className="px-4 py-3"><div className="h-6 w-12 rounded bg-surface-2 ml-auto" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -107,7 +139,12 @@ function CallHistory() {
               <tbody>
                 {calls.map((c) => (
                   <tr key={c.id} className="border-t border-border/60 hover:bg-surface-2/40">
-                    <td className="px-4 py-3 font-mono text-xs">{c.phone_number}</td>
+                    <td
+                      className="px-4 py-3 font-mono text-xs"
+                      style={{ borderLeft: `3px solid ${OUTCOME_STRIPE[c.outcome] ?? "transparent"}` }}
+                    >
+                      {c.phone_number}
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {c.campaign_id ? (campaignMap[c.campaign_id] ?? "—") : "—"}
                     </td>
@@ -131,8 +168,12 @@ function CallHistory() {
               </tbody>
             </table>
             {calls.length === 0 && (
-              <div className="p-12 text-center text-muted-foreground text-sm">
-                No calls found
+              <div className="py-16 text-center">
+                <div className="h-12 w-12 rounded-xl bg-surface-2 grid place-items-center mx-auto mb-3">
+                  <Phone className="h-6 w-6 text-muted-foreground/30" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground/70">No calls found</p>
+                <p className="text-xs text-muted-foreground/50 mt-1">Try adjusting your filters</p>
               </div>
             )}
           </div>

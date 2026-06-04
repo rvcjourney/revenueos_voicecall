@@ -6,7 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Plus, Search, Calendar, Users, CheckCircle2, Heart,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Plus, Search, Calendar, Users, CheckCircle2, Heart, Megaphone,
   MoreVertical, Pause, Play, Loader2, Folder, FolderOpen,
   ChevronRight, Pencil, Trash2, X, Check,
 } from "lucide-react";
@@ -156,7 +160,30 @@ function CampaignCard({ c, onPause, onLaunch }: {
         </span>
       </div>
 
-      <div className="mt-4 flex gap-2">
+      {/* Outcome breakdown mini bar */}
+      {c.total_contacts > 0 && (
+        <div className="mt-3">
+          <div className="flex gap-px h-1.5 rounded-full overflow-hidden bg-surface-2">
+            <div
+              style={{ width: `${(c.interested_count / c.total_contacts) * 100}%`, background: "oklch(0.70 0.16 160)" }}
+              title={`${c.interested_count} interested`}
+            />
+            <div
+              style={{ width: `${(Math.max(0, c.completed_calls - c.interested_count) / c.total_contacts) * 100}%`, background: "oklch(0.565 0.240 284 / 0.45)" }}
+              title="Other completed calls"
+            />
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: "oklch(0.70 0.16 160)" }} />
+              {c.interested_count} interested
+            </span>
+            <span className="ml-auto font-mono">{c.completed_calls}/{c.total_contacts} called</span>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 flex gap-2">
         <Link to="/campaigns/$id" params={{ id: c.id }} className="flex-1">
           <Button variant="outline" size="sm" className="w-full">View Details</Button>
         </Link>
@@ -256,8 +283,17 @@ function FolderDetailView({ folder, onBack }: { folder: FolderOut; onBack: () =>
 
       {/* Campaign grid */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl bg-card border border-border p-5 animate-pulse space-y-3">
+              <div className="h-5 w-28 rounded bg-surface-2" />
+              <div className="h-3 w-40 rounded bg-surface-2" />
+              <div className="grid grid-cols-4 gap-2">
+                {[0, 1, 2, 3].map((j) => <div key={j} className="h-12 rounded-md bg-surface-2" />)}
+              </div>
+              <div className="h-1.5 rounded-full bg-surface-2" />
+            </div>
+          ))}
         </div>
       ) : campaigns.length === 0 ? (
         <div className="text-center py-20 rounded-xl bg-card border border-border">
@@ -294,6 +330,7 @@ function CampaignsList() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderOut | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const qc = useQueryClient();
@@ -325,10 +362,9 @@ function CampaignsList() {
     catch (e: any) { toast.error(e?.response?.data?.detail ?? "Failed to launch campaign"); }
   }
 
-  async function handleDeleteFolder(id: string) {
-    if (!confirm("Delete this folder? Campaigns inside will become uncategorized.")) return;
-    try { await deleteFolder.mutateAsync(id); toast.success("Folder deleted"); setMenuOpenId(null); }
-    catch { toast.error("Failed to delete folder"); }
+  function handleDeleteFolder(id: string) {
+    setDeleteConfirmId(id);
+    setMenuOpenId(null);
   }
 
   return (
@@ -359,8 +395,18 @@ function CampaignsList() {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Company Folders</h2>
         {foldersLoading ? (
-          <div className="flex items-center gap-2 py-4 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading folders…
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="rounded-xl bg-card border border-border p-5 animate-pulse">
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-surface-2 shrink-0" />
+                  <div className="flex-1 space-y-2 pt-1">
+                    <div className="h-3.5 w-24 rounded bg-surface-2" />
+                    <div className="h-3 w-16 rounded bg-surface-2" />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -459,15 +505,25 @@ function CampaignsList() {
         </div>
 
         {uncatLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="rounded-xl bg-card border border-border p-5 animate-pulse space-y-3">
+                <div className="h-5 w-28 rounded bg-surface-2" />
+                <div className="h-3 w-40 rounded bg-surface-2" />
+                <div className="grid grid-cols-4 gap-2">
+                  {[0, 1, 2, 3].map((j) => <div key={j} className="h-12 rounded-md bg-surface-2" />)}
+                </div>
+                <div className="h-1.5 rounded-full bg-surface-2" />
+              </div>
+            ))}
           </div>
         ) : uncategorized.length === 0 ? (
-          <div className="text-center py-12 rounded-xl bg-card border border-border">
-            <div className="text-3xl mb-3">📋</div>
-            <p className="text-sm text-muted-foreground">
-              No uncategorized campaigns. Create a folder above and add campaigns to it.
-            </p>
+          <div className="text-center py-14 rounded-xl bg-card border border-border">
+            <div className="h-14 w-14 rounded-2xl bg-surface-2 grid place-items-center mx-auto mb-4">
+              <Megaphone className="h-7 w-7 text-muted-foreground/30" />
+            </div>
+            <p className="text-base font-semibold text-foreground/70">No uncategorized campaigns</p>
+            <p className="text-sm text-muted-foreground mt-1">All campaigns are organized in folders.</p>
           </div>
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -498,6 +554,38 @@ function CampaignsList() {
       {/* Close dropdown on outside click */}
       {menuOpenId && (
         <div className="fixed inset-0 z-0" onClick={() => setMenuOpenId(null)} />
+      )}
+
+      {/* Delete folder confirmation */}
+      {deleteConfirmId && (
+        <AlertDialog open onOpenChange={(o) => !o && setDeleteConfirmId(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this folder?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Campaigns inside will become uncategorized. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={async () => {
+                  try {
+                    await deleteFolder.mutateAsync(deleteConfirmId);
+                    toast.success("Folder deleted");
+                  } catch {
+                    toast.error("Failed to delete folder");
+                  } finally {
+                    setDeleteConfirmId(null);
+                  }
+                }}
+              >
+                Delete Folder
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
     </div>
   );

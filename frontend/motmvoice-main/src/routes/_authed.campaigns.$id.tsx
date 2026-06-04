@@ -11,7 +11,7 @@ import { useCampaign, useCalls, useCall } from "@/lib/hooks";
 import { campaignsApi, type CallOut, type CampaignOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -103,8 +103,15 @@ function CampaignDetail() {
 
   if (campLoading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6 max-w-[1600px]">
+        <div className="h-8 w-64 rounded-lg bg-surface-2 animate-pulse" />
+        <div className="grid grid-cols-3 gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl bg-card border border-border p-4 h-24 animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+          ))}
+        </div>
+        <div className="rounded-xl bg-card border border-border h-36 animate-pulse" />
+        <div className="rounded-xl bg-card border border-border h-48 animate-pulse" style={{ animationDelay: "160ms" }} />
       </div>
     );
   }
@@ -673,6 +680,17 @@ function EditCampaignDialog({
   );
 }
 
+const OUTCOME_STRIPE: Record<string, string> = {
+  interested:         "oklch(0.70 0.16 160)",
+  callback_requested: "oklch(0.75 0.16 75)",
+  not_interested:     "oklch(0.60 0.18 25)",
+  do_not_call:        "oklch(0.60 0.18 25)",
+  wrong_number:       "oklch(0.60 0.18 25)",
+  failed:             "oklch(0.60 0.18 25)",
+  no_answer:          "oklch(0.42 0.01 270)",
+  voicemail:          "oklch(0.42 0.01 270)",
+};
+
 function CallTable({
   calls,
   emptyText,
@@ -706,7 +724,12 @@ function CallTable({
                 className="border-t border-border/60 hover:bg-surface-2/40 align-top cursor-pointer"
                 onClick={() => onSelect(c.id)}
               >
-                <td className={`px-4 py-3 font-mono text-xs ${highlightPhone}`}>{c.phone_number}</td>
+                <td
+                  className={`px-4 py-3 font-mono text-xs ${highlightPhone}`}
+                  style={{ borderLeft: `3px solid ${OUTCOME_STRIPE[c.outcome] ?? "transparent"}` }}
+                >
+                  {c.phone_number}
+                </td>
                 <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                   {c.started_at ? new Date(c.started_at).toLocaleString() : "—"}
                 </td>
@@ -751,13 +774,38 @@ function CallTable({
 }
 
 function KPI({ icon: Icon, label, value, tone = "" }: { icon: any; label: string; value: number; tone?: string }) {
+  const [display, setDisplay] = useState(value);
+  const [flash, setFlash]     = useState(false);
+  const rafRef  = useRef(0);
+  const prevRef = useRef({ value, display: value });
+
+  useEffect(() => {
+    if (value === prevRef.current.value) return;
+    const startVal = prevRef.current.display;
+    prevRef.current.value = value;
+    setFlash(true);
+    const startTime = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    function tick(now: number) {
+      const p = Math.min((now - startTime) / 600, 1);
+      const e = 1 - Math.pow(1 - p, 3);
+      const n = Math.round(startVal + (value - startVal) * e);
+      prevRef.current.display = n;
+      setDisplay(n);
+      if (p < 1) rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    const t = setTimeout(() => setFlash(false), 1500);
+    return () => { cancelAnimationFrame(rafRef.current); clearTimeout(t); };
+  }, [value]);
+
   return (
-    <div className="rounded-xl bg-card border border-border p-4">
+    <div className={`rounded-xl border p-4 transition-all duration-500 ${flash ? "border-primary/50 bg-primary/[0.03]" : "bg-card border-border"}`}>
       <div className="flex items-center gap-2 mb-2">
         <Icon className="h-4 w-4 text-muted-foreground" />
         <div className="text-xs text-muted-foreground">{label}</div>
       </div>
-      <div className={`text-2xl font-bold font-mono ${tone}`}>{value}</div>
+      <div className={`text-2xl font-bold font-mono ${tone}`}>{display}</div>
     </div>
   );
 }
