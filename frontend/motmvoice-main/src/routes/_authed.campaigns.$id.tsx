@@ -157,7 +157,7 @@ function CampaignDetail() {
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
-          {!isAdmin && campaign.status === "running" && (
+          {campaign.status === "running" && (
             <>
               <Button variant="outline" size="sm" onClick={handlePause}>
                 <Pause className="h-4 w-4" /> Pause
@@ -172,7 +172,7 @@ function CampaignDetail() {
               </Button>
             </>
           )}
-          {!isAdmin && campaign.status !== "completed" && (
+          {campaign.status !== "completed" && (
             <Button
               variant="outline"
               size="sm"
@@ -184,7 +184,7 @@ function CampaignDetail() {
               {campaign.status === "running" ? "Pause to Edit" : "Edit"}
             </Button>
           )}
-          {!isAdmin && (campaign.status === "paused" || campaign.status === "draft") && (
+          {(campaign.status === "paused" || campaign.status === "draft") && (
             <Button size="sm" className="bg-gradient-primary text-white" onClick={handleLaunch}>
               <Play className="h-4 w-4" /> Launch
             </Button>

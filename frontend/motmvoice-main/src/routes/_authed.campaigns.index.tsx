@@ -187,7 +187,7 @@ function CampaignCard({ c, onPause, onLaunch }: {
         <Link to="/campaigns/$id" params={{ id: c.id }} className="flex-1">
           <Button variant="outline" size="sm" className="w-full">View Details</Button>
         </Link>
-        {!isAdmin && c.status === "running" && (
+        {c.status === "running" && (
           <>
             <Button variant="ghost" size="sm" title="Pause" onClick={() => onPause(c.id)}>
               <Pause className="h-3.5 w-3.5" />
@@ -197,7 +197,7 @@ function CampaignCard({ c, onPause, onLaunch }: {
             </Button>
           </>
         )}
-        {!isAdmin && (c.status === "paused" || c.status === "draft") && (
+        {(c.status === "paused" || c.status === "draft") && (
           <Button variant="ghost" size="sm" onClick={() => onLaunch(c.id)}>
             <Play className="h-3.5 w-3.5" />
           </Button>
