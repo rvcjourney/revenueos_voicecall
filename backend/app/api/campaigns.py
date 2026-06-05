@@ -313,9 +313,6 @@ async def launch_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if token.role == "admin":
-        raise AppValidationError("Admins cannot run campaigns. Assign this campaign to a team member.", errors=[])
-
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
 
@@ -347,16 +344,17 @@ async def launch_campaign(
     if not contact_count:
         raise AppValidationError("Campaign has no pending contacts to call", errors=[])
 
-    # Each user can run only 1 campaign at a time (but different users run in parallel)
-    running_count = await db.scalar(
-        select(func.count()).where(
-            Campaign.created_by_id == token.user_id,
-            Campaign.status == CampaignStatus.RUNNING,
-            Campaign.deleted_at.is_(None),
+    # Each user (non-admin) can run only 1 campaign at a time
+    if token.role != "admin":
+        running_count = await db.scalar(
+            select(func.count()).where(
+                Campaign.created_by_id == token.user_id,
+                Campaign.status == CampaignStatus.RUNNING,
+                Campaign.deleted_at.is_(None),
+            )
         )
-    )
-    if running_count:
-        raise CampaignStateError("You already have a running campaign. Pause it before launching another.")
+        if running_count:
+            raise CampaignStateError("You already have a running campaign. Pause it before launching another.")
 
     campaign.status = CampaignStatus.RUNNING
     campaign.started_at = datetime.now(timezone.utc)
@@ -605,9 +603,6 @@ async def pause_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if token.role == "admin":
-        raise AppValidationError("Admins cannot pause campaigns. Only the campaign owner can.", errors=[])
-
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
 
