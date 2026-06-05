@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect, useRef } from "react";
-import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight, Zap as ZapIcon } from "lucide-react";
+import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight, Zap as ZapIcon, Users } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, CartesianGrid,
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { useDashboard, useCalls } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
-import { authApi, type OrgQuotaInfo } from "@/lib/api";
+import { authApi, adminApi, type OrgQuotaInfo, type OrgStatsOut } from "@/lib/api";
 
 export const Route = createFileRoute("/_authed/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — MOTMVoice" }] }),
@@ -90,17 +90,25 @@ function AnimatedKPICard({
 }
 
 function Dashboard() {
-  const { user }            = useAuth();
+  const { user, isAdmin }   = useAuth();
   const { theme }           = useTheme();
   const { data: stats, isLoading: statsLoading } = useDashboard();
   const { data: callsData } = useCalls({ limit: 8 });
-  const [orgInfo, setOrgInfo] = useState<OrgQuotaInfo | null>(null);
+  const [orgInfo, setOrgInfo]   = useState<OrgQuotaInfo | null>(null);
+  const [orgStats, setOrgStats] = useState<OrgStatsOut | null>(null);
+  const [orgStatsLoading, setOrgStatsLoading] = useState(false);
 
   const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
 
   useEffect(() => {
     authApi.getOrgInfo().then(({ data }) => setOrgInfo(data)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setOrgStatsLoading(true);
+    adminApi.getStats().then(({ data }) => setOrgStats(data)).catch(() => {}).finally(() => setOrgStatsLoading(false));
+  }, [isAdmin]);
 
   // Chart colours that adapt to theme
   const axisColor  = theme === "dark" ? "oklch(0.45 0.012 270)" : "oklch(0.44 0.018 270)";
@@ -130,12 +138,19 @@ function Dashboard() {
     return y > 0 ? Math.round(((t - y) / y) * 100) : null;
   })();
 
-  const kpis = [
-    { label: "Total Calls Today",  rawValue: stats?.kpis.calls_today     ?? 0, format: (n: number) => n.toLocaleString(), icon: Phone,      tone: "text-foreground", trend: callsTrend    },
-    { label: "Interested Leads",   rawValue: stats?.kpis.interested_today ?? 0, format: (n: number) => n.toLocaleString(), icon: Heart,      tone: "text-success",    trend: interestTrend },
-    { label: "Avg. Call Duration", rawValue: stats?.kpis.avg_duration_seconds ?? 0, format: fmtDuration,                   icon: Clock,      tone: "text-foreground", trend: null          },
-    { label: "Pickup Rate",        rawValue: stats?.kpis.pickup_rate ?? 0, format: (n: number) => `${n}%`,                icon: TrendingUp, tone: "text-primary",    trend: null          },
-  ];
+  const kpis = isAdmin
+    ? [
+        { label: "Total Calls",       rawValue: orgStats?.totals.total_calls      ?? 0, format: (n: number) => n.toLocaleString(), icon: Phone,      tone: "text-foreground", trend: callsTrend    },
+        { label: "Interested Leads",  rawValue: orgStats?.totals.total_interested ?? 0, format: (n: number) => n.toLocaleString(), icon: Heart,      tone: "text-success",    trend: interestTrend },
+        { label: "Active Campaigns",  rawValue: orgStats?.totals.active_campaigns ?? 0, format: (n: number) => n.toLocaleString(), icon: ZapIcon,   tone: "text-primary",    trend: null          },
+        { label: "Team Members",      rawValue: orgStats?.totals.total_members    ?? 0, format: (n: number) => n.toLocaleString(), icon: Users,     tone: "text-foreground", trend: null          },
+      ]
+    : [
+        { label: "Total Calls Today",  rawValue: stats?.kpis.calls_today     ?? 0, format: (n: number) => n.toLocaleString(), icon: Phone,      tone: "text-foreground", trend: callsTrend    },
+        { label: "Interested Leads",   rawValue: stats?.kpis.interested_today ?? 0, format: (n: number) => n.toLocaleString(), icon: Heart,      tone: "text-success",    trend: interestTrend },
+        { label: "Avg. Call Duration", rawValue: stats?.kpis.avg_duration_seconds ?? 0, format: fmtDuration,                   icon: Clock,      tone: "text-foreground", trend: null          },
+        { label: "Pickup Rate",        rawValue: stats?.kpis.pickup_rate ?? 0, format: (n: number) => `${n}%`,                icon: TrendingUp, tone: "text-primary",    trend: null          },
+      ];
 
   const topCampaigns = stats?.active_campaigns ?? [];
   const recent       = callsData?.items ?? [];
@@ -168,13 +183,19 @@ function Dashboard() {
           <div className="hidden lg:flex items-center gap-6">
             <div className="text-right border-r border-border/60 pr-6">
               <div className="text-[28px] font-bold font-mono text-gradient leading-none">
-                {(stats?.kpis.calls_today ?? 0).toLocaleString()}
+                {isAdmin
+                  ? (orgStats?.totals.total_calls ?? 0).toLocaleString()
+                  : (stats?.kpis.calls_today ?? 0).toLocaleString()}
               </div>
-              <div className="text-xs text-muted-foreground mt-1">Calls today</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {isAdmin ? "Total calls (all time)" : "Calls today"}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-[28px] font-bold font-mono text-success leading-none">
-                {(stats?.kpis.interested_today ?? 0).toLocaleString()}
+                {isAdmin
+                  ? (orgStats?.totals.total_interested ?? 0).toLocaleString()
+                  : (stats?.kpis.interested_today ?? 0).toLocaleString()}
               </div>
               <div className="text-xs text-muted-foreground mt-1">Interested leads</div>
             </div>
@@ -183,7 +204,7 @@ function Dashboard() {
       </div>
 
       {/* ── KPI cards ─────────────────────────────────────────────────────── */}
-      {statsLoading ? (
+      {(statsLoading || (isAdmin && orgStatsLoading)) ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="rounded-xl bg-card border border-border/80 p-4">

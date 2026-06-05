@@ -213,6 +213,16 @@ function Agents() {
     setEditTarget(null);
   };
 
+  const handleSavedAndTest = (agent: AgentOut) => {
+    setAgents((prev) => {
+      const idx = prev.findIndex((a) => a.id === agent.id);
+      return idx >= 0 ? prev.map((a) => (a.id === agent.id ? agent : a)) : [agent, ...prev];
+    });
+    setShowModal(false);
+    setEditTarget(null);
+    setTestCallAgent(agent);
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this agent template?")) return;
     await agentsApi.delete(id);
@@ -396,6 +406,7 @@ function Agents() {
         <AgentModal
           initial={editTarget}
           onSaved={handleSaved}
+          onSavedAndTest={handleSavedAndTest}
           onClose={() => { setShowModal(false); setEditTarget(null); }}
         />
       )}
@@ -572,10 +583,11 @@ function TestCallDialog({ agent, onClose }: TestCallDialogProps) {
 interface AgentModalProps {
   initial: AgentOut | null;
   onSaved: (agent: AgentOut) => void;
+  onSavedAndTest?: (agent: AgentOut) => void;
   onClose: () => void;
 }
 
-function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
+function AgentModal({ initial, onSaved, onSavedAndTest, onClose }: AgentModalProps) {
   const isEdit = !!initial;
 
   const [form, setForm] = useState<AgentCreate>(() =>
@@ -626,7 +638,7 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (andTest = false) => {
     if (!form.name.trim()) { toast.error("Agent name is required"); return; }
     setSaving(true);
     try {
@@ -641,7 +653,11 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
         agent = res.data;
       }
       toast.success(isEdit ? "Agent updated" : "Agent created");
-      onSaved(agent);
+      if (andTest && onSavedAndTest) {
+        onSavedAndTest(agent);
+      } else {
+        onSaved(agent);
+      }
     } catch (e: any) {
       const detail = e?.response?.data?.detail ?? e?.message ?? "Save failed";
       toast.error(typeof detail === "string" ? detail : JSON.stringify(detail));
@@ -855,9 +871,19 @@ function AgentModal({ initial, onSaved, onClose }: AgentModalProps) {
 
         <DialogFooter className="gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
+          {onSavedAndTest && (
+            <Button
+              variant="outline"
+              className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300"
+              onClick={() => handleSave(true)}
+              disabled={saving || !form.name.trim()}
+            >
+              {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : <><Phone className="h-4 w-4" /> Save & Test Call</>}
+            </Button>
+          )}
           <Button
             className="bg-gradient-primary text-white shadow-glow"
-            onClick={handleSave}
+            onClick={() => handleSave(false)}
             disabled={saving || !form.name.trim()}
           >
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : isEdit ? "Save Changes" : "Create Agent"}
