@@ -24,15 +24,8 @@ async def dashboard_stats(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     seven_days_ago = now - timedelta(days=7)
 
-    # Members only see stats from their own campaigns
+    # All users see org-wide call stats (admin manages campaigns for the team)
     call_filter = [Call.org_id == org_id]
-    if token.role != "admin":
-        member_camp_ids = select(Campaign.id).where(
-            Campaign.org_id == org_id,
-            Campaign.created_by_id == token.user_id,
-            Campaign.deleted_at.is_(None),
-        )
-        call_filter.append(Call.campaign_id.in_(member_camp_ids))
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
     calls_today = (await db.execute(
@@ -115,8 +108,6 @@ async def dashboard_stats(
         Campaign.status.in_(["running", "scheduled"]),
         Campaign.deleted_at.is_(None),
     ]
-    if token.role != "admin":
-        camp_filter.append(Campaign.created_by_id == token.user_id)
 
     active_campaigns = (await db.execute(
         select(Campaign).where(*camp_filter).order_by(Campaign.started_at.desc()).limit(5)
