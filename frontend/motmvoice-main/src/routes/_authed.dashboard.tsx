@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Phone, Heart, Clock, TrendingUp, Play, ArrowRight, Zap as ZapIcon, Users } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -25,39 +25,12 @@ function fmtDuration(s: number) {
   return `${m}m ${String(r).padStart(2, "0")}s`;
 }
 
-// ── useCountUp ────────────────────────────────────────────────────────────────
-function useCountUp(target: number, duration = 700) {
-  const [count, setCount] = useState(0);
-  const rafRef  = useRef(0);
-  const prevRef = useRef({ target: -1, count: 0 });
-
-  useEffect(() => {
-    if (target === prevRef.current.target) return;
-    const startVal  = prevRef.current.count;
-    prevRef.current.target = target;
-    const startTime = performance.now();
-    cancelAnimationFrame(rafRef.current);
-    function tick(now: number) {
-      const p = Math.min((now - startTime) / duration, 1);
-      const e = 1 - Math.pow(1 - p, 3);
-      const n = Math.round(startVal + (target - startVal) * e);
-      prevRef.current.count = n;
-      setCount(n);
-      if (p < 1) rafRef.current = requestAnimationFrame(tick);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [target, duration]);
-
-  return count;
-}
-
 // ── Skeleton helper ───────────────────────────────────────────────────────────
 function Skel({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded bg-surface-2 ${className}`} />;
 }
 
-// ── Animated KPI card ─────────────────────────────────────────────────────────
+// ── KPI card ──────────────────────────────────────────────────────────────────
 function AnimatedKPICard({
   label, rawValue, format, icon: Icon, tone, trend,
 }: {
@@ -68,7 +41,6 @@ function AnimatedKPICard({
   tone: string;
   trend?: number | null;
 }) {
-  const animated = useCountUp(rawValue);
   return (
     <div className="card-top-accent relative rounded-xl bg-card border border-border/80 p-4 hover:border-primary/25 transition-all duration-200 overflow-hidden group">
       <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/[0.02] transition-colors duration-300 pointer-events-none rounded-xl" />
@@ -76,7 +48,7 @@ function AnimatedKPICard({
         <div className="h-9 w-9 rounded-lg bg-primary/10 grid place-items-center text-primary mb-3">
           <Icon className="h-4 w-4" />
         </div>
-        <div className={`text-2xl font-bold font-mono ${tone}`}>{format(animated)}</div>
+        <div className={`text-2xl font-bold font-mono ${tone}`}>{format(rawValue)}</div>
         <div className="text-xs text-muted-foreground mt-1 leading-snug">{label}</div>
         {trend !== null && trend !== undefined && (
           <div className={`flex items-center gap-0.5 text-[11px] font-medium mt-1.5 ${trend >= 0 ? "text-success" : "text-destructive"}`}>
