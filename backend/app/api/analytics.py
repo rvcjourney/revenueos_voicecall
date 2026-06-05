@@ -24,16 +24,23 @@ async def dashboard_stats(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     seven_days_ago = now - timedelta(days=7)
 
-    # All users see org-wide call stats (admin manages campaigns for the team)
+    # Admins see org-wide stats; members see only their own campaigns' stats
     call_filter = [Call.org_id == org_id]
+    if token.role != "admin":
+        member_camp_ids = select(Campaign.id).where(
+            Campaign.org_id == org_id,
+            Campaign.created_by_id == token.user_id,
+            Campaign.deleted_at.is_(None),
+        )
+        call_filter.append(Call.campaign_id.in_(member_camp_ids))
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
     calls_today = (await db.execute(
-        select(func.count()).where(*call_filter, Call.created_at >= today_start)
+        select(func.count(Call.id)).where(*call_filter, Call.created_at >= today_start)
     )).scalar_one()
 
     interested_today = (await db.execute(
-        select(func.count()).where(
+        select(func.count(Call.id)).where(
             *call_filter, Call.created_at >= today_start, Call.outcome == "interested"
         )
     )).scalar_one()
@@ -45,7 +52,7 @@ async def dashboard_stats(
     )).scalar_one()
 
     answered = (await db.execute(
-        select(func.count()).where(
+        select(func.count(Call.id)).where(
             *call_filter, Call.created_at >= today_start, Call.status == "completed"
         )
     )).scalar_one()
@@ -56,8 +63,8 @@ async def dashboard_stats(
     daily_rows = (await db.execute(
         select(
             cast(Call.created_at, Date).label("day"),
-            func.count().label("calls"),
-            func.count().filter(Call.outcome == "interested").label("interested"),
+            func.count(Call.id).label("calls"),
+            func.count(Call.id).filter(Call.outcome == "interested").label("interested"),
         )
         .where(*call_filter, Call.created_at >= seven_days_ago)
         .group_by(cast(Call.created_at, Date))
@@ -78,7 +85,7 @@ async def dashboard_stats(
     # ── Outcome breakdown (last 30 days) ──────────────────────────────────────
     thirty_days_ago = now - timedelta(days=30)
     outcome_rows = (await db.execute(
-        select(Call.outcome, func.count().label("cnt"))
+        select(Call.outcome, func.count(Call.id).label("cnt"))
         .where(*call_filter, Call.created_at >= thirty_days_ago)
         .group_by(Call.outcome)
     )).all()
@@ -108,6 +115,8 @@ async def dashboard_stats(
         Campaign.status.in_(["running", "scheduled"]),
         Campaign.deleted_at.is_(None),
     ]
+    if token.role != "admin":
+        camp_filter.append(Campaign.created_by_id == token.user_id)
 
     active_campaigns = (await db.execute(
         select(Campaign).where(*camp_filter).order_by(Campaign.started_at.desc()).limit(5)
