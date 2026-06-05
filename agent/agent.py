@@ -204,10 +204,10 @@ async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration   = 0.18,
-        activation_threshold   = 0.78,
-        deactivation_threshold = 0.50,
-        sample_rate            = 16000,
+        min_silence_duration   = 0.35,
+        activation_threshold   = 0.85,
+        deactivation_threshold = 0.40,
+        sample_rate            = 8000,
     )
     logger.info("VAD loaded in prewarm ✓")
 
