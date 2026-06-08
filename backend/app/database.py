@@ -50,12 +50,6 @@ def _make_engine(url: str, *, testing: bool = False):
         "future": True,
         "connect_args": _connect_args(),
     }
-    if settings.DB_USE_PGBOUNCER:
-        # SQLAlchemy's own prepared-statement cache must also be disabled;
-        # statement_cache_size=0 in connect_args disables asyncpg's cache,
-        # but SQLAlchemy still names and re-uses prepared statements which
-        # breaks PgBouncer transaction mode.
-        kwargs["prepared_statement_cache_size"] = 0
     if testing:
         # NullPool prevents connection reuse across test functions
         kwargs["poolclass"] = NullPool
@@ -142,17 +136,12 @@ def make_worker_session_factory():
     when the session ends — nothing is ever reused across event loops.
     """
     from sqlalchemy.pool import NullPool
-    worker_kwargs: dict[str, Any] = {
-        "poolclass": NullPool,
-        "connect_args": _connect_args(),
-        "echo": settings.DB_ECHO,
-        "future": True,
-    }
-    if settings.DB_USE_PGBOUNCER:
-        worker_kwargs["prepared_statement_cache_size"] = 0
     worker_engine = create_async_engine(
         _async_url(settings.DATABASE_URL),
-        **worker_kwargs,
+        poolclass=NullPool,
+        connect_args=_connect_args(),
+        echo=settings.DB_ECHO,
+        future=True,
     )
     return async_sessionmaker(
         bind=worker_engine,
