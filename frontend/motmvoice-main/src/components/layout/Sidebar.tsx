@@ -244,11 +244,12 @@ export function Sidebar() {
   ] as const;
 
   const adminNav = [
-    { to: "/agents",      label: "AI Agents",  icon: Bot         },
-    { to: "/admin/users", label: "Team",        icon: Users       },
-    { to: "/admin/dnc",   label: "DNC List",   icon: PhoneOff    },
-    { to: "/admin/audit", label: "Audit Log",  icon: ClipboardList },
-    { to: "/settings",    label: "Settings",   icon: Settings    },
+    { to: "/agents",               label: "AI Agents",     icon: Bot         },
+    { to: "/admin/users",          label: "Team",           icon: Users       },
+    { to: "/admin/phone-numbers",  label: "Phone Numbers", icon: Phone       },
+    { to: "/admin/dnc",            label: "DNC List",      icon: PhoneOff    },
+    { to: "/admin/audit",          label: "Audit Log",     icon: ClipboardList },
+    { to: "/settings",             label: "Settings",      icon: Settings    },
   ] as const;
 
   const memberNav = [

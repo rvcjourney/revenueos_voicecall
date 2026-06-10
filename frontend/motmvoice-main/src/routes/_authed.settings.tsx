@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,9 +7,10 @@ import { useAuth } from "@/lib/auth";
 import { Progress } from "@/components/ui/progress";
 import {
   User, Users, CreditCard, Key, Phone, Bell,
-  Plus, Copy, Check,
+  Plus, Copy, Check, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { sipTrunksApi, type SipTrunkOut } from "@/lib/api";
 
 export const Route = createFileRoute("/_authed/settings")({
   head: () => ({ meta: [{ title: "Settings — MOTMVoice" }] }),
@@ -32,6 +33,20 @@ function SettingsPage() {
   const { user }          = useAuth();
   const [active, setActive] = useState<TabId>("profile");
   const [copied, setCopied] = useState(false);
+
+  // Phone numbers state
+  const [trunks, setTrunks]           = useState<SipTrunkOut[]>([]);
+  const [trunksLoading, setTrunksLoading] = useState(false);
+
+  useEffect(() => {
+    if (active === "phone") {
+      setTrunksLoading(true);
+      sipTrunksApi.myTrunks()
+        .then(({ data }) => setTrunks(data))
+        .catch(() => toast.error("Failed to load phone numbers"))
+        .finally(() => setTrunksLoading(false));
+    }
+  }, [active]);
 
   function copyKey() {
     navigator.clipboard.writeText("sk_live_motm_a1b2c3d4e5f6");
@@ -201,26 +216,37 @@ function SettingsPage() {
 
           {/* Phone Numbers ────────────────────────────────────────────────── */}
           {active === "phone" && (
-            <Panel title="Phone Numbers" subtitle="SIP trunk numbers assigned to your account">
+            <Panel title="Phone Numbers" subtitle="SIP trunk numbers assigned to your account by admin">
               <div className="space-y-3 max-w-md">
-                {[
-                  { number: "+91 80691 12345", label: "Primary" },
-                  { number: "+91 80691 67890", label: "Secondary" },
-                ].map((p) => (
-                  <div key={p.number} className="flex items-center justify-between p-4 rounded-xl bg-surface-2/60 border border-border">
-                    <div>
-                      <div className="font-mono text-sm font-semibold">{p.number}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{p.label}</div>
-                    </div>
-                    <span className="flex items-center gap-1.5 text-xs text-success font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                      Active
-                    </span>
+                {trunksLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading phone numbers…
                   </div>
-                ))}
-                <Button variant="outline" size="sm">
-                  <Plus className="h-3.5 w-3.5" /> Request number
-                </Button>
+                ) : trunks.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Phone className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No phone numbers assigned yet.</p>
+                    <p className="text-xs mt-1">Ask your admin to assign a phone number to your account.</p>
+                  </div>
+                ) : (
+                  trunks.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between p-4 rounded-xl bg-surface-2/60 border border-border">
+                      <div>
+                        <div className="font-mono text-sm font-semibold">{t.caller_id}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {t.name}{t.is_default ? " · Default" : ""}
+                        </div>
+                      </div>
+                      <span className={`flex items-center gap-1.5 text-xs font-medium ${t.is_active ? "text-success" : "text-muted-foreground"}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${t.is_active ? "bg-success" : "bg-muted-foreground"}`} />
+                        {t.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+                  ))
+                )}
+                <p className="text-xs text-muted-foreground pt-1">
+                  Contact your admin to add or change phone numbers.
+                </p>
               </div>
             </Panel>
           )}

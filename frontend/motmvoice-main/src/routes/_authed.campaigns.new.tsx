@@ -12,7 +12,7 @@ import {
   Rocket, Save, X, Bot, Loader2, Plus,
 } from "lucide-react";
 import { voices } from "@/lib/mock-data";
-import { agentsApi, campaignsApi, type AgentOut } from "@/lib/api";
+import { agentsApi, campaignsApi, sipTrunksApi, type AgentOut, type SipTrunkOut } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
@@ -80,6 +80,20 @@ function NewCampaign() {
       .finally(() => setAgentsLoading(false));
   }, [isAdmin]);
 
+  // ── Phone numbers ───────────────────────────────────────────────────────────
+  const [trunks, setTrunks]             = useState<SipTrunkOut[]>([]);
+  const [selectedTrunkId, setSelectedTrunkId] = useState<string>("");
+
+  useEffect(() => {
+    sipTrunksApi.myTrunks()
+      .then(({ data }) => {
+        setTrunks(data);
+        const def = data.find((t) => t.is_default) ?? data[0];
+        if (def) setSelectedTrunkId(def.id);
+      })
+      .catch(() => {});
+  }, []);
+
   // ── Step 4: Schedule ────────────────────────────────────────────────────────
   const [schedule, setSchedule] = useState({
     start: "10:00", end: "19:00",
@@ -114,6 +128,7 @@ function NewCampaign() {
         goal:                  GOAL_MAP[basics.goal] ?? "lead_generation",
         folder_id:             folderId,
         agent_template_id:     selectedAgentId,
+        sip_trunk_id:          selectedTrunkId || undefined,
         calling_window_start:  schedule.start + ":00",
         calling_window_end:    schedule.end   + ":00",
         calling_days:          callingDays,
@@ -462,6 +477,29 @@ function NewCampaign() {
                     className="mt-2"
                   />
                 </div>
+              </div>
+
+              {/* Phone Number */}
+              <div className="space-y-1.5">
+                <Label>Phone Number</Label>
+                {trunks.length === 0 ? (
+                  <p className="text-xs text-amber-400">
+                    No phone numbers assigned. Ask your admin to assign one — the org default will be used.
+                  </p>
+                ) : (
+                  <Select value={selectedTrunkId} onValueChange={setSelectedTrunkId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select phone number…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {trunks.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.caller_id} — {t.name}{t.is_default ? " (default)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
               {/* Auto-schedule */}

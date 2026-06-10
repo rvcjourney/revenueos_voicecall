@@ -325,6 +325,48 @@ export const analyticsApi = {
   dashboard: () => api.get<DashboardStats>("/api/analytics/dashboard"),
 };
 
+// ── SIP Trunks (Phone Numbers) ────────────────────────────────────────────────
+export interface SipTrunkOut {
+  id: string;
+  name: string;
+  livekit_trunk_id: string;
+  sip_domain: string;
+  sip_username: string;
+  caller_id: string;
+  transport: string;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface SipTrunkAssignment {
+  user_id: string;
+  full_name: string;
+  email: string;
+  assigned_at: string;
+}
+
+export const sipTrunksApi = {
+  // Admin endpoints
+  list: () => api.get<SipTrunkOut[]>("/api/sip-trunks"),
+  create: (data: {
+    name: string; livekit_trunk_id: string; sip_domain: string;
+    sip_username: string; sip_password: string; caller_id: string;
+    transport?: string; is_default?: boolean;
+  }) => api.post<SipTrunkOut>("/api/sip-trunks", data),
+  update: (id: string, data: { name?: string; caller_id?: string; is_default?: boolean; is_active?: boolean }) =>
+    api.put<SipTrunkOut>(`/api/sip-trunks/${id}`, data),
+  delete: (id: string) => api.delete(`/api/sip-trunks/${id}`),
+  assign: (trunkId: string, userId: string) =>
+    api.post(`/api/sip-trunks/${trunkId}/assign`, { user_id: userId }),
+  unassign: (trunkId: string, userId: string) =>
+    api.delete(`/api/sip-trunks/${trunkId}/assign/${userId}`),
+  getAssignments: (trunkId: string) =>
+    api.get<SipTrunkAssignment[]>(`/api/sip-trunks/${trunkId}/assignments`),
+  // User endpoint
+  myTrunks: () => api.get<SipTrunkOut[]>("/api/sip-trunks/my"),
+};
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface UserOut {
   id: string;
@@ -389,6 +431,7 @@ export interface CampaignCreate {
   goal?: string;
   folder_id?: string;
   agent_template_id: string;
+  sip_trunk_id?: string;
   calling_window_start?: string;
   calling_window_end?: string;
   calling_days?: string[];
