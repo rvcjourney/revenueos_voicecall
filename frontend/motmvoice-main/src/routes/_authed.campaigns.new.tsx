@@ -492,44 +492,73 @@ function NewCampaign() {
               </div>
 
               {/* Phone Number */}
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label>Phone Number</Label>
                 {trunks.length === 0 ? (
                   <p className="text-xs text-amber-400">
                     No phone numbers assigned. Ask your admin to assign one — the org default will be used.
                   </p>
                 ) : (
-                  <Select value={selectedTrunkId} onValueChange={setSelectedTrunkId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select phone number…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {trunks.map((t) => {
-                        const cap = capacity[t.id];
-                        const active = cap?.active_calls ?? 0;
-                        const available = cap ? cap.available_slots : 3;
-                        const isFull = available === 0;
-                        return (
-                          <SelectItem key={t.id} value={t.id}>
-                            <span className="flex items-center gap-3">
-                              <span>{t.caller_id}{t.is_default ? " (default)" : ""}</span>
+                  <div className="space-y-2">
+                    {trunks.map((t) => {
+                      const cap       = capacity[t.id];
+                      const available = cap ? cap.available_slots : 3;
+                      const isFull    = available === 0;
+                      const inUse     = 3 - available;
+                      const isSelected = selectedTrunkId === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          disabled={isFull}
+                          onClick={() => setSelectedTrunkId(t.id)}
+                          className={`relative w-full text-left rounded-xl border-2 p-4 transition-all ${
+                            isFull
+                              ? "border-border cursor-not-allowed"
+                              : isSelected
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-primary/40 cursor-pointer"
+                          }`}
+                        >
+                          {/* Card content — blurred when full */}
+                          <div className={`flex items-center justify-between transition-opacity ${isFull ? "opacity-30" : ""}`}>
+                            <div>
+                              <div className="font-mono font-semibold">{t.caller_id}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {t.name}{t.is_default ? " · Default" : ""}
+                              </div>
+                            </div>
+                            {!isFull && (
                               <span className={`text-xs font-medium ${
-                                isFull ? "text-destructive" :
-                                available === 1 ? "text-amber-400" :
-                                "text-success"
+                                available === 1 ? "text-amber-400" : "text-success"
                               }`}>
-                                {isFull ? "● all 3 busy" : `● ${available}/3 free`}
+                                {inUse > 0 ? `${inUse}/3 busy · ` : ""}{available} slot{available !== 1 ? "s" : ""} free
                               </span>
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
+                            )}
+                          </div>
+
+                          {/* Full-capacity overlay */}
+                          {isFull && (
+                            <div className="absolute inset-0 flex items-center justify-center rounded-xl">
+                              <span className="text-xs font-semibold text-destructive bg-card/90 px-3 py-1.5 rounded-full border border-destructive/40">
+                                Currently 3 calls in progress
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Selected checkmark */}
+                          {isSelected && !isFull && (
+                            <div className="absolute top-3 right-3 h-5 w-5 rounded-full bg-primary grid place-items-center">
+                              <Check className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Each phone number supports up to 3 simultaneous calls across all campaigns.
-                  If all slots are busy, calls queue automatically until one frees up.
+                  Each number supports up to 3 simultaneous calls. A full number becomes available once a call finishes.
                 </p>
               </div>
 
