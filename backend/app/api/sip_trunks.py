@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
 from app.database import get_db
@@ -306,6 +307,41 @@ async def list_trunk_assignments(
         }
         for assignment, user in rows
     ]
+
+
+# ── Admin: initialize default trunk from env vars ────────────────────────────
+
+@router.post("/init-default", response_model=TrunkOut, status_code=200)
+async def init_default_trunk(
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create the configured SIP trunk for this org if none exists yet. Idempotent."""
+    existing = await db.scalar(
+        select(SipTrunk).where(
+            SipTrunk.org_id == token.org_id,
+            SipTrunk.deleted_at.is_(None),
+        )
+    )
+    if existing:
+        return _to_out(existing)
+
+    trunk = SipTrunk(
+        org_id=token.org_id,
+        name="Vobiz SIP Trunk",
+        livekit_trunk_id=settings.DEFAULT_SIP_TRUNK_ID,
+        sip_domain=settings.VOBIZ_SIP_DOMAIN,
+        sip_username=settings.VOBIZ_USERNAME,
+        sip_password=settings.VOBIZ_PASSWORD,
+        caller_id=settings.DEFAULT_SIP_CALLER_ID,
+        transport=SipTransport.TCP,
+        is_default=True,
+        is_active=True,
+    )
+    db.add(trunk)
+    await db.commit()
+    await db.refresh(trunk)
+    return _to_out(trunk)
 
 
 # ── User: list my assigned trunks ─────────────────────────────────────────────

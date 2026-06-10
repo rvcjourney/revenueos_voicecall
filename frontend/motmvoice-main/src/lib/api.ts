@@ -349,14 +349,7 @@ export interface SipTrunkAssignment {
 export const sipTrunksApi = {
   // Admin endpoints
   list: () => api.get<SipTrunkOut[]>("/api/sip-trunks"),
-  create: (data: {
-    name: string; livekit_trunk_id: string; sip_domain: string;
-    sip_username: string; sip_password: string; caller_id: string;
-    transport?: string; is_default?: boolean;
-  }) => api.post<SipTrunkOut>("/api/sip-trunks", data),
-  update: (id: string, data: { name?: string; caller_id?: string; is_default?: boolean; is_active?: boolean }) =>
-    api.put<SipTrunkOut>(`/api/sip-trunks/${id}`, data),
-  delete: (id: string) => api.delete(`/api/sip-trunks/${id}`),
+  initDefault: () => api.post<SipTrunkOut>("/api/sip-trunks/init-default"),
   assign: (trunkId: string, userId: string) =>
     api.post(`/api/sip-trunks/${trunkId}/assign`, { user_id: userId }),
   unassign: (trunkId: string, userId: string) =>
