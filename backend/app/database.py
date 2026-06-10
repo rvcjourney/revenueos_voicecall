@@ -29,18 +29,18 @@ def _async_url(url: str) -> str:
 
 
 def _connect_args() -> dict[str, Any]:
-    args: dict[str, Any] = {}
+    args: dict[str, Any] = {
+        # PgBouncer transaction mode (and Supabase's pooler) multiplexes
+        # connections across backends; named prepared statements are
+        # session-scoped and break across hops. Disable them unconditionally —
+        # harmless without PgBouncer, essential with it.
+        "statement_cache_size": 0,
+    }
     if settings.DB_SSL_REQUIRED:
-        # Supabase pooler uses a self-signed cert in the chain; we require
-        # SSL encryption but skip CA verification (no plaintext on the wire).
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         args["ssl"] = ctx
-    if settings.DB_USE_PGBOUNCER:
-        # PgBouncer transaction mode multiplexes connections; named prepared
-        # statements are session-scoped and break across connection hops.
-        args["statement_cache_size"] = 0
     return args
 
 
