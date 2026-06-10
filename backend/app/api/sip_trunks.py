@@ -370,32 +370,50 @@ async def init_default_trunk(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create the configured SIP trunk for this org if none exists yet. Idempotent."""
-    existing = await db.scalar(
-        select(SipTrunk).where(
-            SipTrunk.org_id == token.org_id,
-            SipTrunk.deleted_at.is_(None),
+    """Seed all configured SIP trunks for this org. Idempotent — skips existing ones."""
+    trunks_cfg = [
+        (settings.DEFAULT_SIP_TRUNK_ID, settings.DEFAULT_SIP_CALLER_ID, "Vobiz SIP Trunk", True),
+    ]
+    if settings.DEFAULT_SIP_TRUNK_ID_2 and settings.DEFAULT_SIP_CALLER_ID_2:
+        trunks_cfg.append(
+            (settings.DEFAULT_SIP_TRUNK_ID_2, settings.DEFAULT_SIP_CALLER_ID_2, "Vobiz SIP Trunk 2", False)
         )
-    )
-    if existing:
-        return _to_out(existing)
 
-    trunk = SipTrunk(
-        org_id=token.org_id,
-        name="Vobiz SIP Trunk",
-        livekit_trunk_id=settings.DEFAULT_SIP_TRUNK_ID,
-        sip_domain=settings.VOBIZ_SIP_DOMAIN,
-        sip_username=settings.VOBIZ_USERNAME,
-        sip_password=settings.VOBIZ_PASSWORD,
-        caller_id=settings.DEFAULT_SIP_CALLER_ID,
-        transport=SipTransport.TCP,
-        is_default=True,
-        is_active=True,
-    )
-    db.add(trunk)
+    first_trunk = None
+    for livekit_id, caller_id, name, is_default in trunks_cfg:
+        existing = await db.scalar(
+            select(SipTrunk).where(
+                SipTrunk.org_id == token.org_id,
+                SipTrunk.livekit_trunk_id == livekit_id,
+                SipTrunk.deleted_at.is_(None),
+            )
+        )
+        if existing:
+            if first_trunk is None:
+                first_trunk = existing
+            continue
+
+        trunk = SipTrunk(
+            org_id=token.org_id,
+            name=name,
+            livekit_trunk_id=livekit_id,
+            sip_domain=settings.VOBIZ_SIP_DOMAIN,
+            sip_username=settings.VOBIZ_USERNAME,
+            sip_password=settings.VOBIZ_PASSWORD,
+            caller_id=caller_id,
+            transport=SipTransport.TCP,
+            is_default=is_default,
+            is_active=True,
+        )
+        db.add(trunk)
+        await db.flush()
+        if first_trunk is None:
+            first_trunk = trunk
+
     await db.commit()
-    await db.refresh(trunk)
-    return _to_out(trunk)
+    if first_trunk:
+        await db.refresh(first_trunk)
+    return _to_out(first_trunk)
 
 
 # ── User: list my assigned trunks ─────────────────────────────────────────────

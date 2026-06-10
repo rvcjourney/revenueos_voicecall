@@ -16,12 +16,11 @@ function PhoneNumbersPage() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
-  const [trunk, setTrunk]           = useState<SipTrunkOut | null>(null);
-  const [loading, setLoading]       = useState(true);
-  const [initializing, setInit]     = useState(false);
-  const [users, setUsers]           = useState<AdminUserOut[]>([]);
-  const [assignments, setAssignments] = useState<SipTrunkAssignment[]>([]);
-  const [assignsLoading, setAssignsLoading] = useState(false);
+  const [trunks, setTrunks]   = useState<SipTrunkOut[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [initializing, setInit] = useState(false);
+  const [users, setUsers]     = useState<AdminUserOut[]>([]);
+  const [assignments, setAssignments] = useState<Record<string, SipTrunkAssignment[]>>({});
 
   useEffect(() => {
     if (!isAdmin) navigate({ to: "/dashboard" });
@@ -30,19 +29,17 @@ function PhoneNumbersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: trunks }, { data: u }] = await Promise.all([
+      const [{ data: ts }, { data: u }] = await Promise.all([
         sipTrunksApi.list(),
         adminApi.listUsers(),
       ]);
       setUsers(u);
-      if (trunks.length > 0) {
-        const t = trunks[0];
-        setTrunk(t);
-        // Load assignments for this trunk
-        setAssignsLoading(true);
-        const { data: a } = await sipTrunksApi.getAssignments(t.id);
-        setAssignments(a);
-        setAssignsLoading(false);
+      setTrunks(ts);
+      if (ts.length > 0) {
+        const results = await Promise.all(ts.map((t) => sipTrunksApi.getAssignments(t.id)));
+        const map: Record<string, SipTrunkAssignment[]> = {};
+        ts.forEach((t, i) => { map[t.id] = results[i].data; });
+        setAssignments(map);
       }
     } catch {
       toast.error("Failed to load phone numbers");
@@ -56,14 +53,9 @@ function PhoneNumbersPage() {
   async function handleInit() {
     setInit(true);
     try {
-      const { data: t } = await sipTrunksApi.initDefault();
-      setTrunk(t);
-      toast.success("Phone number activated");
-      // Load assignments
-      setAssignsLoading(true);
-      const { data: a } = await sipTrunksApi.getAssignments(t.id);
-      setAssignments(a);
-      setAssignsLoading(false);
+      await sipTrunksApi.initDefault();
+      await load();
+      toast.success("Phone numbers activated");
     } catch (e: any) {
       toast.error(e?.response?.data?.detail ?? "Failed to activate");
     } finally {
@@ -71,16 +63,18 @@ function PhoneNumbersPage() {
     }
   }
 
-  async function handleAssign(userId: string) {
-    if (!trunk) return;
+  async function handleAssign(trunkId: string, userId: string) {
     try {
-      await sipTrunksApi.assign(trunk.id, userId);
+      await sipTrunksApi.assign(trunkId, userId);
       const user = users.find((u) => u.id === userId);
       if (user) {
-        setAssignments((prev) => [
+        setAssignments((prev) => ({
           ...prev,
-          { user_id: user.id, full_name: user.full_name, email: user.email, assigned_at: new Date().toISOString() },
-        ]);
+          [trunkId]: [
+            ...(prev[trunkId] ?? []),
+            { user_id: user.id, full_name: user.full_name, email: user.email, assigned_at: new Date().toISOString() },
+          ],
+        }));
       }
       toast.success("Access granted");
     } catch (e: any) {
@@ -88,11 +82,13 @@ function PhoneNumbersPage() {
     }
   }
 
-  async function handleUnassign(userId: string) {
-    if (!trunk) return;
+  async function handleUnassign(trunkId: string, userId: string) {
     try {
-      await sipTrunksApi.unassign(trunk.id, userId);
-      setAssignments((prev) => prev.filter((a) => a.user_id !== userId));
+      await sipTrunksApi.unassign(trunkId, userId);
+      setAssignments((prev) => ({
+        ...prev,
+        [trunkId]: (prev[trunkId] ?? []).filter((a) => a.user_id !== userId),
+      }));
       toast.success("Access removed");
     } catch (e: any) {
       toast.error(e?.response?.data?.detail ?? "Failed to remove access");
@@ -107,7 +103,7 @@ function PhoneNumbersPage() {
           Phone Numbers
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Assign the organisation phone number to team members
+          Assign organisation phone numbers to team members
         </p>
       </div>
 
@@ -115,13 +111,12 @@ function PhoneNumbersPage() {
         <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
           <Loader2 className="h-5 w-5 animate-spin" /> Loading…
         </div>
-      ) : !trunk ? (
-        /* No trunk yet — show configured number, let admin activate */
+      ) : trunks.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-8 text-center space-y-4">
           <Phone className="h-12 w-12 mx-auto text-muted-foreground opacity-40" />
           <div>
             <p className="font-semibold text-lg font-mono">+91 80654 80087</p>
-            <p className="text-sm text-muted-foreground mt-1">Vobiz SIP Trunk (not yet activated)</p>
+            <p className="text-sm text-muted-foreground mt-1">Vobiz SIP Trunks (not yet activated)</p>
           </div>
           <Button
             className="bg-gradient-primary text-white"
@@ -130,87 +125,108 @@ function PhoneNumbersPage() {
           >
             {initializing
               ? <><Loader2 className="h-4 w-4 animate-spin" /> Activating…</>
-              : "Activate Phone Number"}
+              : "Activate Phone Numbers"}
           </Button>
           <p className="text-xs text-muted-foreground">
-            This registers the configured SIP trunk so you can assign it to users.
+            This registers all configured SIP trunks so you can assign them to users.
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
-          {/* Phone number card — read-only */}
-          <div className="rounded-xl bg-card border border-border p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-xl font-bold">{trunk.caller_id}</span>
-                  {trunk.is_default && (
-                    <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
-                      <Star className="h-3 w-3" /> Default
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm font-medium mt-0.5 text-muted-foreground">{trunk.name}</div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  {trunk.sip_domain} · {trunk.transport.toUpperCase()}
-                </div>
-              </div>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-success shrink-0 mt-1">
-                <CheckCircle2 className="h-4 w-4" /> Active
-              </span>
-            </div>
-          </div>
-
-          {/* User assignment section */}
-          <div className="rounded-xl bg-card border border-border p-5 space-y-5">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-semibold">User Access</h2>
-            </div>
-
-            {/* Assign dropdown */}
-            <AssignRow
+        <div className="space-y-8">
+          {trunks.map((trunk) => (
+            <TrunkSection
+              key={trunk.id}
+              trunk={trunk}
               users={users}
-              assignments={assignments}
-              onAssign={handleAssign}
+              assignments={assignments[trunk.id] ?? []}
+              onAssign={(userId) => handleAssign(trunk.id, userId)}
+              onUnassign={(userId) => handleUnassign(trunk.id, userId)}
             />
-
-            {/* Currently assigned list */}
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">
-                Currently assigned ({assignments.length})
-              </p>
-              {assignsLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-                </div>
-              ) : assignments.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-2">
-                  No users have access yet. Select a user above to grant access.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {assignments.map((a) => (
-                    <div key={a.user_id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2/60 border border-border">
-                      <div>
-                        <div className="text-sm font-medium">{a.full_name}</div>
-                        <div className="text-xs text-muted-foreground">{a.email}</div>
-                      </div>
-                      <button
-                        onClick={() => handleUnassign(a.user_id)}
-                        className="h-7 w-7 grid place-items-center rounded-md border border-border hover:border-destructive hover:text-destructive text-muted-foreground transition-colors"
-                        title="Remove access"
-                      >
-                        <UserMinus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Single trunk card + assignment section ────────────────────────────────────
+
+function TrunkSection({
+  trunk, users, assignments, onAssign, onUnassign,
+}: {
+  trunk: SipTrunkOut;
+  users: AdminUserOut[];
+  assignments: SipTrunkAssignment[];
+  onAssign: (userId: string) => void;
+  onUnassign: (userId: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Phone number card — read-only */}
+      <div className="rounded-xl bg-card border border-border p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-xl font-bold">{trunk.caller_id}</span>
+              {trunk.is_default && (
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
+                  <Star className="h-3 w-3" /> Default
+                </span>
+              )}
+            </div>
+            <div className="text-sm font-medium mt-0.5 text-muted-foreground">{trunk.name}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {trunk.sip_domain} · {trunk.transport.toUpperCase()}
+            </div>
+          </div>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-success shrink-0 mt-1">
+            <CheckCircle2 className="h-4 w-4" /> Active
+          </span>
+        </div>
+      </div>
+
+      {/* User assignment section */}
+      <div className="rounded-xl bg-card border border-border p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold">User Access</h2>
+        </div>
+
+        <AssignRow
+          users={users}
+          assignments={assignments}
+          onAssign={onAssign}
+        />
+
+        <div>
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">
+            Currently assigned ({assignments.length})
+          </p>
+          {assignments.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">
+              No users have access yet. Select a user above to grant access.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {assignments.map((a) => (
+                <div key={a.user_id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2/60 border border-border">
+                  <div>
+                    <div className="text-sm font-medium">{a.full_name}</div>
+                    <div className="text-xs text-muted-foreground">{a.email}</div>
+                  </div>
+                  <button
+                    onClick={() => onUnassign(a.user_id)}
+                    className="h-7 w-7 grid place-items-center rounded-md border border-border hover:border-destructive hover:text-destructive text-muted-foreground transition-colors"
+                    title="Remove access"
+                  >
+                    <UserMinus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -227,7 +243,7 @@ function AssignRow({
   const [selected, setSelected] = useState("");
   const [busy, setBusy]         = useState(false);
 
-  const assignedIds    = new Set(assignments.map((a) => a.user_id));
+  const assignedIds     = new Set(assignments.map((a) => a.user_id));
   const unassignedUsers = users.filter((u) => !assignedIds.has(u.id) && u.is_active);
 
   async function handleGrant() {

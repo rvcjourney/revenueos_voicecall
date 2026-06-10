@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # ── SIP / Vobiz ───────────────────────────────────────────────────────────
     DEFAULT_SIP_TRUNK_ID: str = ""
     DEFAULT_SIP_CALLER_ID: str = ""
+    DEFAULT_SIP_TRUNK_ID_2: str = ""
+    DEFAULT_SIP_CALLER_ID_2: str = ""
     VOBIZ_SIP_DOMAIN: str = ""
     VOBIZ_USERNAME: str = ""
     VOBIZ_PASSWORD: str = ""
