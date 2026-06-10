@@ -16,6 +16,7 @@ from app.core.exceptions import NotFoundError, ValidationError as AppValidationE
 from app.database import get_db
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from app.models.call import Call, CallOutcome
+from app.models.sip import SipTrunk, UserSipTrunk
 from app.models.user import User
 from app.schemas.campaign import (
     CampaignCreate,
@@ -114,6 +115,23 @@ async def create_campaign(
             raise AppValidationError(
                 "You don't have access to this AI Agent. "
                 "Request access from the AI Agents page and wait for admin approval.",
+                errors=[],
+            )
+
+    # Validate the chosen phone number is assigned to this user (non-admin)
+    if body.sip_trunk_id and token.role != "admin":
+        trunk = await db.get(SipTrunk, body.sip_trunk_id)
+        if not trunk or trunk.org_id != token.org_id or trunk.deleted_at or not trunk.is_active:
+            raise AppValidationError("Selected phone number not found or inactive", errors=[])
+        assignment = await db.scalar(
+            select(UserSipTrunk).where(
+                UserSipTrunk.user_id == token.user_id,
+                UserSipTrunk.trunk_id == body.sip_trunk_id,
+            )
+        )
+        if not assignment:
+            raise AppValidationError(
+                "This phone number is not assigned to you. Ask your admin to assign it.",
                 errors=[],
             )
 
@@ -344,7 +362,7 @@ async def launch_campaign(
     if not contact_count:
         raise AppValidationError("Campaign has no pending contacts to call", errors=[])
 
-    # Each user (non-admin) can run only 1 campaign at a time
+    # Non-admin users may run up to 5 campaigns simultaneously
     if token.role != "admin":
         running_count = await db.scalar(
             select(func.count()).where(
@@ -353,8 +371,8 @@ async def launch_campaign(
                 Campaign.deleted_at.is_(None),
             )
         )
-        if running_count:
-            raise CampaignStateError("You already have a running campaign. Pause it before launching another.")
+        if running_count >= 5:
+            raise CampaignStateError("You have reached the limit of 5 running campaigns. Pause one before launching another.")
 
     campaign.status = CampaignStatus.RUNNING
     campaign.started_at = datetime.now(timezone.utc)

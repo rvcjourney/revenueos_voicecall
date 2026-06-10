@@ -296,15 +296,17 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.analytics import router as analytics_router
     from app.api.webhooks import router as webhooks_router
     from app.api.admin import router as admin_router
+    from app.api.sip_trunks import router as sip_trunks_router
 
-    app.include_router(auth_router,      prefix="/api/auth",      tags=["auth"])
-    app.include_router(admin_router,     prefix="/api/admin",     tags=["admin"])
-    app.include_router(agents_router,    prefix="/api/agents",    tags=["agents"])
-    app.include_router(campaigns_router, prefix="/api/campaigns", tags=["campaigns"])
-    app.include_router(folders_router,   prefix="/api/folders",   tags=["folders"])
-    app.include_router(calls_router,     prefix="/api/calls",     tags=["calls"])
-    app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
-    app.include_router(webhooks_router,  prefix="/webhooks",      tags=["webhooks"])
+    app.include_router(auth_router,        prefix="/api/auth",        tags=["auth"])
+    app.include_router(admin_router,       prefix="/api/admin",       tags=["admin"])
+    app.include_router(agents_router,      prefix="/api/agents",      tags=["agents"])
+    app.include_router(campaigns_router,   prefix="/api/campaigns",   tags=["campaigns"])
+    app.include_router(folders_router,     prefix="/api/folders",     tags=["folders"])
+    app.include_router(calls_router,       prefix="/api/calls",       tags=["calls"])
+    app.include_router(analytics_router,   prefix="/api/analytics",   tags=["analytics"])
+    app.include_router(webhooks_router,    prefix="/webhooks",        tags=["webhooks"])
+    app.include_router(sip_trunks_router,  prefix="/api/sip-trunks",  tags=["sip-trunks"])
 
 
 app = create_app()

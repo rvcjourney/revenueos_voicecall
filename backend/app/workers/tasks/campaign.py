@@ -168,22 +168,25 @@ async def _next_retry_batch(session, campaign_id, retry_after_minutes: int, limi
 
 # ── SIP trunk resolution ───────────────────────────────────────────────────────
 
-async def _resolve_livekit_trunk_id(session, campaign: Campaign) -> str:
-    """Campaign trunk → org default trunk → settings fallback."""
+async def _resolve_trunk(session, campaign: Campaign) -> tuple[str, str]:
+    """Return (livekit_trunk_id, caller_id) using campaign trunk → org default → settings fallback."""
     if campaign.sip_trunk_id:
         trunk = await session.get(SipTrunk, campaign.sip_trunk_id)
-        if trunk and trunk.is_active:
-            return trunk.livekit_trunk_id
+        if trunk and trunk.is_active and not trunk.deleted_at:
+            return trunk.livekit_trunk_id, trunk.caller_id
 
     org_default = await session.scalar(
-        select(SipTrunk.livekit_trunk_id).where(
+        select(SipTrunk).where(
             SipTrunk.org_id == campaign.org_id,
             SipTrunk.is_default.is_(True),
             SipTrunk.is_active.is_(True),
             SipTrunk.deleted_at.is_(None),
         )
     )
-    return org_default or settings.DEFAULT_SIP_TRUNK_ID
+    if org_default:
+        return org_default.livekit_trunk_id, org_default.caller_id
+
+    return settings.DEFAULT_SIP_TRUNK_ID, settings.DEFAULT_SIP_CALLER_ID
 
 
 # ── LiveKit helpers ────────────────────────────────────────────────────────────
@@ -195,6 +198,7 @@ async def _place_call(
     phone: str,
     contact_name: str,
     livekit_trunk_id: str,
+    sip_caller_id: str,
     call_id: str,
     campaign_id: str,
     org_id: str,
@@ -247,7 +251,7 @@ async def _place_call(
                     lk_api.CreateSIPParticipantRequest(
                         sip_trunk_id=livekit_trunk_id,
                         sip_call_to=phone,
-                        sip_number=settings.DEFAULT_SIP_CALLER_ID,
+                        sip_number=sip_caller_id,
                         room_name=room_name,
                         participant_identity=f"phone-{phone.replace('+', '')}",
                         participant_name=contact_name,
@@ -453,6 +457,7 @@ async def _run_one_call(
     contact_name: str,
     room_name: str,
     livekit_trunk_id: str,
+    sip_caller_id: str,
     max_duration: int,
     system_prompt: str,
     welcome_message: str,
@@ -469,6 +474,7 @@ async def _run_one_call(
         phone=contact_phone,
         contact_name=contact_name,
         livekit_trunk_id=livekit_trunk_id,
+        sip_caller_id=sip_caller_id,
         call_id=str(call_id),
         campaign_id=campaign_id,
         org_id=str(org_id),
@@ -585,7 +591,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         return
 
                 if not needs_retry_wait:
-                    livekit_trunk_id = await _resolve_livekit_trunk_id(session, campaign)
+                    livekit_trunk_id, sip_caller_id = await _resolve_trunk(session, campaign)
                     tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
 
                     if not livekit_trunk_id:
@@ -667,6 +673,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 campaign_id=campaign_id,
                 org_id=campaign.org_id,
                 livekit_trunk_id=livekit_trunk_id,
+                sip_caller_id=sip_caller_id,
                 **tmpl_kwargs,
                 **d,
             )

@@ -104,3 +104,6 @@ class User(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     organization: Mapped["Organization"] = relationship(
         "Organization", back_populates="users", foreign_keys="User.org_id"
     )
+    assigned_trunks: Mapped[list["UserSipTrunk"]] = relationship(
+        "UserSipTrunk", back_populates="user", foreign_keys="UserSipTrunk.user_id"
+    )

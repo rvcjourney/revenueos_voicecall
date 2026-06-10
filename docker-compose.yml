@@ -61,7 +61,7 @@ services:
       - motm
     command: >
       celery -A app.workers.celery_app worker
-      --concurrency 4
+      --concurrency 8
       --loglevel info
       --queues calls,campaigns,exports,default
     depends_on:
@@ -76,7 +76,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: 2g
           cpus: "2.0"
 
   # ── Celery Beat (scheduled tasks) ────────────────────────────────────────────
