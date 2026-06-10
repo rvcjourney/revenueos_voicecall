@@ -12,7 +12,7 @@ import {
   Rocket, Save, X, Bot, Loader2, Plus,
 } from "lucide-react";
 import { voices } from "@/lib/mock-data";
-import { agentsApi, campaignsApi, sipTrunksApi, type AgentOut, type SipTrunkOut } from "@/lib/api";
+import { agentsApi, campaignsApi, sipTrunksApi, type AgentOut, type SipTrunkOut, type TrunkCapacity } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
@@ -83,6 +83,7 @@ function NewCampaign() {
   // ── Phone numbers ───────────────────────────────────────────────────────────
   const [trunks, setTrunks]             = useState<SipTrunkOut[]>([]);
   const [selectedTrunkId, setSelectedTrunkId] = useState<string>("");
+  const [capacity, setCapacity]         = useState<Record<string, TrunkCapacity>>({});
 
   useEffect(() => {
     sipTrunksApi.myTrunks()
@@ -90,6 +91,14 @@ function NewCampaign() {
         setTrunks(data);
         const def = data.find((t) => t.is_default) ?? data[0];
         if (def) setSelectedTrunkId(def.id);
+      })
+      .catch(() => {});
+    // Fetch live slot usage once so user can see which numbers have capacity
+    sipTrunksApi.capacity()
+      .then(({ data }) => {
+        const map: Record<string, TrunkCapacity> = {};
+        data.forEach((c) => { map[c.trunk_id] = c; });
+        setCapacity(map);
       })
       .catch(() => {});
   }, []);
@@ -460,11 +469,14 @@ function NewCampaign() {
               </div>
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <Label className="text-xs">Calls per minute: {schedule.cpm}</Label>
+                  <Label className="text-xs">
+                    Concurrent calls: {schedule.cpm}
+                    <span className="ml-1 text-muted-foreground">(max 3 per number)</span>
+                  </Label>
                   <Slider
                     value={[schedule.cpm]}
                     onValueChange={([v]) => setSchedule({ ...schedule, cpm: v })}
-                    min={1} max={10} step={1}
+                    min={1} max={3} step={1}
                     className="mt-2"
                   />
                 </div>
@@ -492,14 +504,33 @@ function NewCampaign() {
                       <SelectValue placeholder="Select phone number…" />
                     </SelectTrigger>
                     <SelectContent>
-                      {trunks.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.caller_id} — {t.name}{t.is_default ? " (default)" : ""}
-                        </SelectItem>
-                      ))}
+                      {trunks.map((t) => {
+                        const cap = capacity[t.id];
+                        const active = cap?.active_calls ?? 0;
+                        const available = cap ? cap.available_slots : 3;
+                        const isFull = available === 0;
+                        return (
+                          <SelectItem key={t.id} value={t.id}>
+                            <span className="flex items-center gap-3">
+                              <span>{t.caller_id}{t.is_default ? " (default)" : ""}</span>
+                              <span className={`text-xs font-medium ${
+                                isFull ? "text-destructive" :
+                                available === 1 ? "text-amber-400" :
+                                "text-success"
+                              }`}>
+                                {isFull ? "● all 3 busy" : `● ${available}/3 free`}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  Each phone number supports up to 3 simultaneous calls across all campaigns.
+                  If all slots are busy, calls queue automatically until one frees up.
+                </p>
               </div>
 
               {/* Auto-schedule */}

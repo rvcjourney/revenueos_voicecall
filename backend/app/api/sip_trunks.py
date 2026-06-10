@@ -309,6 +309,60 @@ async def list_trunk_assignments(
     ]
 
 
+# ── Any user: live call-slot capacity per trunk ───────────────────────────────
+
+@router.get("/capacity")
+async def get_trunk_capacity(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return how many of the 3 available call slots each trunk is currently using."""
+    MAX_PER_TRUNK = 3
+
+    if token.role == "admin":
+        trunks = (await db.execute(
+            select(SipTrunk).where(
+                SipTrunk.org_id == token.org_id,
+                SipTrunk.is_active.is_(True),
+                SipTrunk.deleted_at.is_(None),
+            )
+        )).scalars().all()
+    else:
+        trunks = (await db.execute(
+            select(SipTrunk)
+            .join(UserSipTrunk, UserSipTrunk.trunk_id == SipTrunk.id)
+            .where(
+                UserSipTrunk.user_id == token.user_id,
+                SipTrunk.is_active.is_(True),
+                SipTrunk.deleted_at.is_(None),
+            )
+        )).scalars().all()
+
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+    except Exception:
+        r = None
+
+    result = []
+    for trunk in trunks:
+        active = 0
+        if r:
+            try:
+                val = await r.get(f"motm:trunk:active:{trunk.livekit_trunk_id}")
+                active = max(0, int(val or 0))
+            except Exception:
+                pass
+        result.append({
+            "trunk_id": str(trunk.id),
+            "caller_id": trunk.caller_id,
+            "active_calls": active,
+            "max_concurrent": MAX_PER_TRUNK,
+            "available_slots": max(0, MAX_PER_TRUNK - active),
+        })
+    return result
+
+
 # ── Admin: initialize default trunk from env vars ────────────────────────────
 
 @router.post("/init-default", response_model=TrunkOut, status_code=200)

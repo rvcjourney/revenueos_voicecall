@@ -346,10 +346,19 @@ export interface SipTrunkAssignment {
   assigned_at: string;
 }
 
+export interface TrunkCapacity {
+  trunk_id: string;
+  caller_id: string;
+  active_calls: number;
+  max_concurrent: number;
+  available_slots: number;
+}
+
 export const sipTrunksApi = {
   // Admin endpoints
   list: () => api.get<SipTrunkOut[]>("/api/sip-trunks"),
   initDefault: () => api.post<SipTrunkOut>("/api/sip-trunks/init-default"),
+  capacity: () => api.get<TrunkCapacity[]>("/api/sip-trunks/capacity"),
   assign: (trunkId: string, userId: string) =>
     api.post(`/api/sip-trunks/${trunkId}/assign`, { user_id: userId }),
   unassign: (trunkId: string, userId: string) =>

@@ -70,6 +70,59 @@ def _lock_key(campaign_id: str) -> str:
 _LOCK_TTL = 300  # 5 minutes — active dispatchers refresh this on every call via _refresh_lock
 
 
+# ── Per-trunk concurrent call slot management ─────────────────────────────────
+
+_MAX_CONCURRENT_PER_TRUNK = 3   # max parallel calls per phone number
+_SLOT_KEY_TTL = 3600            # 1-hour safety TTL prevents stuck counters after crashes
+
+# Lua: atomically increment only if count < max_concurrent. Returns 1 if acquired, 0 if full.
+_LUA_ACQUIRE_SLOT = """
+local val = redis.call('GET', KEYS[1])
+local cur = tonumber(val) or 0
+if cur < tonumber(ARGV[1]) then
+    redis.call('INCR', KEYS[1])
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+    return 1
+end
+return 0
+"""
+
+
+def _slot_key(livekit_trunk_id: str) -> str:
+    return f"motm:trunk:active:{livekit_trunk_id}"
+
+
+async def _acquire_trunk_slot(livekit_trunk_id: str) -> bool:
+    """Atomically grab one of the 3 allowed concurrent call slots for this trunk.
+    Returns True if acquired, False if trunk is at capacity.
+    Falls back to True (allow) if Redis is unavailable.
+    """
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        result = await r.eval(
+            _LUA_ACQUIRE_SLOT, 1,
+            _slot_key(livekit_trunk_id),
+            _MAX_CONCURRENT_PER_TRUNK,
+            _SLOT_KEY_TTL,
+        )
+        return bool(result)
+    except Exception:
+        return True  # fail open — don't block calls if Redis is down
+
+
+async def _release_trunk_slot(livekit_trunk_id: str) -> None:
+    """Decrement the trunk's active-call counter. Floors at 0 to guard against bugs."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        count = await r.decr(_slot_key(livekit_trunk_id))
+        if count < 0:
+            await r.set(_slot_key(livekit_trunk_id), 0)
+    except Exception:
+        pass  # best-effort
+
+
 async def _acquire_lock(campaign_id: str) -> bool:
     """True if we grabbed the lock; False if another worker already holds it."""
     try:
@@ -468,63 +521,96 @@ async def _run_one_call(
     llm_temperature: float,
 ) -> None:
     """Place one call, wait for it to finish, and finalize — all with its own DB session."""
-    place_result = await _place_call(
-        http,
-        room_name=room_name,
-        phone=contact_phone,
-        contact_name=contact_name,
-        livekit_trunk_id=livekit_trunk_id,
-        sip_caller_id=sip_caller_id,
-        call_id=str(call_id),
-        campaign_id=campaign_id,
-        org_id=str(org_id),
-        agent_template_id=str(agent_template_id),
-        system_prompt=system_prompt,
-        welcome_message=welcome_message,
-        voice_id=voice_id,
-        voice_provider=voice_provider,
-        language=language,
-        llm_model=llm_model,
-        llm_temperature=llm_temperature,
-    )
 
-    if place_result == "placed":
-        wait_result = await _wait_for_room_empty(
+    # Wait up to 5 minutes for a slot on this trunk (max 3 concurrent calls per phone number)
+    slot_acquired = False
+    for attempt in range(30):  # 30 × 10 s = 5 min
+        if await _acquire_trunk_slot(livekit_trunk_id):
+            slot_acquired = True
+            break
+        if attempt == 0:
+            log.info("trunk_at_capacity_waiting",
+                     trunk=livekit_trunk_id, phone=contact_phone,
+                     max=_MAX_CONCURRENT_PER_TRUNK)
+        await asyncio.sleep(10)
+
+    if not slot_acquired:
+        # Trunk stayed saturated for 5 min — put contact back so next dispatch cycle retries it.
+        log.warning("trunk_slot_timeout_resetting_contact",
+                    trunk=livekit_trunk_id, phone=contact_phone)
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                await session.execute(
+                    update(CampaignContact)
+                    .where(CampaignContact.id == contact_id)
+                    .values(status=ContactStatus.PENDING)
+                )
+                # Remove the pre-created Call record — the call was never actually placed.
+                call_row = await session.get(Call, call_id)
+                if call_row:
+                    await session.delete(call_row)
+        return
+
+    try:
+        place_result = await _place_call(
             http,
             room_name=room_name,
-            timeout_seconds=max_duration + 60,
+            phone=contact_phone,
+            contact_name=contact_name,
+            livekit_trunk_id=livekit_trunk_id,
+            sip_caller_id=sip_caller_id,
+            call_id=str(call_id),
             campaign_id=campaign_id,
+            org_id=str(org_id),
+            agent_template_id=str(agent_template_id),
+            system_prompt=system_prompt,
+            welcome_message=welcome_message,
+            voice_id=voice_id,
+            voice_provider=voice_provider,
+            language=language,
+            llm_model=llm_model,
+            llm_temperature=llm_temperature,
         )
-    else:
-        wait_result = "skipped"
 
-    log.info("call_done", room=room_name, place=place_result, wait=wait_result)
-
-    call_started_at_utc: datetime | None = None
-    async with AsyncSessionLocal() as session:
-        async with session.begin():
-            call_row = await session.get(Call, call_id)
-            contact_row = await session.get(CampaignContact, contact_id)
-            campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
-            if call_row:
-                call_started_at_utc = call_row.started_at
-            await _finalize(
-                session,
-                call=call_row,
-                contact=contact_row,
-                campaign=campaign_row,
-                place_result=place_result,
-                wait_result=wait_result,
+        if place_result == "placed":
+            wait_result = await _wait_for_room_empty(
+                http,
+                room_name=room_name,
+                timeout_seconds=max_duration + 60,
+                campaign_id=campaign_id,
             )
+        else:
+            wait_result = "skipped"
 
-    if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
-        asyncio.create_task(_save_recording_async(
-            call_id=call_id,
-            to_number=contact_phone,
-            called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
-            auth_id=settings.VOBIZ_AUTH_ID,
-            auth_token=settings.VOBIZ_AUTH_TOKEN,
-        ))
+        log.info("call_done", room=room_name, place=place_result, wait=wait_result)
+
+        call_started_at_utc: datetime | None = None
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                call_row = await session.get(Call, call_id)
+                contact_row = await session.get(CampaignContact, contact_id)
+                campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
+                if call_row:
+                    call_started_at_utc = call_row.started_at
+                await _finalize(
+                    session,
+                    call=call_row,
+                    contact=contact_row,
+                    campaign=campaign_row,
+                    place_result=place_result,
+                    wait_result=wait_result,
+                )
+
+        if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
+            asyncio.create_task(_save_recording_async(
+                call_id=call_id,
+                to_number=contact_phone,
+                called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
+                auth_id=settings.VOBIZ_AUTH_ID,
+                auth_token=settings.VOBIZ_AUTH_TOKEN,
+            ))
+    finally:
+        await _release_trunk_slot(livekit_trunk_id)
 
 
 # ── Main dispatcher loop ───────────────────────────────────────────────────────
