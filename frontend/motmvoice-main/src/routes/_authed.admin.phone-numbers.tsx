@@ -18,7 +18,6 @@ function PhoneNumbersPage() {
 
   const [trunks, setTrunks]   = useState<SipTrunkOut[]>([]);
   const [loading, setLoading] = useState(true);
-  const [initializing, setInit] = useState(false);
   const [users, setUsers]     = useState<AdminUserOut[]>([]);
   const [assignments, setAssignments] = useState<Record<string, SipTrunkAssignment[]>>({});
 
@@ -29,6 +28,8 @@ function PhoneNumbersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // init-default is idempotent — seeds any newly configured trunks, skips existing ones
+      await sipTrunksApi.initDefault().catch(() => {});
       const [{ data: ts }, { data: u }] = await Promise.all([
         sipTrunksApi.list(),
         adminApi.listUsers(),
@@ -49,19 +50,6 @@ function PhoneNumbersPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  async function handleInit() {
-    setInit(true);
-    try {
-      await sipTrunksApi.initDefault();
-      await load();
-      toast.success("Phone numbers activated");
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? "Failed to activate");
-    } finally {
-      setInit(false);
-    }
-  }
 
   async function handleAssign(trunkId: string, userId: string) {
     try {
@@ -112,24 +100,8 @@ function PhoneNumbersPage() {
           <Loader2 className="h-5 w-5 animate-spin" /> Loading…
         </div>
       ) : trunks.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-8 text-center space-y-4">
-          <Phone className="h-12 w-12 mx-auto text-muted-foreground opacity-40" />
-          <div>
-            <p className="font-semibold text-lg font-mono">+91 80654 80087</p>
-            <p className="text-sm text-muted-foreground mt-1">Vobiz SIP Trunks (not yet activated)</p>
-          </div>
-          <Button
-            className="bg-gradient-primary text-white"
-            onClick={handleInit}
-            disabled={initializing}
-          >
-            {initializing
-              ? <><Loader2 className="h-4 w-4 animate-spin" /> Activating…</>
-              : "Activate Phone Numbers"}
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            This registers all configured SIP trunks so you can assign them to users.
-          </p>
+        <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+          <Loader2 className="h-5 w-5 animate-spin" /> Setting up phone numbers…
         </div>
       ) : (
         <div className="space-y-8">
