@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import ssl
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -30,11 +31,13 @@ def _async_url(url: str) -> str:
 
 def _connect_args() -> dict[str, Any]:
     args: dict[str, Any] = {
-        # PgBouncer transaction mode (and Supabase's pooler) multiplexes
-        # connections across backends; named prepared statements are
-        # session-scoped and break across hops. Disable them unconditionally —
-        # harmless without PgBouncer, essential with it.
+        # Supabase transaction-mode pooler multiplexes connections across
+        # backends. asyncpg uses sequential names (__asyncpg_stmt_N__) that
+        # collide when two pooled connections hit the same backend.
+        # statement_cache_size=0 disables caching; prepared_statement_name_func
+        # generates a UUID per statement so names never collide.
         "statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__",
     }
     if settings.DB_SSL_REQUIRED:
         ctx = ssl.create_default_context()
