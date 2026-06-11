@@ -61,7 +61,7 @@ services:
       - motm
     command: >
       celery -A app.workers.celery_app worker
-      --concurrency 8
+      --concurrency 10
       --loglevel info
       --queues calls,campaigns,exports,default
     depends_on:

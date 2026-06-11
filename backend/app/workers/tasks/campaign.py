@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -845,6 +846,9 @@ async def _run_campaign_async(campaign_id: str) -> None:
     if not await _acquire_lock(campaign_id):
         log.info("campaign_already_running", campaign_id=campaign_id)
         return
+
+    # Stagger DB startup — prevents connection spike when many campaigns launch simultaneously
+    await asyncio.sleep(random.uniform(0, 3))
 
     # Reset any contacts stuck in DIALING from a previous crashed run
     await _reset_stale_dialing(campaign_id)
