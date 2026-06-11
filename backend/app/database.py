@@ -48,23 +48,17 @@ def _connect_args() -> dict[str, Any]:
 
 
 def _make_engine(url: str, *, testing: bool = False):
-    kwargs: dict[str, Any] = {
-        "echo": settings.DB_ECHO,
-        "future": True,
-        "connect_args": _connect_args(),
-    }
-    if testing:
-        # NullPool prevents connection reuse across test functions
-        kwargs["poolclass"] = NullPool
-    else:
-        kwargs.update(
-            pool_size=settings.DB_POOL_SIZE,
-            max_overflow=settings.DB_MAX_OVERFLOW,
-            pool_timeout=settings.DB_POOL_TIMEOUT,
-            pool_pre_ping=True,
-            pool_recycle=3600,  # Supabase drops idle connections after ~1h
-        )
-    return create_async_engine(_async_url(url), **kwargs)
+    # NullPool: required for PgBouncer transaction mode (port 6543).
+    # Each session opens a fresh connection and closes it when done — no
+    # pooled state leaks across requests, so prepared statements are always
+    # on the same backend that created them.
+    return create_async_engine(
+        _async_url(url),
+        echo=settings.DB_ECHO,
+        future=True,
+        connect_args=_connect_args(),
+        poolclass=NullPool,
+    )
 
 
 engine = _make_engine(settings.DATABASE_URL)
