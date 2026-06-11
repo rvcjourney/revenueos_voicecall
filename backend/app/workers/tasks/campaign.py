@@ -841,14 +841,16 @@ async def _run_test_call_async(
 
         room_name = call_row.livekit_room_name
 
-        livekit_trunk_id = await session.scalar(
-            select(SipTrunk.livekit_trunk_id).where(
+        _default_trunk = await session.scalar(
+            select(SipTrunk).where(
                 SipTrunk.org_id == _UUID(org_id),
                 SipTrunk.is_default.is_(True),
                 SipTrunk.is_active.is_(True),
                 SipTrunk.deleted_at.is_(None),
             )
-        ) or settings.DEFAULT_SIP_TRUNK_ID
+        )
+        livekit_trunk_id = (_default_trunk.livekit_trunk_id if _default_trunk else None) or settings.DEFAULT_SIP_TRUNK_ID
+        sip_caller_id    = (_default_trunk.caller_id        if _default_trunk else None) or settings.DEFAULT_SIP_CALLER_ID
 
         system_prompt   = agent.system_prompt or ""
         welcome_msg     = agent.welcome_message or ""
@@ -867,6 +869,7 @@ async def _run_test_call_async(
             phone=phone_number,
             contact_name="Test",
             livekit_trunk_id=livekit_trunk_id,
+            sip_caller_id=sip_caller_id,
             call_id=call_id,
             campaign_id="",
             org_id=org_id,
