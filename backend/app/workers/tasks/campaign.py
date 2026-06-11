@@ -72,7 +72,7 @@ _LOCK_TTL = 300  # 5 minutes — active dispatchers refresh this on every call v
 
 # ── Per-trunk concurrent call slot management ─────────────────────────────────
 
-_MAX_CONCURRENT_PER_TRUNK = 3   # max parallel calls per phone number
+_MAX_CONCURRENT_PER_TRUNK = 5   # max parallel calls per phone number (5 per trunk × 2 trunks = 10 total)
 _SLOT_KEY_TTL = 3600            # 1-hour safety TTL prevents stuck counters after crashes
 
 # Lua: atomically increment only if count < max_concurrent. Returns 1 if acquired, 0 if full.
@@ -121,6 +121,37 @@ async def _release_trunk_slot(livekit_trunk_id: str) -> None:
             await r.set(_slot_key(livekit_trunk_id), 0)
     except Exception:
         pass  # best-effort
+
+
+# ── Global CPS (Calls Per Second) rate limiter ────────────────────────────────
+
+_CPS_LIMIT = 1       # max new calls started per second (matches Vobiz plan)
+_CPS_KEY = "motm:cps:window"
+
+# Atomically increment a 1-second counter. Returns 1 if under limit, 0 if at limit.
+_LUA_ACQUIRE_CPS = """
+local cur = tonumber(redis.call('GET', KEYS[1])) or 0
+if cur < tonumber(ARGV[1]) then
+    redis.call('INCR', KEYS[1])
+    redis.call('EXPIRE', KEYS[1], 1)
+    return 1
+end
+return 0
+"""
+
+
+async def _acquire_cps_slot() -> None:
+    """Block until the global CPS limit allows a new call to start (max 1 per second)."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        while True:
+            result = await r.eval(_LUA_ACQUIRE_CPS, 1, _CPS_KEY, _CPS_LIMIT)
+            if result:
+                return
+            await asyncio.sleep(0.1)
+    except Exception:
+        return  # fail open — don't block calls if Redis is down
 
 
 async def _acquire_lock(campaign_id: str) -> bool:
@@ -317,7 +348,12 @@ async def _place_call(
 
         except TwirpError as exc:
             sip_code = str(exc.metadata.get("sip_status_code", ""))
-            outcome = "no_answer" if sip_code in _SIP_NO_ANSWER_CODES else "failed"
+            if sip_code == "429":
+                outcome = "congested"
+            elif sip_code in _SIP_NO_ANSWER_CODES:
+                outcome = "no_answer"
+            else:
+                outcome = "failed"
             log.warning("sip_call_not_placed", room=room_name, sip_code=sip_code, outcome=outcome)
             try:
                 await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
@@ -552,6 +588,9 @@ async def _run_one_call(
         return
 
     try:
+        # Respect global CPS limit — at most 1 new call per second across all campaigns
+        await _acquire_cps_slot()
+
         place_result = await _place_call(
             http,
             room_name=room_name,
@@ -571,6 +610,22 @@ async def _run_one_call(
             llm_model=llm_model,
             llm_temperature=llm_temperature,
         )
+
+        if place_result == "congested":
+            # Vobiz still rejected with 429 despite CPS limiting — reset to PENDING for retry
+            log.warning("cps_congested_resetting_contact",
+                        trunk=livekit_trunk_id, phone=contact_phone)
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await session.execute(
+                        update(CampaignContact)
+                        .where(CampaignContact.id == contact_id)
+                        .values(status=ContactStatus.PENDING)
+                    )
+                    call_row = await session.get(Call, call_id)
+                    if call_row:
+                        await session.delete(call_row)
+            return
 
         if place_result == "placed":
             wait_result = await _wait_for_room_empty(
@@ -752,9 +807,11 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
         log.info("placing_calls", campaign_id=campaign_id, count=len(batch),
                  phones=[d["contact_phone"] for d in batch])
 
-        # ── Run all calls in this batch simultaneously ─────────────────────
-        await asyncio.gather(*[
-            _run_one_call(
+        # ── Run calls sequentially — one at a time per campaign ────────────
+        # CPS limiter in _run_one_call ensures max 1 new call/second globally
+        # across all concurrent campaigns.
+        for d in batch:
+            await _run_one_call(
                 http,
                 campaign_id=campaign_id,
                 org_id=campaign.org_id,
@@ -763,8 +820,6 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 **tmpl_kwargs,
                 **d,
             )
-            for d in batch
-        ])
 
         # Loop immediately — pick next batch while previous results are written
 
