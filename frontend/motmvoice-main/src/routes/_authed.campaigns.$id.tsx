@@ -226,7 +226,7 @@ function CampaignDetail() {
           <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
             <span>Window: {campaign.calling_window_start}–{campaign.calling_window_end} {campaign.timezone}</span>
             <span>Days: {campaign.calling_days.join(", ")}</span>
-            <span>{campaign.calls_per_minute} call/min</span>
+            <span>Batch: {campaign.calls_per_minute} concurrent</span>
             {campaign.created_by_name && (
               <span className="ml-auto font-medium text-foreground/70">
                 Launched by: {campaign.created_by_name}
@@ -641,7 +641,7 @@ function EditCampaignDialog({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label>Calls / Minute</Label>
+              <Label>Calls per batch</Label>
               <Select value={cpm} onValueChange={setCpm} disabled={!canEdit}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>

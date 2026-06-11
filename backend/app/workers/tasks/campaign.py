@@ -808,11 +808,11 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
         log.info("placing_calls", campaign_id=campaign_id, count=len(batch),
                  phones=[d["contact_phone"] for d in batch])
 
-        # ── Run calls sequentially — one at a time per campaign ────────────
-        # CPS limiter in _run_one_call ensures max 1 new call/second globally
-        # across all concurrent campaigns.
-        for d in batch:
-            await _run_one_call(
+        # ── Run batch concurrently — all contacts in this batch call in parallel ──
+        # CPS limiter in _run_one_call spaces new calls at max 1/second globally,
+        # so 10 calls in a batch start 1 second apart but all run simultaneously.
+        await asyncio.gather(*[
+            _run_one_call(
                 http,
                 campaign_id=campaign_id,
                 org_id=campaign.org_id,
@@ -821,6 +821,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 **tmpl_kwargs,
                 **d,
             )
+            for d in batch
+        ])
 
         # Loop immediately — pick next batch while previous results are written
 

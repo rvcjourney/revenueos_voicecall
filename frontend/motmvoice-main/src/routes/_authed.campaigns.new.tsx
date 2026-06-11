@@ -470,13 +470,13 @@ function NewCampaign() {
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <Label className="text-xs">
-                    Concurrent calls: {schedule.cpm}
-                    <span className="ml-1 text-muted-foreground">(max 3 per number)</span>
+                    Calls per batch: {schedule.cpm}
+                    <span className="ml-1 text-muted-foreground">(max 10 concurrent)</span>
                   </Label>
                   <Slider
                     value={[schedule.cpm]}
                     onValueChange={([v]) => setSchedule({ ...schedule, cpm: v })}
-                    min={1} max={3} step={1}
+                    min={1} max={10} step={1}
                     className="mt-2"
                   />
                 </div>
