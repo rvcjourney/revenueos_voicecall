@@ -550,7 +550,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             voice       = voice_id,
             model       = CARTESIA_MODEL_ID,
             language    = cartesia_language,
-            speed       = 0.85,        # default is 1.0 — 0.85 is natural phone-call pace
+            speed       = 1,        # default is 1.0 — 0.85 is natural phone-call pace
             encoding    = "pcm_s16le",
             sample_rate = 24000,
         )
