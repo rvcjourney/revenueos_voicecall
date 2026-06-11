@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import certifi
 
 os.environ["SSL_CERT_FILE"]      = certifi.where()
@@ -91,6 +92,47 @@ _HANGUP_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 _FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, Bye"
+
+# ── Silence / voicemail / bot detection ───────────────────────────────────────
+_SILENCE_INITIAL_SLEEP  = 15.0   # initial wait (covers welcome TTS playback + response window)
+_SILENCE_FIRST_TIMEOUT  = 12.0   # seconds of no user speech before first probe
+_SILENCE_PROBE_INTERVAL = 8.0    # seconds between subsequent probes
+_SILENCE_PROBES = [
+    "Hello sir? Kya aap sun rahe hain mujhe? Am I audible?",
+    "Sir, koi awaaz nahi aa rahi aapki taraf se. Are you still there?",
+]
+
+_VOICEMAIL_RE = re.compile(
+    r"\b("
+    r"please leave (a |your )?message"
+    r"|leave (a |your )?message after (the )?(beep|tone)"
+    r"|not available to take your call"
+    r"|(this |the )?(mailbox|inbox) (is full|has not been set up)"
+    r"|this mailbox"
+    r"|record (your |a )?message (after|at) the (beep|tone)"
+    r"|recording will (begin|start)"
+    r"|after the (beep|tone)"
+    r"|reached (my |the )?(voicemail|voice mail)"
+    r"|voicemail (service|box)"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+_BOT_IVR_RE = re.compile(
+    r"\b("
+    r"press \d (for|to)"
+    r"|for (english|hindi|option \d) press"
+    r"|dial \d"
+    r"|to return to (the )?main menu"
+    r"|all (our )?(agents|operators|representatives) are (busy|unavailable|currently busy)"
+    r"|your call is (important|being (monitored|recorded))"
+    r"|please hold (while|for)"
+    r"|estimated wait time"
+    r"|(you are|you have been) placed in (a )?queue"
+    r"|this is an? (automated|recorded) (message|call|system)"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
 
 # Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
 _END_CALL_STRIP_RE = re.compile(
@@ -233,6 +275,7 @@ class VoiceAgent(Agent):
         self._webhook_secret  = webhook_secret
         self._user_messages: list[str] = []
         self._turn_count      = 0
+        self._last_user_activity = 0.0  # time.monotonic() — updated on user speech
 
         super().__init__(instructions=instructions)
 
@@ -286,7 +329,9 @@ class VoiceAgent(Agent):
                     logger.debug("Session closed before fallback say()")
                 else:
                     logger.error("say() fallback also failed: %s", e2)
+        self._last_user_activity = time.monotonic()
         _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
+        _safe_task(self._silence_watchdog(), "silence-watchdog")
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
         await asyncio.sleep(max_seconds)
@@ -305,6 +350,21 @@ class VoiceAgent(Agent):
 
         if text:
             self._user_messages.append(text)
+            self._last_user_activity = time.monotonic()
+
+            # Voicemail detected — hang up silently (don't leave a message)
+            if _VOICEMAIL_RE.search(text):
+                logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
+                self._ending = True
+                _safe_task(self._silent_hangup(), "voicemail-hangup")
+                return
+
+            # IVR / automated bot detected — hang up silently
+            if _BOT_IVR_RE.search(text):
+                logger.info("IVR/bot detected at turn %d — silent hangup", self._turn_count)
+                self._ending = True
+                _safe_task(self._silent_hangup(), "bot-hangup")
+                return
 
         # Only allow hangup-by-keyword after at least 6 customer turns (agent needs time to pitch)
         if self._turn_count >= 6 and _HANGUP_RE.search(text):
@@ -473,6 +533,36 @@ class VoiceAgent(Agent):
         await asyncio.sleep(0.3)
         await self._post_call_report()
         await self._disconnect()
+
+    async def _silent_hangup(self) -> None:
+        """Hang up without a farewell (voicemail, bot, or prolonged silence)."""
+        await self._post_call_report()
+        await self._disconnect()
+
+    async def _silence_watchdog(self) -> None:
+        """Probe if customer is silent; hang up after all probes are exhausted."""
+        await asyncio.sleep(_SILENCE_INITIAL_SLEEP)
+        probe_idx = 0
+        while not self._ending:
+            silence_sec = time.monotonic() - self._last_user_activity
+            if silence_sec < _SILENCE_FIRST_TIMEOUT:
+                probe_idx = 0  # user recently spoke — reset probe counter
+                await asyncio.sleep(2.0)
+                continue
+            if probe_idx < len(_SILENCE_PROBES):
+                probe_idx += 1
+                logger.info("Silence probe #%d (%.1fs silent)", probe_idx, silence_sec)
+                try:
+                    await self.session.say(_SILENCE_PROBES[probe_idx - 1], allow_interruptions=True)
+                except Exception as e:
+                    logger.warning("Silence probe TTS failed: %s", e)
+                await asyncio.sleep(_SILENCE_PROBE_INTERVAL)
+            else:
+                logger.info("Silence hangup — %.1fs no response after %d probes", silence_sec, len(_SILENCE_PROBES))
+                if not self._ending:
+                    self._ending = True
+                    await self._silent_hangup()
+                return
 
 
 # =============================================================================
