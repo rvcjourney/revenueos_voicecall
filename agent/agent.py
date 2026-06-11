@@ -630,9 +630,11 @@ if __name__ == "__main__":
     validate_config()
     agents.cli.run_app(
         agents.WorkerOptions(
-            entrypoint_fnc = entrypoint,
-            prewarm_fnc    = prewarm,
-            agent_name     = "voice-call-agent",
-            worker_type    = agents.WorkerType.ROOM,
+            entrypoint_fnc    = entrypoint,
+            prewarm_fnc       = prewarm,
+            agent_name        = "voice-call-agent",
+            worker_type       = agents.WorkerType.ROOM,
+            num_idle_processes = 3,   # keep 3 processes warm for fast dispatch
+            load_threshold    = 0.9,  # allow up to 90% CPU before refusing new jobs
         )
     )
