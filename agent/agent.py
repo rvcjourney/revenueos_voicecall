@@ -566,7 +566,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 stability         = 0.85,  # high = consistent tone across all chunks, no high/low shifts
                 similarity_boost  = 0.85,
                 style             = 0.0,   # zero expressiveness = no tonal variation between chunks
-                speed             = 0.85,  # 1.0 is default; 0.85 is a natural phone-call pace
                 use_speaker_boost = True,
             ),
         )
