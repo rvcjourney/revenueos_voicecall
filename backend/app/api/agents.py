@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import uuid as _uuid_module
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+log = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,10 +52,11 @@ async def optimize_prompt(
         from app.services.prompt_optimizer import optimize_prompt as _optimize
         result = await _optimize(body.raw_input)
         return PromptOptimizeResponse(optimized_prompt=result)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prompt generation failed: {e}")
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Prompt optimizer service unavailable — try again later")
+    except Exception:
+        log.exception("optimize_prompt_error")
+        raise HTTPException(status_code=500, detail="Prompt generation failed — please try again")
 
 
 def _to_out(a: AgentTemplate) -> AgentOut:

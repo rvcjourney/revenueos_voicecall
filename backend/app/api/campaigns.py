@@ -258,8 +258,11 @@ async def upload_contacts(
             df = pd.read_excel(io.BytesIO(contents))
         else:
             df = pd.read_csv(io.BytesIO(contents))
-    except Exception as exc:
-        raise AppValidationError(f"Could not parse file: {exc}", errors=[])
+    except Exception:
+        raise AppValidationError(
+            "Could not parse the uploaded file — ensure it is a valid CSV or Excel (.xlsx) file",
+            errors=[],
+        )
 
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
 

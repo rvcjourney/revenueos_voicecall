@@ -183,16 +183,19 @@ async def fetch_recording(
         raise HTTPException(status_code=422, detail="Call has no start time")
 
     from app.core.vobiz import fetch_recording_for_call
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-        url = await fetch_recording_for_call(
-            http,
-            auth_id=settings.VOBIZ_AUTH_ID,
-            auth_token=settings.VOBIZ_AUTH_TOKEN,
-            to_number=call.phone_number,
-            called_after=called_after.replace(tzinfo=timezone.utc) if called_after.tzinfo is None else called_after,
-            retries=2,
-            retry_delay=2.0,
-        )
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+            url = await fetch_recording_for_call(
+                http,
+                auth_id=settings.VOBIZ_AUTH_ID,
+                auth_token=settings.VOBIZ_AUTH_TOKEN,
+                to_number=call.phone_number,
+                called_after=called_after.replace(tzinfo=timezone.utc) if called_after.tzinfo is None else called_after,
+                retries=2,
+                retry_delay=2.0,
+            )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not reach Vobiz — try again in a moment")
 
     if url:
         await db.execute(update(Call).where(Call.id == call_id).values(recording_url=url))
@@ -217,14 +220,17 @@ async def proxy_recording(
     if not call or not call.recording_url:
         raise NotFoundError("Recording not found")
 
-    async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        vobiz = await client.get(
-            call.recording_url,
-            headers={
-                "X-Auth-ID": settings.VOBIZ_AUTH_ID,
-                "X-Auth-Token": settings.VOBIZ_AUTH_TOKEN,
-            },
-        )
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=60) as client:
+            vobiz = await client.get(
+                call.recording_url,
+                headers={
+                    "X-Auth-ID": settings.VOBIZ_AUTH_ID,
+                    "X-Auth-Token": settings.VOBIZ_AUTH_TOKEN,
+                },
+            )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not fetch recording — Vobiz unreachable")
 
     content_type = vobiz.headers.get("content-type", "audio/wav")
     ext = "wav" if ".wav" in call.recording_url else "mp3"

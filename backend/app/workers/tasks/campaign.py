@@ -641,21 +641,40 @@ async def _run_one_call(
         log.info("call_done", room=room_name, place=place_result, wait=wait_result)
 
         call_started_at_utc: datetime | None = None
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                call_row = await session.get(Call, call_id)
-                contact_row = await session.get(CampaignContact, contact_id)
-                campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
-                if call_row:
-                    call_started_at_utc = call_row.started_at
-                await _finalize(
-                    session,
-                    call=call_row,
-                    contact=contact_row,
-                    campaign=campaign_row,
-                    place_result=place_result,
-                    wait_result=wait_result,
-                )
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    call_row = await session.get(Call, call_id)
+                    contact_row = await session.get(CampaignContact, contact_id)
+                    campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
+                    if call_row:
+                        call_started_at_utc = call_row.started_at
+                    await _finalize(
+                        session,
+                        call=call_row,
+                        contact=contact_row,
+                        campaign=campaign_row,
+                        place_result=place_result,
+                        wait_result=wait_result,
+                    )
+        except Exception:
+            log.exception("finalize_error", call_id=str(call_id), contact_id=str(contact_id))
+            # Ensure contact is never stuck in DIALING after a finalization crash
+            try:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        await session.execute(
+                            update(CampaignContact)
+                            .where(CampaignContact.id == contact_id)
+                            .values(status=ContactStatus.FAILED)
+                        )
+                        await session.execute(
+                            update(Campaign)
+                            .where(Campaign.id == uuid.UUID(campaign_id))
+                            .values(failed_count=Campaign.failed_count + 1)
+                        )
+            except Exception:
+                log.exception("finalize_recovery_error", contact_id=str(contact_id))
 
         if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
             asyncio.create_task(_save_recording_async(
@@ -809,9 +828,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                  phones=[d["contact_phone"] for d in batch])
 
         # ── Run batch concurrently — all contacts in this batch call in parallel ──
-        # CPS limiter in _run_one_call spaces new calls at max 1/second globally,
-        # so 10 calls in a batch start 1 second apart but all run simultaneously.
-        await asyncio.gather(*[
+        # return_exceptions=True ensures one failed call never aborts the rest.
+        results = await asyncio.gather(*[
             _run_one_call(
                 http,
                 campaign_id=campaign_id,
@@ -822,7 +840,13 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 **d,
             )
             for d in batch
-        ])
+        ], return_exceptions=True)
+
+        for i, r in enumerate(results):
+            if isinstance(r, BaseException):
+                log.error("batch_call_unhandled_error",
+                          phone=batch[i]["contact_phone"],
+                          error=str(r))
 
         # Loop immediately — pick next batch while previous results are written
 
@@ -861,6 +885,17 @@ async def _run_campaign_async(campaign_id: str) -> None:
             await _dispatch_loop(http, campaign_id)
     except Exception:
         log.exception("campaign_dispatcher_error", campaign_id=campaign_id)
+        # Mark campaign FAILED so the UI reflects the crash (not stuck in RUNNING)
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await session.execute(
+                        update(Campaign)
+                        .where(Campaign.id == uuid.UUID(campaign_id))
+                        .values(status=CampaignStatus.FAILED)
+                    )
+        except Exception:
+            log.exception("campaign_mark_failed_error", campaign_id=campaign_id)
     finally:
         await _release_lock(campaign_id)
         log.info("campaign_dispatcher_exit", campaign_id=campaign_id)
