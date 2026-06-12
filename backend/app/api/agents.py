@@ -334,6 +334,19 @@ async def test_call(
     if not agent or agent.org_id != token.org_id or agent.deleted_at:
         raise NotFoundError("Agent template not found")
 
+    # Members need approved+can_edit access to run test calls
+    if token.role != "admin":
+        access = await db.scalar(
+            select(AgentAccessRequest).where(
+                AgentAccessRequest.agent_id == agent_id,
+                AgentAccessRequest.user_id == token.user_id,
+                AgentAccessRequest.status == "approved",
+                AgentAccessRequest.can_edit.is_(True),
+            )
+        )
+        if not access:
+            raise PermissionDeniedError("You do not have permission to test call this agent")
+
     # Normalise phone number to E.164 (+91 default for India)
     phone = body.phone_number.strip().replace(" ", "").replace("-", "")
     if not phone.startswith("+"):
