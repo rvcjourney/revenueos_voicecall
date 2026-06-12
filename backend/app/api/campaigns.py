@@ -487,7 +487,7 @@ async def export_no_answer_calls(
         .outerjoin(contact_alias, Call.contact_id == contact_alias.id)
         .where(
             Call.campaign_id == campaign_id,
-            Call.outcome == CallOutcome.NO_ANSWER,
+            Call.outcome.in_([CallOutcome.NO_ANSWER, CallOutcome.VOICEMAIL]),
         )
         .order_by(Call.started_at.desc())
     )).all()
@@ -499,7 +499,7 @@ async def export_no_answer_calls(
     writer.writerow([
         "Phone Number", "Contact Name", "Email", "Company",
         *[_custom_header(k) for k in custom_keys],
-        "Call Date",
+        "Call Date", "Outcome",
     ])
     for call, contact in rows:
         date_str = call.started_at.strftime("%Y-%m-%d %H:%M") if call.started_at else ""
@@ -511,6 +511,7 @@ async def export_no_answer_calls(
             contact.company if contact else "",
             *[cf.get(k, "") for k in custom_keys],
             date_str,
+            str(call.outcome).replace("_", " ").title(),
         ])
 
     buf.seek(0)
