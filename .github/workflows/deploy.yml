@@ -29,8 +29,8 @@ jobs:
         run: |
           cd backend
           # Exit code 5 = no tests collected — acceptable until test suite is written
-          python -m pytest tests/ -q --no-header --tb=short 2>&1; code=$?
-          [ $code -eq 0 ] || [ $code -eq 5 ] || exit $code
+          python -m pytest tests/ -q --no-header --tb=short || EXIT_CODE=$?
+          if [ "${EXIT_CODE:-0}" -ne 0 ] && [ "${EXIT_CODE:-0}" -ne 5 ]; then exit "${EXIT_CODE}"; fi
 
   # ── Deploy ──────────────────────────────────────────────────────────────────
   deploy:
