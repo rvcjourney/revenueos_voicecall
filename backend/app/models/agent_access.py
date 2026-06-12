@@ -43,3 +43,5 @@ class AgentAccessRequest(Base, TimestampMixin):
     )
     # pending | approved | rejected
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    # Admin can grant edit rights on top of use rights
+    can_edit: Mapped[bool] = mapped_column(nullable=False, server_default="false")

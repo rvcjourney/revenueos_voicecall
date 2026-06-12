@@ -375,8 +375,15 @@ function Agents() {
                       </Button>
                     </>
                   ) : a.access_status === "approved" ? (
-                    <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
-                      <CheckCircle className="h-3.5 w-3.5" /> Ready to use in campaigns
+                    <div className="flex items-center gap-2 w-full">
+                      <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium flex-1">
+                        <CheckCircle className="h-3.5 w-3.5" /> Ready to use
+                      </div>
+                      {a.can_edit && (
+                        <Button variant="outline" size="sm" onClick={() => openEdit(a)}>
+                          <Edit className="h-3 w-3" /> Edit
+                        </Button>
+                      )}
                     </div>
                   ) : a.access_status === "pending" ? (
                     <div className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">

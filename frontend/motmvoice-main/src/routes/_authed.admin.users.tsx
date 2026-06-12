@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import {
   Users, Plus, Shield, UserCheck, UserX, Trash2, Copy, Loader2,
   RefreshCw, Key, Bot, CheckCircle, XCircle, Clock,
-  Phone, Heart, Megaphone, Activity, TrendingUp, Ban, Zap, History,
+  Phone, Heart, Megaphone, Activity, TrendingUp, Ban, Zap, History, Pencil,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authed/admin/users")({
@@ -107,6 +107,17 @@ function AdminUsersPage() {
       toast.success(`Access to "${access.agent_name}" revoked from ${access.user_name}`);
       load();
     } catch { toast.error("Failed to revoke access"); }
+  }
+
+  async function handleToggleEdit(access: ApprovedAccessOut) {
+    const next = !access.can_edit;
+    try {
+      await adminApi.setEditPermission(access.request_id, next);
+      toast.success(next
+        ? `Edit permission granted to ${access.user_name} for "${access.agent_name}"`
+        : `Edit permission removed from ${access.user_name} for "${access.agent_name}"`);
+      load();
+    } catch { toast.error("Failed to update edit permission"); }
   }
 
   async function toggleActive(u: AdminUserOut) {
@@ -527,6 +538,7 @@ function AdminUsersPage() {
                   <th className="px-4 py-2 font-medium">Agent</th>
                   <th className="px-4 py-2 font-medium">Granted</th>
                   <th className="px-4 py-2 font-medium">Last Used In</th>
+                  <th className="px-4 py-2 font-medium">Edit Rights</th>
                   <th className="px-4 py-2 font-medium text-right">Action</th>
                 </tr>
               </thead>
@@ -557,7 +569,24 @@ function AdminUsersPage() {
                         <span className="text-muted-foreground">Never used</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3">
+                      {a.can_edit ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/30">
+                          <Pencil className="h-2.5 w-2.5" /> Can Edit
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Use only</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right flex items-center justify-end gap-1">
+                      <Button
+                        size="sm" variant="ghost"
+                        className={`h-7 text-xs ${a.can_edit ? "text-muted-foreground hover:text-foreground" : "text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"}`}
+                        title={a.can_edit ? "Remove edit rights" : "Grant edit rights"}
+                        onClick={() => handleToggleEdit(a)}
+                      >
+                        <Pencil className="h-3 w-3" /> {a.can_edit ? "Remove Edit" : "Grant Edit"}
+                      </Button>
                       <Button
                         size="sm" variant="ghost"
                         className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"

@@ -306,6 +306,7 @@ async def list_approved_access(
             "granted_at": r.updated_at.isoformat(),
             "last_campaign_name": last_camp.name if last_camp else None,
             "last_used_at": last_camp.created_at.isoformat() if last_camp else None,
+            "can_edit": r.can_edit,
         })
     return result
 
@@ -325,6 +326,29 @@ async def revoke_agent_access(
     req.status = "rejected"
     await db.commit()
     return {"message": "Access revoked"}
+
+
+class EditPermissionBody(BaseModel):
+    can_edit: bool
+
+
+@router.patch("/agent-access/{request_id}/edit-permission", status_code=200)
+async def set_agent_edit_permission(
+    request_id: UUID,
+    body: EditPermissionBody,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant or revoke edit rights for a user on an approved agent access."""
+    req = await db.get(AgentAccessRequest, request_id)
+    if not req or req.org_id != token.org_id:
+        raise NotFoundError("Access request not found")
+    if req.status != "approved":
+        raise AppValidationError("Can only set edit permission on approved access", errors=[])
+    req.can_edit = body.can_edit
+    await db.commit()
+    action = "granted" if body.can_edit else "revoked"
+    return {"message": f"Edit permission {action}"}
 
 
 @router.get("/activity")

@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
-from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError
+from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError
 from app.config import settings
 from app.database import get_db
 from app.models.agent import AgentTemplate
@@ -98,7 +98,7 @@ async def list_agents(
                 AgentAccessRequest.org_id == token.org_id,
             )
         )).scalars().all()
-        access_map = {str(r.agent_id): (r.status, str(r.id)) for r in req_rows}
+        access_map = {str(r.agent_id): (r.status, str(r.id), r.can_edit) for r in req_rows}
 
     items = []
     for agent in rows:
@@ -106,10 +106,12 @@ async def list_agents(
         if token.role == "admin":
             out.access_status = "approved"
             out.access_request_id = None
+            out.can_edit = True
         else:
-            status, req_id = access_map.get(str(agent.id), ("locked", None))
+            status, req_id, can_edit = access_map.get(str(agent.id), ("locked", None, False))
             out.access_status = status
             out.access_request_id = req_id
+            out.can_edit = can_edit
         items.append(out)
 
     return AgentListResponse(items=items, total=total)
@@ -264,12 +266,25 @@ async def get_agent(
 async def update_agent(
     agent_id: UUID,
     body: AgentUpdate,
-    token: TokenPayload = Depends(require_admin),
+    token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await db.get(AgentTemplate, agent_id)
     if not agent or agent.org_id != token.org_id or agent.deleted_at:
         raise NotFoundError("Agent template not found")
+
+    # Admins can always edit. Members need an approved access with can_edit=True.
+    if token.role != "admin":
+        access = await db.scalar(
+            select(AgentAccessRequest).where(
+                AgentAccessRequest.agent_id == agent_id,
+                AgentAccessRequest.user_id == token.user_id,
+                AgentAccessRequest.status == "approved",
+                AgentAccessRequest.can_edit.is_(True),
+            )
+        )
+        if not access:
+            raise PermissionDeniedError("You do not have edit permission for this agent")
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(agent, field, value)

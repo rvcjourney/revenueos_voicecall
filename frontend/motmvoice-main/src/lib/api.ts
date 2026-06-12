@@ -133,6 +133,7 @@ export interface ApprovedAccessOut {
   granted_at: string;
   last_campaign_name: string | null;
   last_used_at: string | null;
+  can_edit: boolean;
 }
 
 export interface ActivityEvent {
@@ -176,6 +177,8 @@ export const adminApi = {
     api.get<ApprovedAccessOut[]>("/api/admin/agent-access"),
   revokeAgentAccess: (requestId: string) =>
     api.post(`/api/admin/agent-requests/${requestId}/revoke`),
+  setEditPermission: (requestId: string, can_edit: boolean) =>
+    api.patch(`/api/admin/agent-access/${requestId}/edit-permission`, { can_edit }),
   getActivity: () =>
     api.get<ActivityEvent[]>("/api/admin/activity"),
   listDnc: (q?: string) =>
@@ -485,6 +488,7 @@ export interface AgentOut {
   created_at: string;
   access_status: "approved" | "pending" | "locked";
   access_request_id: string | null;
+  can_edit: boolean;
 }
 
 export interface AgentCreate {

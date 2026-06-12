@@ -22,6 +22,7 @@ class AgentOut(BaseModel):
     # access_status: "approved" (admin / access granted), "pending" (requested), "locked" (not requested)
     access_status: str = "approved"
     access_request_id: str | None = None  # used by admin to approve/reject
+    can_edit: bool = False
 
 
 class AgentListResponse(BaseModel):
