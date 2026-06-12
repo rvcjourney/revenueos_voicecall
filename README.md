@@ -1,207 +1,369 @@
-# 🎙️ AI Voice Call Agent
+# MOTMVoice — AI Voice Call Agent Platform
 
-A production-ready outbound/inbound AI voice agent using **LiveKit**, **Deepgram**, and **Groq (Llama 3.3)**.  
-Test locally from your browser or make real phone calls via SIP trunking.
-
----
-
-## 📁 Folder Structure
-
-```
-ai-voice-agent/
-├── agent.py              ← Main AI voice agent (LiveKit Workers)
-├── config.py             ← All settings: models, prompts, voices
-├── make_call.py          ← CLI to trigger outbound phone calls
-├── test_local.py         ← Test agent in browser (no SIP needed)
-├── create_trunk.py       ← One-time SIP trunk setup
-├── list_trunks.py        ← List existing SIP trunks
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example          ← Copy to .env and fill in
-└── dashboard/            ← Next.js web UI (optional)
-    ├── src/
-    │   ├── pages/
-    │   │   ├── index.tsx         ← Main UI
-    │   │   └── api/
-    │   │       ├── token.ts      ← LiveKit token generator
-    │   │       ├── call.ts       ← Trigger outbound call
-    │   │       └── dispatch.ts   ← Dispatch agent to room
-    │   └── styles/globals.css
-    ├── package.json
-    └── .env.local.example
-```
+> Production-ready outbound AI voice agent platform. Upload a contact list, launch a campaign, and your AI agent calls every number — speaking naturally, handling silence, detecting voicemail, and logging every outcome in real time.
 
 ---
 
-## 🔑 API Keys You Need
+## What It Does
 
-| Service | Purpose | Free tier |
-|---------|---------|-----------|
-| [LiveKit Cloud](https://cloud.livekit.io) | Real-time voice rooms + SIP | ✅ Yes |
-| [Deepgram](https://console.deepgram.com) | STT (speech-to-text) + TTS | ✅ $200 credit |
-| [Groq](https://console.groq.com) | LLM (ultra-fast Llama 3.3) | ✅ Yes |
-| SIP Provider | Real phone calls (PSTN) | Twilio/Vonage/Vobiz |
+MOTMVoice connects a real phone number to a conversational AI pipeline:
+
+```
+Inbound/Outbound Phone Call (SIP/PSTN)
+        │
+        ▼
+  LiveKit Room (WebRTC)
+        │
+   ┌────┴────────────────────────────┐
+   │         Voice Agent             │
+   │  Deepgram STT  →  Groq LLM     │
+   │  ElevenLabs / Cartesia TTS  ←  │
+   └─────────────────────────────────┘
+        │
+        ▼
+  FastAPI Backend  →  Supabase PostgreSQL
+        │
+  Celery Workers   →  Redis Job Queue
+        │
+  MinIO / S3       →  Recordings & Exports
+        │
+        ▼
+  TanStack React Dashboard
+```
+
+A team member uploads a CSV of phone numbers, picks an AI agent with a custom sales prompt, and clicks **Launch**. Celery dispatches up to 10 concurrent calls. Each call is transcribed, summarised, and outcome-tagged (Interested / Not Interested / Callback / No Answer). Results export to CSV in one click.
 
 ---
 
-## 🚀 Quick Start (Local Browser Test — No Phone Needed)
+## Key Features
 
-### Step 1 — Clone & Setup Python
+**Voice Agent**
+- Hinglish / multilingual conversation using Groq Llama 3.3 (70B)
+- Sub-200ms turn latency via chunked TTS streaming
+- Silence detection — probes customer after 12 s of silence, hangs up after 2 unanswered probes
+- Voicemail detection — regex-based, hangs up instantly on voicemail greeting
+- IVR / bot detection — hangs up instantly on automated phone trees
+- Maximum call duration guard (10 minutes)
 
-```bash
-git clone <your-repo>
-cd ai-voice-agent
+**Campaign Engine**
+- Bulk contact import (CSV / Excel via pandas)
+- Concurrent batch calling — up to 10 simultaneous calls per campaign
+- DNC (Do Not Call) list enforcement
+- Live progress: Dialing / Completed / Failed / Interested counts
+- Graceful pause / resume without losing progress
+- Per-contact outcome tracking and per-call transcript storage
 
-python3 -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+**Backend & Infrastructure**
+- JWT auth with refresh tokens, org-scoped multi-tenancy
+- Role-based access: Admin full access, Members request agent access
+- Sentry error tracking + Prometheus metrics + structlog structured logging
+- Celery Beat for scheduled tasks
+- MinIO / AWS S3 for recordings, exports, transcripts
+- Webhook callbacks always return HTTP 200 (prevents Vobiz retry storms)
+- All raw exception messages sanitised before reaching the client
 
-pip install -r requirements.txt
-```
-
-### Step 2 — Configure .env
-
-```bash
-cp .env.example .env
-# Fill in: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
-#          DEEPGRAM_API_KEY, GROQ_API_KEY
-```
-
-### Step 3 — Start the Agent
-
-```bash
-python agent.py start
-```
-
-You should see: `Agent started successfully`
-
-### Step 4 — Test in Browser
-
-```bash
-# In a NEW terminal (venv active)
-python test_local.py
-# → Opens your browser, you can talk to the agent directly
-```
+**Frontend Dashboard**
+- React 19 + TanStack Start (SSR-capable)
+- Live campaign stats with Recharts charts
+- Call detail drawer: transcript, recording player, extracted data
+- Admin panel: user management, agent access approvals, creation requests
+- AI-powered prompt optimizer (Groq → structured system prompt)
 
 ---
 
-## 📞 Making Real Phone Calls
+## Architecture
 
-### Step 1 — Get a SIP Provider
-
-Pick one:
-- **Twilio** — https://twilio.com (most popular, $15 to start)
-- **Vonage** — https://vonage.com
-- **Vobiz** — https://vobiz.com (original project)
-
-Get:
-- A DID (phone number) from the provider
-- SIP URI (e.g. `sip.twilio.com`)
-- SIP username + password
-
-### Step 2 — Update .env
-
-```env
-SIP_TRUNK_NUMBER=+1XXXXXXXXXX   # your DID
-OUTBOUND_SIP_URI=sip.twilio.com
-SIP_USERNAME=your_username
-SIP_PASSWORD=your_password
 ```
-
-### Step 3 — Create SIP Trunk in LiveKit
-
-```bash
-python create_trunk.py
-# → Prints your SIP_TRUNK_ID, add it to .env
-```
-
-### Step 4 — Make a Call
-
-```bash
-# Terminal 1: agent running
-python agent.py start
-
-# Terminal 2: make a call
-python make_call.py --to +91XXXXXXXXXX
+┌──────────────────────────────────────────────────────────────────┐
+│                          Docker Compose                          │
+│                                                                  │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────────┐  │
+│  │ frontend │   │   api    │   │  worker  │   │    agent     │  │
+│  │ :6001    │   │ :7000    │   │ (Celery) │   │ (LiveKit)    │  │
+│  │ TanStack │   │ FastAPI  │   │ 10 conc. │   │ Deepgram STT │  │
+│  │ React 19 │   │ Gunicorn │   │          │   │ Groq LLM     │  │
+│  └──────────┘   └──────────┘   └──────────┘   │ ElevenLabs   │  │
+│                      │               │         │ TTS          │  │
+│                      └───────────────┘         └──────────────┘  │
+│                              │                                   │
+│          ┌───────────────────┼──────────────┐                   │
+│          │                   │              │                   │
+│     ┌────┴─────┐       ┌─────┴────┐   ┌────┴────┐             │
+│     │  redis   │       │  minio   │   │  beat   │             │
+│     │ :6379    │       │ :9000    │   │(cron)   │             │
+│     │ Broker   │       │ S3-compat│   └─────────┘             │
+│     └──────────┘       └──────────┘                           │
+│                                                                  │
+│   Database: Supabase Cloud PostgreSQL (external)                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🖥️ Dashboard (Optional Web UI)
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Voice pipeline | LiveKit · Deepgram STT · Groq Llama 3.3 · ElevenLabs / Cartesia TTS · Silero VAD |
+| Telephony | Vobiz SIP / PSTN · LiveKit SIP trunks |
+| Backend API | FastAPI · SQLAlchemy 2 (async) · Alembic · Pydantic 2 |
+| Task queue | Celery 5 · Redis 7 · Celery Beat |
+| Database | Supabase PostgreSQL (cloud-managed) |
+| File storage | MinIO (self-hosted) or AWS S3 |
+| Frontend | React 19 · TanStack Start · TanStack Router · TanStack Query |
+| UI components | Radix UI · Tailwind CSS 4 · Recharts · React Hook Form + Zod |
+| Observability | Sentry · Prometheus · structlog |
+| Deployment | Docker Compose · Gunicorn + Uvicorn |
+
+---
+
+## Prerequisites
+
+- Docker & Docker Compose
+- A [LiveKit Cloud](https://cloud.livekit.io) project (free tier works)
+- A [Deepgram](https://console.deepgram.com) account ($200 free credit)
+- A [Groq](https://console.groq.com) account (free tier)
+- An [ElevenLabs](https://elevenlabs.io) account (or Cartesia)
+- A [Vobiz](https://vobiz.ai) SIP account with a DID (phone number)
+- A [Supabase](https://supabase.com) project for PostgreSQL
+
+---
+
+## Setup
+
+### 1. Clone the repository
 
 ```bash
-cd dashboard
-cp .env.local.example .env.local
-# Fill in NEXT_PUBLIC_LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+git clone <your-repo-url>
+cd "My AI Voice Call Agent"
+```
 
-npm install
-npm run dev
-# → Open http://localhost:3000
+### 2. Configure the agent
+
+```bash
+cp agent/.env.example agent/.env
+```
+
+Edit `agent/.env`:
+
+| Variable | Description |
+|---|---|
+| `LIVEKIT_URL` | `wss://your-project.livekit.cloud` |
+| `LIVEKIT_API_KEY` | LiveKit API key |
+| `LIVEKIT_API_SECRET` | LiveKit API secret |
+| `DEEPGRAM_API_KEY` | Deepgram API key (STT) |
+| `ELEVENLABS_API_KEY` | ElevenLabs API key (TTS) |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID |
+| `GROQ_API_KEY` | Groq API key (LLM) |
+| `GROQ_MODEL` | e.g. `llama-3.3-70b-versatile` |
+| `SIP_TRUNK_ID` | LiveKit SIP trunk ID (`ST_…`) |
+| `SIP_TRUNK_NUMBER` | Your DID e.g. `+91XXXXXXXXXX` |
+| `OUTBOUND_SIP_URI` | e.g. `your_number@sip.vobiz.ai` |
+| `VOBIZ_SIP_DOMAIN` | e.g. `xxxxxxxx.sip.vobiz.ai` |
+| `VOBIZ_USERNAME` / `VOBIZ_PASSWORD` | Vobiz SIP credentials |
+| `BACKEND_INTERNAL_URL` | `http://api:8000` (inside Docker) |
+| `AGENT_WEBHOOK_SECRET` | 32-char random string — must match backend |
+
+### 3. Configure the backend
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Key variables in `backend/.env`:
+
+| Variable | Description |
+|---|---|
+| `SECRET_KEY` | 32-char random string for JWT signing |
+| `AGENT_WEBHOOK_SECRET` | Same value as agent `.env` |
+| `DATABASE_URL` | Supabase PostgreSQL connection string |
+| `REDIS_URL` | `redis://redis:6379/0` |
+| `CELERY_BROKER_URL` | `redis://redis:6379/1` |
+| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | LiveKit credentials |
+| `DEFAULT_SIP_TRUNK_ID` | Same trunk ID as agent |
+| `VOBIZ_AUTH_ID` / `VOBIZ_AUTH_TOKEN` | Vobiz REST API credentials |
+| `DEEPGRAM_API_KEY` | Deepgram key |
+| `ELEVENLABS_API_KEY` | ElevenLabs key |
+| `GROQ_API_KEY` | Groq key |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | MinIO credentials |
+| `SENTRY_DSN` | (Optional) Sentry project DSN |
+| `CORS_ORIGINS` | e.g. `["http://localhost:6001","https://yourdomain.com"]` |
+
+### 4. Run database migrations
+
+```bash
+docker compose run --rm api alembic upgrade head
+```
+
+### 5. Start all services
+
+```bash
+docker compose up -d --build
+```
+
+Services started:
+
+| Service | URL | Purpose |
+|---|---|---|
+| Frontend | http://localhost:6001 | Web dashboard |
+| API | http://localhost:7000 | REST API (also /docs for Swagger) |
+| Redis | localhost:6379 | Job queue & cache |
+| MinIO | http://localhost:9000 | File storage UI |
+| Worker | — | Campaign execution |
+| Agent | — | Voice call handler |
+| Beat | — | Scheduled tasks |
+
+### 6. Create your first admin account
+
+Register at `http://localhost:6001/register` or POST to `http://localhost:7000/api/auth/register`.
+
+---
+
+## Project Structure
+
+```
+.
+├── agent/                      # LiveKit voice agent (Python)
+│   ├── agent.py                # Voice pipeline: STT → LLM → TTS
+│   └── config.py               # Prompts, models, voice settings
+│
+├── backend/                    # FastAPI REST API + Celery workers
+│   ├── app/
+│   │   ├── api/                # Route handlers
+│   │   │   ├── auth.py         # Login, registration, JWT
+│   │   │   ├── agents.py       # Agent CRUD, access requests, prompt optimizer
+│   │   │   ├── campaigns.py    # Campaign management, CSV import, launch
+│   │   │   ├── calls.py        # Call history, transcripts, recordings
+│   │   │   ├── analytics.py    # Dashboard statistics
+│   │   │   ├── webhooks.py     # Vobiz recording & hangup callbacks
+│   │   │   └── admin.py        # Admin panel
+│   │   ├── models/             # SQLAlchemy ORM models
+│   │   ├── schemas/            # Pydantic request/response types
+│   │   ├── workers/
+│   │   │   └── tasks/
+│   │   │       └── campaign.py # Celery task: batch calling engine
+│   │   └── main.py             # App factory, middleware, exception handlers
+│   └── alembic/                # Database migrations
+│
+├── frontend/motmvoice-main/    # React 19 + TanStack Start dashboard
+│   └── src/
+│       ├── routes/             # Page routes
+│       └── components/         # Reusable UI components
+│
+└── docker-compose.yml          # Production deployment
 ```
 
 ---
 
-## ⚙️ Customising the Agent
+## Configuring the Voice Agent
 
-Edit **`config.py`** to change:
+Edit `agent/config.py` to change the agent's personality and behaviour:
 
-| Variable | What it controls |
-|----------|-----------------|
-| `AGENT_SYSTEM_PROMPT` | Agent personality & instructions |
-| `AGENT_WELCOME_MESSAGE` | First thing the agent says |
-| `GROQ_MODEL` | Switch LLM (llama-3.3-70b / llama-3.1-8b) |
-| `DEEPGRAM_TTS_VOICE` | Voice (thalia, luna, stella, etc.) |
-| `DEEPGRAM_STT_MODEL` | Transcription model (nova-3) |
+| Setting | What it controls |
+|---|---|
+| `AGENT_SYSTEM_PROMPT` | Agent personality, sales script, language |
+| `AGENT_WELCOME_MESSAGE` | First thing the agent says when the call connects |
+| `GROQ_MODEL` | LLM model (`llama-3.3-70b-versatile` for best quality) |
+| `ELEVENLABS_VOICE_ID` | Voice character |
+| `ELEVENLABS_MODEL_ID` | TTS model (`eleven_flash_v2_5` for lowest latency) |
 
----
+### ElevenLabs voice recommendations
 
-## 🔧 Troubleshooting
-
-### Agent doesn't start
-```bash
-# Check your .env has all 3 LiveKit values:
-# LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-```
-
-### 404 SIP Trunk error
-```bash
-python list_trunks.py        # see existing trunks
-python create_trunk.py       # create a new one
-# Then update SIP_TRUNK_ID in .env
-```
-
-### Port already in use
-```bash
-pkill -f "python agent.py"
-python agent.py start
-```
-
-### No audio in browser
-- Allow microphone in browser when prompted
-- Check you're on HTTPS or localhost (required for mic access)
-
-### LLM model error
-- Update `GROQ_MODEL` in `.env` or `config.py`
-- Current working models: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`
+| Voice ID | Character |
+|---|---|
+| `9BWtsMINqrJLrRacOk9x` | Aria — warm, professional female |
+| `EXAVITQu4vr4xnSDxMaL` | Bella — friendly female |
+| `pNInz6obpgDQGcFmaJgB` | Adam — clear male |
+| `6h2Hja4LgQR8wIIv3XXW` | Custom — configure your own |
 
 ---
 
-## 🐳 Docker Deployment
+## Smart Agent Behaviours
 
-```bash
-cp .env.example .env    # fill in
-docker-compose up -d
+### Silence handling
+After 12 seconds of silence the agent probes with "Sir, kya aap sun rahe hain?" — after 2 unanswered probes (~28 seconds total) the call ends automatically.
+
+### Voicemail detection
+If the STT transcription contains phrases like "please leave a message", "after the beep", or "mailbox full", the agent hangs up immediately without speaking.
+
+### IVR / bot detection
+If the STT transcription contains phrases like "press 1 for", "all agents are busy", or "automated message", the agent hangs up immediately.
+
+### Maximum duration guard
+Calls are hard-capped at 10 minutes to prevent runaway billing.
+
+---
+
+## API Reference
+
+The full interactive API docs are available at `http://localhost:7000/docs` when `DOCS_ENABLED=true`.
+
+**Core endpoints:**
+
+```
+POST   /api/auth/register              Register new organisation
+POST   /api/auth/login                 Get access + refresh tokens
+GET    /api/agents                     List AI agents
+POST   /api/agents                     Create agent (admin)
+POST   /api/agents/{id}/optimize-prompt  AI-generate system prompt from raw notes
+POST   /api/campaigns                  Create campaign
+POST   /api/campaigns/{id}/contacts    Upload contacts CSV/Excel
+POST   /api/campaigns/{id}/launch      Start calling
+POST   /api/campaigns/{id}/pause       Pause mid-campaign
+GET    /api/campaigns/{id}/contacts    Live contact status
+GET    /api/calls                      Call history
+GET    /api/calls/{id}                 Full detail + transcript
+GET    /api/calls/{id}/recording       Stream call recording (proxied)
+GET    /api/analytics/dashboard        Aggregated stats
+POST   /api/webhooks/vobiz/recording   Vobiz recording callback (internal)
+POST   /api/webhooks/vobiz/hangup      Vobiz hangup callback (internal)
 ```
 
 ---
 
-## 📞 Deepgram TTS Voices
+## Deploying Updates
 
-Popular English voices:
-- `aura-2-thalia-en` — Friendly female
-- `aura-2-luna-en` — Warm female  
-- `aura-2-stella-en` — Professional female
-- `aura-2-orion-en` — Clear male
-- `aura-2-atlas-en` — Deep male
+On your VPS, after pushing to `main`:
 
-Change in `.env`: `DEEPGRAM_TTS_VOICE=aura-2-orion-en`
+```bash
+git pull origin main
+docker compose up -d --build api worker agent frontend
+docker compose logs -f agent worker
+```
+
+Run migrations if models changed:
+
+```bash
+docker compose run --rm api alembic upgrade head
+```
+
+---
+
+## Troubleshooting
+
+**Agent doesn't pick up calls**
+- Verify `SIP_TRUNK_ID` matches the trunk registered in LiveKit
+- Check `docker compose logs agent` for connection errors
+
+**Calls stuck in DIALING**
+- This means the Celery worker crashed mid-finalization. The system will auto-recover the contact to FAILED status. Check `docker compose logs worker`.
+
+**Campaign shows RUNNING forever**
+- The dispatcher task crashed. Check `docker compose logs worker` — the campaign will be marked FAILED automatically.
+
+**Recording not appearing**
+- Vobiz sends the recording webhook a few minutes after call end. Use the **Fetch Recording** button on the call detail page to manually retry.
+
+**No audio / microphone issues (browser test)**
+- Allow microphone permissions when the browser prompts
+- Browser must be on HTTPS or `localhost`
+
+**Database connection errors**
+- Ensure `DATABASE_URL` in `backend/.env` points to your Supabase project
+- Supabase free tier pauses after 7 days of inactivity — unpause in the Supabase dashboard
+
+---
+
+## License
+
+Private — all rights reserved.
