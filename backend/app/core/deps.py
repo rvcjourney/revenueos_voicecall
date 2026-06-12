@@ -37,6 +37,19 @@ async def get_current_user(
     if payload.get("type") != "access":
         raise AuthenticationError("Not an access token")
 
+    # Check Redis blocklist — tokens revoked via /auth/logout are stored here until expiry
+    jti = payload.get("jti")
+    if jti:
+        try:
+            from app.core.redis import get_redis
+            r = await get_redis()
+            if await r.exists(f"motm:auth:blocklist:{jti}"):
+                raise AuthenticationError("Token has been revoked")
+        except AuthenticationError:
+            raise
+        except Exception:
+            pass  # fail open — don't block requests if Redis is temporarily down
+
     return TokenPayload(
         user_id=UUID(payload["sub"]),
         org_id=UUID(payload["org_id"]),

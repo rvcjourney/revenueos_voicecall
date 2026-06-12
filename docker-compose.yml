@@ -20,7 +20,7 @@ services:
       - ENVIRONMENT=production
       - DOCS_ENABLED=false
       - DEBUG=false
-      - 'CORS_ORIGINS=["https://motmvoice.b2botix.ai","http://72.60.99.90:6001"]'
+      - 'CORS_ORIGINS=["https://motmvoice.b2botix.ai"]'
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -93,11 +93,13 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
     networks:
       - motm
+    volumes:
+      - beat_data:/var/lib/celerybeat
     command: >
       celery -A app.workers.celery_app beat
       --loglevel info
       --scheduler celery.beat:PersistentScheduler
-      --schedule /tmp/celerybeat-schedule
+      --schedule /var/lib/celerybeat/celerybeat-schedule
     depends_on:
       redis:
         condition: service_healthy
@@ -179,10 +181,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     volumes:
       - minio_data:/data
-    ports:
-      - "9000:9000"
     networks:
       - motm
+    # No ports exposed — MinIO is internal only; accessed via http://minio:9000 inside the Docker network.
+    # The console (port 9001) is also not exposed; use `docker compose exec minio mc` for admin tasks.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -204,3 +206,4 @@ networks:
 volumes:
   redis_data:
   minio_data:
+  beat_data:

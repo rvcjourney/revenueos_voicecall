@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,7 @@ from app.core.exceptions import AuthenticationError, ConflictError, NotFoundErro
 from app.core.security import (
     create_access_token,
     create_refresh_token,
+    decode_token,
     hash_password,
     verify_password,
 )
@@ -29,6 +32,7 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
+_bearer_optional = HTTPBearer(auto_error=False)
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
@@ -173,6 +177,30 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             org_name=org.name if org else "",
         ),
     )
+
+
+@router.post("/logout", status_code=204)
+async def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_optional),
+):
+    """
+    Revoke the current access token by adding its jti to a Redis blocklist.
+    The blocklist entry auto-expires when the token would have naturally expired.
+    Silent on errors — always returns 204 so the client can clear its local token.
+    """
+    if credentials is None:
+        return
+    try:
+        payload = decode_token(credentials.credentials)
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if jti and exp:
+            ttl = max(1, int(exp - time.time()))
+            from app.core.redis import get_redis
+            r = await get_redis()
+            await r.set(f"motm:auth:blocklist:{jti}", "1", ex=ttl)
+    except Exception:
+        pass  # silent — client should discard the token regardless
 
 
 @router.get("/me", response_model=UserOut)
