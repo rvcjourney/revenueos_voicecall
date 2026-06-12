@@ -81,6 +81,11 @@ jobs:
           cd ~/motmvoice/motmvoice
           git pull origin main
 
+          # Rebuild api image first so migrations always run on fresh code
+          echo "Building api image..."
+          docker compose build api
+          echo "Build complete ✓"
+
           # Run database migrations before starting services
           echo "Running database migrations..."
           docker compose run --rm --no-deps api alembic upgrade head
