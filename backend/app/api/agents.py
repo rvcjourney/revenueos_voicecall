@@ -291,7 +291,10 @@ async def update_agent(
 
     await db.commit()
     await db.refresh(agent)
-    return _to_out(agent)
+    out = _to_out(agent)
+    out.access_status = "approved"
+    out.can_edit = True  # caller passed the permission check above (or is admin)
+    return out
 
 
 @router.delete("/{agent_id}", status_code=204)
