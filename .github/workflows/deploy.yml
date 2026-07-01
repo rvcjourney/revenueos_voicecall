@@ -79,6 +79,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
           set -e
           cd ~/motmvoice/motmvoice
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/motmautomation2026/MOTM-AI-VOICE-CALL.git
           git pull origin main
 
           # Rebuild api image first so migrations always run on fresh code
