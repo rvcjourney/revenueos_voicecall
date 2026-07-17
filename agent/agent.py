@@ -655,13 +655,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
         logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s speed=0.85)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
     elif voice_provider == "chatterbox":
+        # Chatterbox's multilingual model genuinely supports Hindi ("hi") — validated
+        # separately with good quality. But forcing "hi" on purely English text (e.g. the
+        # generic AGENT_WELCOME_MESSAGE fallback when no welcome_message is configured)
+        # causes hallucinated/garbled audio. Map English content to "en" explicitly;
+        # keep "hi" for hindi/hinglish, which tested fine.
+        _chatterbox_lang_map = {
+            "english":  "en",
+            "hindi":    "hi",
+            "hinglish": "hi",
+            "marathi":  "hi",  # not natively supported by Chatterbox — closest available
+        }
+        chatterbox_language = _chatterbox_lang_map.get(language, CHATTERBOX_LANGUAGE)
         tts = chatterbox_tts.TTS(
             base_url    = CHATTERBOX_BASE_URL,
             voice       = voice_id,
-            language    = CHATTERBOX_LANGUAGE,
+            language    = chatterbox_language,
             sample_rate = CHATTERBOX_SAMPLE_RATE,
         )
-        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s)", CHATTERBOX_BASE_URL, voice_id, CHATTERBOX_LANGUAGE)
+        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
