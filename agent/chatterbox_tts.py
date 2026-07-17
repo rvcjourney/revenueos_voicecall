@@ -40,6 +40,7 @@ class _TTSOptions:
     voice: str
     language: str
     sample_rate: int
+    voice_mode: str  # "predefined" (voice = filename in ./voices) or "clone" (voice = filename in ./reference_audio)
 
 
 class TTS(tts.TTS):
@@ -50,6 +51,7 @@ class TTS(tts.TTS):
         voice: str = "default",
         language: str = "hi",
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        voice_mode: str = "predefined",
         http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         super().__init__(
@@ -59,12 +61,15 @@ class TTS(tts.TTS):
         )
         if not base_url:
             raise ValueError("Chatterbox TTS requires base_url (your RunPod server URL)")
+        if voice_mode not in ("predefined", "clone"):
+            raise ValueError('voice_mode must be "predefined" or "clone"')
 
         self._opts = _TTSOptions(
             base_url=base_url.rstrip("/"),
             voice=voice,
             language=language,
             sample_rate=sample_rate,
+            voice_mode=voice_mode,
         )
         self._session = http_session
 
@@ -90,19 +95,24 @@ class ChunkedStream(tts.ChunkedStream):
         self._opts = tts._opts
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+        body = {
+            "text": self._input_text,
+            "voice_mode": self._opts.voice_mode,
+            "output_format": "wav",
+            "language": self._opts.language,
+            "stream": True,
+            "split_text": True,
+            "chunk_size": 80,  # smaller chunks = faster time-to-first-audio, tune after testing
+        }
+        if self._opts.voice_mode == "clone":
+            body["reference_audio_filename"] = self._opts.voice
+        else:
+            body["predefined_voice_id"] = self._opts.voice
+
         try:
             async with self._tts._ensure_session().post(
                 f"{self._opts.base_url}/tts",
-                json={
-                    "text": self._input_text,
-                    "voice_mode": "predefined",
-                    "predefined_voice_id": self._opts.voice,
-                    "output_format": "wav",
-                    "language": self._opts.language,
-                    "stream": True,
-                    "split_text": True,
-                    "chunk_size": 80,  # smaller chunks = faster time-to-first-audio, tune after testing
-                },
+                json=body,
                 timeout=aiohttp.ClientTimeout(
                     total=60,  # first-token latency on a cold GPU pod can be slow — generous timeout for testing
                     sock_connect=self._conn_options.timeout,

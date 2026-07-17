@@ -36,6 +36,7 @@ from config import (
     CHATTERBOX_VOICE_ID,
     CHATTERBOX_LANGUAGE,
     CHATTERBOX_SAMPLE_RATE,
+    CHATTERBOX_VOICE_MODE,
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -672,8 +673,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             voice       = voice_id,
             language    = chatterbox_language,
             sample_rate = CHATTERBOX_SAMPLE_RATE,
+            voice_mode  = CHATTERBOX_VOICE_MODE,
         )
-        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language)
+        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s mode=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language, CHATTERBOX_VOICE_MODE)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
