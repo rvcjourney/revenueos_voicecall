@@ -19,6 +19,7 @@ from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
 from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia
+import chatterbox_tts
 
 from config import (
     AGENT_SYSTEM_PROMPT,
@@ -31,6 +32,10 @@ from config import (
     CARTESIA_API_KEY,
     CARTESIA_VOICE_ID,
     CARTESIA_MODEL_ID,
+    CHATTERBOX_BASE_URL,
+    CHATTERBOX_VOICE_ID,
+    CHATTERBOX_LANGUAGE,
+    CHATTERBOX_SAMPLE_RATE,
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -584,7 +589,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     raw_prompt      = meta.get("system_prompt") or AGENT_SYSTEM_PROMPT
     welcome_message = meta.get("welcome_message") or AGENT_WELCOME_MESSAGE
     voice_provider  = (meta.get("voice_provider") or "elevenlabs").lower()
-    voice_id        = meta.get("voice_id") or (CARTESIA_VOICE_ID if voice_provider == "cartesia" else ELEVENLABS_VOICE_ID)
+    voice_id        = meta.get("voice_id") or (
+        CARTESIA_VOICE_ID if voice_provider == "cartesia"
+        else CHATTERBOX_VOICE_ID if voice_provider == "chatterbox"
+        else ELEVENLABS_VOICE_ID
+    )
     language        = (meta.get("language") or "hinglish").lower()
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
@@ -645,6 +654,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             sample_rate = 24000,
         )
         logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s speed=0.85)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
+    elif voice_provider == "chatterbox":
+        tts = chatterbox_tts.TTS(
+            base_url    = CHATTERBOX_BASE_URL,
+            voice       = voice_id,
+            language    = CHATTERBOX_LANGUAGE,
+            sample_rate = CHATTERBOX_SAMPLE_RATE,
+        )
+        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s)", CHATTERBOX_BASE_URL, voice_id, CHATTERBOX_LANGUAGE)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,

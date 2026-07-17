@@ -823,6 +823,9 @@ function AgentModal({ initial, onSaved, onSavedAndTest, onClose }: AgentModalPro
                 <SelectItem value="cartesia">
                   Cartesia Sonic 3.5 — Ultra-low latency (~150ms)
                 </SelectItem>
+                <SelectItem value="chatterbox">
+                  Chatterbox (self-hosted GPU) — Test only
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>

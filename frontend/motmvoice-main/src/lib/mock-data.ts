@@ -177,6 +177,7 @@ export const voices = [
   { id: "codoBx1vrQVwrVQylqGj",                   provider: "elevenlabs", name: "Nitesh",  lang: "Hinglish", gender: "M", desc: "Energetic & persuasive" },
   { id: "6h2Hja4LgQR8wIIv3XXW",                   provider: "elevenlabs", name: "Anandu",  lang: "Hinglish", gender: "M", desc: "Friendly & natural"     },
   { id: "910fb75e-1d20-4840-ac63-ac6b26a71bdc",   provider: "cartesia",   name: "Cartesia Sonic 3.5", lang: "English/Hindi", gender: "N", desc: "Ultra-low latency"    },
+  { id: "Emily.wav",                              provider: "chatterbox", name: "Emily (Chatterbox)", lang: "Hindi", gender: "F", desc: "Self-hosted GPU test voice" },
 ];
 
 export const promptTemplates = [
