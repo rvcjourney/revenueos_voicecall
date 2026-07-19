@@ -23,6 +23,7 @@ class VoiceProvider(StrEnum):
     CARTESIA   = "cartesia"
     DEEPGRAM   = "deepgram"
     CHATTERBOX = "chatterbox"
+    SARVAM     = "sarvam"
 
 
 class AgentLanguage(StrEnum):

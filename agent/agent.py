@@ -18,7 +18,7 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
-from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia
+from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia, sarvam
 import chatterbox_tts
 
 from config import (
@@ -37,6 +37,10 @@ from config import (
     CHATTERBOX_LANGUAGE,
     CHATTERBOX_SAMPLE_RATE,
     CHATTERBOX_VOICE_MODE,
+    SARVAM_API_KEY,
+    SARVAM_MODEL,
+    SARVAM_VOICE_ID,
+    SARVAM_SAMPLE_RATE,
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -593,6 +597,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     voice_id        = meta.get("voice_id") or (
         CARTESIA_VOICE_ID if voice_provider == "cartesia"
         else CHATTERBOX_VOICE_ID if voice_provider == "chatterbox"
+        else SARVAM_VOICE_ID if voice_provider == "sarvam"
         else ELEVENLABS_VOICE_ID
     )
     language        = (meta.get("language") or "hinglish").lower()
@@ -676,6 +681,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             voice_mode  = CHATTERBOX_VOICE_MODE,
         )
         logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s mode=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language, CHATTERBOX_VOICE_MODE)
+    elif voice_provider == "sarvam":
+        # Sarvam's Bulbul models are native to Indian languages — no English fallback
+        # needed the way Cartesia/Chatterbox require, but still map cleanly per language.
+        _sarvam_lang_map = {
+            "english":  "en-IN",
+            "hindi":    "hi-IN",
+            "hinglish": "hi-IN",
+            "marathi":  "mr-IN",
+        }
+        sarvam_language = _sarvam_lang_map.get(language, "hi-IN")
+        tts = sarvam.TTS(
+            api_key             = SARVAM_API_KEY,
+            target_language_code= sarvam_language,
+            model               = SARVAM_MODEL,
+            speaker             = voice_id,
+            speech_sample_rate  = SARVAM_SAMPLE_RATE,
+            pace                = 1.0,
+        )
+        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s)", SARVAM_MODEL, voice_id, sarvam_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,

@@ -33,6 +33,12 @@ CHATTERBOX_SAMPLE_RATE = int(os.getenv("CHATTERBOX_SAMPLE_RATE", "24000"))
 # "clone"      = CHATTERBOX_VOICE_ID is a filename in the server's ./reference_audio (your own uploaded sample)
 CHATTERBOX_VOICE_MODE = os.getenv("CHATTERBOX_VOICE_MODE", "predefined")
 
+# ── Sarvam AI TTS (Bulbul v3 — hosted API, native Indian-language voices) ───────
+SARVAM_API_KEY      = os.getenv("SARVAM_API_KEY", "")
+SARVAM_MODEL        = os.getenv("SARVAM_MODEL", "bulbul:v3")
+SARVAM_VOICE_ID     = os.getenv("SARVAM_VOICE_ID", "shubh")  # male default; see agent.py voices list for options
+SARVAM_SAMPLE_RATE  = int(os.getenv("SARVAM_SAMPLE_RATE", "24000"))
+
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")

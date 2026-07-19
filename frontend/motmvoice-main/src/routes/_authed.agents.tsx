@@ -826,6 +826,9 @@ function AgentModal({ initial, onSaved, onSavedAndTest, onClose }: AgentModalPro
                 <SelectItem value="chatterbox">
                   Chatterbox (self-hosted GPU) — Test only
                 </SelectItem>
+                <SelectItem value="sarvam">
+                  Sarvam Bulbul v3 — Native Hindi voices
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>

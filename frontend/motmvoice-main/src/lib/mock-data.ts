@@ -178,6 +178,12 @@ export const voices = [
   { id: "6h2Hja4LgQR8wIIv3XXW",                   provider: "elevenlabs", name: "Anandu",  lang: "Hinglish", gender: "M", desc: "Friendly & natural"     },
   { id: "910fb75e-1d20-4840-ac63-ac6b26a71bdc",   provider: "cartesia",   name: "Cartesia Sonic 3.5", lang: "English/Hindi", gender: "N", desc: "Ultra-low latency"    },
   { id: "Emily.wav",                              provider: "chatterbox", name: "Emily (Chatterbox)", lang: "Hindi", gender: "F", desc: "Self-hosted GPU test voice" },
+  { id: "shubh",                                  provider: "sarvam",    name: "Shubh",   lang: "Hindi", gender: "M", desc: "Bulbul v3 — default, natural Hindi" },
+  { id: "rahul",                                  provider: "sarvam",    name: "Rahul",   lang: "Hindi", gender: "M", desc: "Bulbul v3 — warm, professional" },
+  { id: "dev",                                    provider: "sarvam",    name: "Dev",     lang: "Hindi", gender: "M", desc: "Bulbul v3 — confident, sales-ready" },
+  { id: "ritu",                                   provider: "sarvam",    name: "Ritu",    lang: "Hindi", gender: "F", desc: "Bulbul v3 — clear, friendly" },
+  { id: "priya",                                  provider: "sarvam",    name: "Priya",   lang: "Hindi", gender: "F", desc: "Bulbul v3 — energetic, persuasive" },
+  { id: "neha",                                   provider: "sarvam",    name: "Neha",    lang: "Hindi", gender: "F", desc: "Bulbul v3 — calm, natural" },
 ];
 
 export const promptTemplates = [
