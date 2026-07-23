@@ -105,8 +105,8 @@ _FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, Bye"
 
 # ── Silence / voicemail / bot detection ───────────────────────────────────────
 _SILENCE_INITIAL_SLEEP  = 15.0   # initial wait (covers welcome TTS playback + response window)
-_SILENCE_FIRST_TIMEOUT  = 12.0   # seconds of no user speech before first probe
-_SILENCE_PROBE_INTERVAL = 8.0    # seconds between subsequent probes
+_SILENCE_FIRST_TIMEOUT  = 18.0   # seconds of no user speech before first probe
+_SILENCE_PROBE_INTERVAL = 10.0   # seconds between subsequent probes
 _SILENCE_PROBES = [
     "Hello sir? Kya aap sun rahe hain mujhe? Am I audible?",
     "Sir, koi awaaz nahi aa rahi aapki taraf se. Are you still there?",
@@ -321,6 +321,7 @@ class VoiceAgent(Agent):
         await asyncio.sleep(0.1)  # let TTS output track attach
         if self._ending:
             return  # participant left before on_enter ran (rejected call)
+        self.session.on("agent_state_changed", self._on_agent_state_changed)
         try:
             logger.info("Generating welcome via LLM pipeline...")
             await self.session.generate_reply()
@@ -342,6 +343,14 @@ class VoiceAgent(Agent):
         self._last_user_activity = time.monotonic()
         _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
         _safe_task(self._silence_watchdog(), "silence-watchdog")
+
+    def _on_agent_state_changed(self, ev) -> None:
+        # The silence clock must start counting from when the AGENT stops talking —
+        # not from the last user turn. Otherwise the agent's own thinking+speaking
+        # time silently eats into the "silence" budget, and the probe can fire
+        # almost immediately after the agent finishes a sentence.
+        if ev.old_state == "speaking" and ev.new_state != "speaking":
+            self._last_user_activity = time.monotonic()
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
         await asyncio.sleep(max_seconds)
