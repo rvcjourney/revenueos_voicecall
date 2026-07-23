@@ -702,8 +702,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         sarvam_language = _sarvam_lang_map.get(language, "hi-IN")
         # NOTE: pitch/loudness are silently ignored by Sarvam's API on bulbul:v3 and
         # v3-beta (only bulbul:v2 honors them) — so tuning pitch here would do nothing.
-        # The only naturalness knobs on v3 are pace and temperature. Bumping both a
-        # touch above the flat defaults (1.0 / 0.6) removes the slow, monotone read.
+        # temperature controls per-utterance sampling randomness. Every conversational
+        # turn opens a brand-new TTS session (see logs: distinct session_id per turn),
+        # so higher temperature = each line sampled more independently = audible tone
+        # drift turn-to-turn — bad for a sales call, which needs one steady voice
+        # (same reasoning ElevenLabs uses stability=0.85/style=0.0 below). Keep it at
+        # Sarvam's own default for consistency; pace alone fixes the sluggish pacing.
         tts = sarvam.TTS(
             api_key             = SARVAM_API_KEY,
             target_language_code= sarvam_language,
@@ -711,9 +715,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             speaker             = voice_id,
             speech_sample_rate  = SARVAM_SAMPLE_RATE,
             pace                = 1.10,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
-            temperature         = 0.75,   # v3/v3-beta only param for expressive/natural inflection (default 0.6 is flat); ignored on v2
+            temperature         = 0.6,    # Sarvam's own default — lowest that still sounds natural; higher caused tone drift between turns
         )
-        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s pace=1.10 temp=0.75)", SARVAM_MODEL, voice_id, sarvam_language)
+        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s pace=1.10 temp=0.6)", SARVAM_MODEL, voice_id, sarvam_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
