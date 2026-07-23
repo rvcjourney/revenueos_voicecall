@@ -11,9 +11,6 @@ LIVEKIT_URL        = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY    = os.getenv("LIVEKIT_API_KEY", "")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 
-# ── Deepgram STT ──────────────────────────────────────────────────────────────
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-
 # ── ElevenLabs TTS ────────────────────────────────────────────────────────────
 ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "6h2Hja4LgQR8wIIv3XXW")
@@ -39,6 +36,14 @@ SARVAM_MODEL        = os.getenv("SARVAM_MODEL", "bulbul:v3")
 SARVAM_VOICE_ID     = os.getenv("SARVAM_VOICE_ID", "shubh")  # male default; see agent.py voices list for options
 SARVAM_SAMPLE_RATE  = int(os.getenv("SARVAM_SAMPLE_RATE", "24000"))
 
+# ── Sarvam AI STT (Saaras v3 — WebSocket streaming, replaces Deepgram) ──────────
+# "codemix" mode is built for exactly the Hindi/English code-switching seen in
+# real call transcripts (e.g. "Spice के लिए use करता हूं basically हम") —
+# plain "transcribe" mode isn't tuned for that.
+SARVAM_STT_MODEL    = os.getenv("SARVAM_STT_MODEL", "saaras:v3")
+SARVAM_STT_MODE     = os.getenv("SARVAM_STT_MODE", "codemix")
+SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")
+
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -61,7 +66,7 @@ _REQUIRED = {
     "LIVEKIT_URL":        LIVEKIT_URL,
     "LIVEKIT_API_KEY":    LIVEKIT_API_KEY,
     "LIVEKIT_API_SECRET": LIVEKIT_API_SECRET,
-    "DEEPGRAM_API_KEY":   DEEPGRAM_API_KEY,
+    "SARVAM_API_KEY":     SARVAM_API_KEY,  # now used for STT on every call, not just Sarvam-TTS agents
     "GROQ_API_KEY":       GROQ_API_KEY,
     "ELEVENLABS_API_KEY": ELEVENLABS_API_KEY,
 }

@@ -1,6 +1,6 @@
 """
 agent.py — Hinglish Voice Sales Agent
-Pipeline: Deepgram STT → Groq LLM → ElevenLabs TTS (via livekit-plugins-elevenlabs)
+Pipeline: Sarvam STT → Groq LLM → ElevenLabs/Sarvam/Cartesia/Chatterbox TTS (per-agent voice_provider)
 """
 
 import os
@@ -18,7 +18,7 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
-from livekit.plugins import deepgram, groq, silero, elevenlabs, cartesia, sarvam
+from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
 import chatterbox_tts
 
 from config import (
@@ -41,6 +41,9 @@ from config import (
     SARVAM_MODEL,
     SARVAM_VOICE_ID,
     SARVAM_SAMPLE_RATE,
+    SARVAM_STT_MODEL,
+    SARVAM_STT_MODE,
+    SARVAM_STT_LANGUAGE,
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -750,12 +753,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     end_call_transform = _end_call_filter_transform(voice_agent._trigger_hangup)
 
     session = AgentSession(
-        stt=deepgram.STT(
-            model          = "nova-2",
-            language       = "hi",   # Hindi model handles English words naturally (Hinglish)
-            interim_results= True,
-            endpointing_ms = 150,    # 150ms — fast finalization, safe against single-word false triggers
-            smart_format   = False,
+        stt=sarvam.STT(
+            api_key  = SARVAM_API_KEY,
+            language = SARVAM_STT_LANGUAGE,  # hi-IN — same "Hindi model handles English naturally" reasoning as before
+            model    = SARVAM_STT_MODEL,     # saaras:v3 — WebSocket streaming, sub-200ms
+            mode     = SARVAM_STT_MODE,      # codemix — tuned for Hindi/English code-switching (heavy in real transcripts)
         ),
         llm=llm,
         tts=tts,
