@@ -79,8 +79,11 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
           set -e
           cd ~/motmvoice/motmvoice
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/motmautomation2026/MOTM-AI-VOICE-CALL.git
-          git pull origin main
+          # Authenticate this pull inline instead of persisting the token into the
+          # 'origin' remote — that used to overwrite any manually-configured PAT
+          # (used for ad-hoc pulls on the VPS) with this run's short-lived CI token,
+          # breaking manual `git pull` once the CI token expired (~1h).
+          git pull "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/motmautomation2026/MOTM-AI-VOICE-CALL.git" main
 
           # Rebuild api image first so migrations always run on fresh code
           echo "Building api image..."
