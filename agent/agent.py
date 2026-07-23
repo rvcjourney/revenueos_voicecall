@@ -289,6 +289,8 @@ class VoiceAgent(Agent):
         self._user_messages: list[str] = []
         self._turn_count      = 0
         self._last_user_activity = 0.0  # time.monotonic() — updated on user speech
+        self._speaking_done = asyncio.Event()
+        self._speaking_done.set()  # not speaking initially
 
         super().__init__(instructions=instructions)
 
@@ -313,9 +315,15 @@ class VoiceAgent(Agent):
             return
         logger.info("TTS filter: [end_call] detected at turn %d — waiting for farewell TTS to finish", self._turn_count)
         self._ending = True
-        # Goodbye text is ~10-15 words. TTS needs ~300ms to generate + ~5s to play.
-        # Wait 8s so the customer always hears the complete farewell before the line drops.
-        await asyncio.sleep(8.0)
+        # Wait for the farewell to actually finish playing rather than guessing with a
+        # fixed sleep — TTS generation time varies a lot (seen 8s+ for one utterance),
+        # and a fixed sleep can cut the farewell off mid-sentence if generation alone
+        # eats the whole budget. 15s safety cap in case the state signal is ever missed.
+        try:
+            await asyncio.wait_for(self._speaking_done.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for farewell TTS to finish — hanging up anyway")
+        await asyncio.sleep(0.5)  # let the last audio frames flush through the SIP path
         await self._post_call_report()
         await self._disconnect()
 
@@ -348,11 +356,14 @@ class VoiceAgent(Agent):
         _safe_task(self._silence_watchdog(), "silence-watchdog")
 
     def _on_agent_state_changed(self, ev) -> None:
-        # The silence clock must start counting from when the AGENT stops talking —
-        # not from the last user turn. Otherwise the agent's own thinking+speaking
-        # time silently eats into the "silence" budget, and the probe can fire
-        # almost immediately after the agent finishes a sentence.
+        if ev.new_state == "speaking":
+            self._speaking_done.clear()
         if ev.old_state == "speaking" and ev.new_state != "speaking":
+            self._speaking_done.set()
+            # The silence clock must start counting from when the AGENT stops talking —
+            # not from the last user turn. Otherwise the agent's own thinking+speaking
+            # time silently eats into the "silence" budget, and the probe can fire
+            # almost immediately after the agent finishes a sentence.
             self._last_user_activity = time.monotonic()
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
