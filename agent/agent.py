@@ -691,15 +691,20 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             "marathi":  "mr-IN",
         }
         sarvam_language = _sarvam_lang_map.get(language, "hi-IN")
+        # NOTE: pitch/loudness are silently ignored by Sarvam's API on bulbul:v3 and
+        # v3-beta (only bulbul:v2 honors them) — so tuning pitch here would do nothing.
+        # The only naturalness knobs on v3 are pace and temperature. Bumping both a
+        # touch above the flat defaults (1.0 / 0.6) removes the slow, monotone read.
         tts = sarvam.TTS(
             api_key             = SARVAM_API_KEY,
             target_language_code= sarvam_language,
             model               = SARVAM_MODEL,
             speaker             = voice_id,
             speech_sample_rate  = SARVAM_SAMPLE_RATE,
-            pace                = 1.0,
+            pace                = 1.10,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
+            temperature         = 0.75,   # v3/v3-beta only param for expressive/natural inflection (default 0.6 is flat); ignored on v2
         )
-        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s)", SARVAM_MODEL, voice_id, sarvam_language)
+        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s pace=1.10 temp=0.75)", SARVAM_MODEL, voice_id, sarvam_language)
     else:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
@@ -715,6 +720,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ),
         )
         logger.info("ElevenLabs TTS ready ✓ (voice=%s)", voice_id)
+
+    # Pre-open the TTS connection (WebSocket for Sarvam/Cartesia) in the background now,
+    # rather than paying that handshake latency on the agent's very first spoken turn.
+    # No-op for providers that don't implement it.
+    tts.prewarm()
 
     voice_agent = VoiceAgent(
         ctx.room,
