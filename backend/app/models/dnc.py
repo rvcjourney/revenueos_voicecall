@@ -91,6 +91,11 @@ class SystemDncEntry(Base, TimestampMixin):
     which is when the row was written — they may differ on re-imports).
     """
     __tablename__ = "system_dnc_entries"
+    __table_args__ = (
+        # Named to match the hand-written 0001 migration, which created this as a
+        # separate object from the ix_system_dnc_entries_phone_number unique index below.
+        UniqueConstraint("phone_number", name="uq_system_dnc_entries_phone_number"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)

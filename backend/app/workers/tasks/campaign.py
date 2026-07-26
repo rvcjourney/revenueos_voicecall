@@ -37,6 +37,13 @@ from livekit.api.twirp_client import TwirpError
 from sqlalchemy import func, select, update
 
 from app.config import settings
+from app.core.concurrency import (
+    acquire_org_slot,
+    decr_queued,
+    incr_queued,
+    release_org_slot,
+    resolve_org_max_concurrent,
+)
 from app.core.vobiz import fetch_recording_for_call
 from app.database import make_worker_session_factory
 
@@ -72,9 +79,16 @@ _LOCK_TTL = 300  # 5 minutes — active dispatchers refresh this on every call v
 
 
 # ── Per-trunk concurrent call slot management ─────────────────────────────────
+# The org-level equivalent (plan-based max_concurrent_calls) lives in
+# app/core/concurrency.py — shared with the read-only usage API. A call must
+# acquire BOTH an org slot and a trunk slot before it's dialed.
 
 _MAX_CONCURRENT_PER_TRUNK = 5   # max parallel calls per phone number (5 per trunk × 2 trunks = 10 total)
 _SLOT_KEY_TTL = 3600            # 1-hour safety TTL prevents stuck counters after crashes
+
+# Seconds between org-slot retries while a contact is queued waiting for
+# capacity (queue-then-reject — see _run_one_call below).
+_ORG_MAX_WAIT_POLL_INTERVAL = 10
 
 # Lua: atomically increment only if count < max_concurrent. Returns 1 if acquired, 0 if full.
 _LUA_ACQUIRE_SLOT = """
@@ -235,13 +249,18 @@ async def _next_pending_batch(session, campaign_id, limit: int) -> list[Campaign
 
 
 async def _next_retry_batch(session, campaign_id, retry_after_minutes: int, limit: int) -> list[CampaignContact]:
-    """Return up to `limit` NO_ANSWER contacts past their retry delay."""
+    """Return up to `limit` NO_ANSWER or QUEUE_TIMEOUT contacts past their retry delay.
+
+    QUEUE_TIMEOUT contacts (never dialed — org was at its plan's concurrency cap)
+    are folded into the same retry pass as NO_ANSWER so a saturated org never
+    needs a second dedicated sweep.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=retry_after_minutes)
     result = await session.execute(
         select(CampaignContact)
         .where(
             CampaignContact.campaign_id == campaign_id,
-            CampaignContact.status == ContactStatus.NO_ANSWER,
+            CampaignContact.status.in_((ContactStatus.NO_ANSWER, ContactStatus.QUEUE_TIMEOUT)),
             CampaignContact.last_attempted_at <= cutoff,
         )
         .order_by(CampaignContact.last_attempted_at)
@@ -556,31 +575,43 @@ async def _run_one_call(
     language: str,
     llm_model: str,
     llm_temperature: float,
+    org_max_concurrent: int,
 ) -> None:
-    """Place one call, wait for it to finish, and finalize — all with its own DB session."""
+    """Place one call, wait for it to finish, and finalize — all with its own DB session.
 
-    # Wait up to 5 minutes for a slot on this trunk (max 3 concurrent calls per phone number)
-    slot_acquired = False
-    for attempt in range(30):  # 30 × 10 s = 5 min
-        if await _acquire_trunk_slot(livekit_trunk_id):
-            slot_acquired = True
-            break
-        if attempt == 0:
-            log.info("trunk_at_capacity_waiting",
-                     trunk=livekit_trunk_id, phone=contact_phone,
-                     max=_MAX_CONCURRENT_PER_TRUNK)
-        await asyncio.sleep(10)
+    Acquires BOTH an org-level slot (plan-based cap) and a trunk-level slot
+    before dialing; releases both when the call ends, however it ends.
+    """
 
-    if not slot_acquired:
-        # Trunk stayed saturated for 5 min — put contact back so next dispatch cycle retries it.
-        log.warning("trunk_slot_timeout_resetting_contact",
-                    trunk=livekit_trunk_id, phone=contact_phone)
+    # ── Org-level concurrency cap (plan-based) — queue-then-reject ────────────
+    await incr_queued(org_id)
+    org_slot_acquired = False
+    try:
+        org_wait_attempts = max(1, settings.CONCURRENCY_MAX_WAIT_SECONDS // _ORG_MAX_WAIT_POLL_INTERVAL)
+        for attempt in range(org_wait_attempts):
+            if await acquire_org_slot(org_id, org_max_concurrent):
+                org_slot_acquired = True
+                break
+            if attempt == 0:
+                log.info("org_at_capacity_queuing",
+                         org_id=str(org_id), phone=contact_phone, max=org_max_concurrent)
+            await asyncio.sleep(_ORG_MAX_WAIT_POLL_INTERVAL)
+    finally:
+        await decr_queued(org_id)
+
+    if not org_slot_acquired:
+        # Org stayed at its plan's concurrency cap past MAX_WAIT — never dialed.
+        # QUEUE_TIMEOUT (not PENDING) so it's distinguishable from a fresh contact;
+        # _next_retry_batch picks it back up on the normal retry pass.
+        log.warning("org_slot_max_wait_exceeded",
+                    org_id=str(org_id), phone=contact_phone,
+                    max_wait=settings.CONCURRENCY_MAX_WAIT_SECONDS)
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 await session.execute(
                     update(CampaignContact)
                     .where(CampaignContact.id == contact_id)
-                    .values(status=ContactStatus.PENDING)
+                    .values(status=ContactStatus.QUEUE_TIMEOUT, last_attempted_at=datetime.now(timezone.utc))
                 )
                 # Remove the pre-created Call record — the call was never actually placed.
                 call_row = await session.get(Call, call_id)
@@ -589,32 +620,22 @@ async def _run_one_call(
         return
 
     try:
-        # Respect global CPS limit — at most 1 new call per second across all campaigns
-        await _acquire_cps_slot()
+        # ── Per-trunk concurrency cap (unchanged) ──────────────────────────────
+        # Wait up to 5 minutes for a slot on this trunk (max 5 concurrent calls per phone number)
+        slot_acquired = False
+        for attempt in range(30):  # 30 × 10 s = 5 min
+            if await _acquire_trunk_slot(livekit_trunk_id):
+                slot_acquired = True
+                break
+            if attempt == 0:
+                log.info("trunk_at_capacity_waiting",
+                         trunk=livekit_trunk_id, phone=contact_phone,
+                         max=_MAX_CONCURRENT_PER_TRUNK)
+            await asyncio.sleep(10)
 
-        place_result = await _place_call(
-            http,
-            room_name=room_name,
-            phone=contact_phone,
-            contact_name=contact_name,
-            livekit_trunk_id=livekit_trunk_id,
-            sip_caller_id=sip_caller_id,
-            call_id=str(call_id),
-            campaign_id=campaign_id,
-            org_id=str(org_id),
-            agent_template_id=str(agent_template_id),
-            system_prompt=system_prompt,
-            welcome_message=welcome_message,
-            voice_id=voice_id,
-            voice_provider=voice_provider,
-            language=language,
-            llm_model=llm_model,
-            llm_temperature=llm_temperature,
-        )
-
-        if place_result == "congested":
-            # Vobiz still rejected with 429 despite CPS limiting — reset to PENDING for retry
-            log.warning("cps_congested_resetting_contact",
+        if not slot_acquired:
+            # Trunk stayed saturated for 5 min — put contact back so next dispatch cycle retries it.
+            log.warning("trunk_slot_timeout_resetting_contact",
                         trunk=livekit_trunk_id, phone=contact_phone)
             async with AsyncSessionLocal() as session:
                 async with session.begin():
@@ -623,69 +644,112 @@ async def _run_one_call(
                         .where(CampaignContact.id == contact_id)
                         .values(status=ContactStatus.PENDING)
                     )
+                    # Remove the pre-created Call record — the call was never actually placed.
                     call_row = await session.get(Call, call_id)
                     if call_row:
                         await session.delete(call_row)
             return
 
-        if place_result == "placed":
-            wait_result = await _wait_for_room_empty(
+        try:
+            # Respect global CPS limit — at most 1 new call per second across all campaigns
+            await _acquire_cps_slot()
+
+            place_result = await _place_call(
                 http,
                 room_name=room_name,
-                timeout_seconds=max_duration + 60,
+                phone=contact_phone,
+                contact_name=contact_name,
+                livekit_trunk_id=livekit_trunk_id,
+                sip_caller_id=sip_caller_id,
+                call_id=str(call_id),
                 campaign_id=campaign_id,
+                org_id=str(org_id),
+                agent_template_id=str(agent_template_id),
+                system_prompt=system_prompt,
+                welcome_message=welcome_message,
+                voice_id=voice_id,
+                voice_provider=voice_provider,
+                language=language,
+                llm_model=llm_model,
+                llm_temperature=llm_temperature,
             )
-        else:
-            wait_result = "skipped"
 
-        log.info("call_done", room=room_name, place=place_result, wait=wait_result)
-
-        call_started_at_utc: datetime | None = None
-        try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    call_row = await session.get(Call, call_id)
-                    contact_row = await session.get(CampaignContact, contact_id)
-                    campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
-                    if call_row:
-                        call_started_at_utc = call_row.started_at
-                    await _finalize(
-                        session,
-                        call=call_row,
-                        contact=contact_row,
-                        campaign=campaign_row,
-                        place_result=place_result,
-                        wait_result=wait_result,
-                    )
-        except Exception:
-            log.exception("finalize_error", call_id=str(call_id), contact_id=str(contact_id))
-            # Ensure contact is never stuck in DIALING after a finalization crash
-            try:
+            if place_result == "congested":
+                # Vobiz still rejected with 429 despite CPS limiting — reset to PENDING for retry
+                log.warning("cps_congested_resetting_contact",
+                            trunk=livekit_trunk_id, phone=contact_phone)
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
                         await session.execute(
                             update(CampaignContact)
                             .where(CampaignContact.id == contact_id)
-                            .values(status=ContactStatus.FAILED)
+                            .values(status=ContactStatus.PENDING)
                         )
-                        await session.execute(
-                            update(Campaign)
-                            .where(Campaign.id == uuid.UUID(campaign_id))
-                            .values(failed_count=Campaign.failed_count + 1)
+                        call_row = await session.get(Call, call_id)
+                        if call_row:
+                            await session.delete(call_row)
+                return
+
+            if place_result == "placed":
+                wait_result = await _wait_for_room_empty(
+                    http,
+                    room_name=room_name,
+                    timeout_seconds=max_duration + 60,
+                    campaign_id=campaign_id,
+                )
+            else:
+                wait_result = "skipped"
+
+            log.info("call_done", room=room_name, place=place_result, wait=wait_result)
+
+            call_started_at_utc: datetime | None = None
+            try:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        call_row = await session.get(Call, call_id)
+                        contact_row = await session.get(CampaignContact, contact_id)
+                        campaign_row = await session.get(Campaign, uuid.UUID(campaign_id))
+                        if call_row:
+                            call_started_at_utc = call_row.started_at
+                        await _finalize(
+                            session,
+                            call=call_row,
+                            contact=contact_row,
+                            campaign=campaign_row,
+                            place_result=place_result,
+                            wait_result=wait_result,
                         )
             except Exception:
-                log.exception("finalize_recovery_error", contact_id=str(contact_id))
+                log.exception("finalize_error", call_id=str(call_id), contact_id=str(contact_id))
+                # Ensure contact is never stuck in DIALING after a finalization crash
+                try:
+                    async with AsyncSessionLocal() as session:
+                        async with session.begin():
+                            await session.execute(
+                                update(CampaignContact)
+                                .where(CampaignContact.id == contact_id)
+                                .values(status=ContactStatus.FAILED)
+                            )
+                            await session.execute(
+                                update(Campaign)
+                                .where(Campaign.id == uuid.UUID(campaign_id))
+                                .values(failed_count=Campaign.failed_count + 1)
+                            )
+                except Exception:
+                    log.exception("finalize_recovery_error", contact_id=str(contact_id))
 
-        if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
-            asyncio.create_task(_save_recording_async(
-                call_id=call_id,
-                to_number=contact_phone,
-                called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
-                auth_id=settings.VOBIZ_AUTH_ID,
-                auth_token=settings.VOBIZ_AUTH_TOKEN,
-            ))
+            if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
+                asyncio.create_task(_save_recording_async(
+                    call_id=call_id,
+                    to_number=contact_phone,
+                    called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
+                    auth_id=settings.VOBIZ_AUTH_ID,
+                    auth_token=settings.VOBIZ_AUTH_TOKEN,
+                ))
+        finally:
+            await _release_trunk_slot(livekit_trunk_id)
     finally:
-        await _release_trunk_slot(livekit_trunk_id)
+        await release_org_slot(org_id)
 
 
 # ── Main dispatcher loop ───────────────────────────────────────────────────────
@@ -734,7 +798,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     no_answer_waiting = await session.scalar(
                         select(func.count()).where(
                             CampaignContact.campaign_id == campaign.id,
-                            CampaignContact.status == ContactStatus.NO_ANSWER,
+                            CampaignContact.status.in_((ContactStatus.NO_ANSWER, ContactStatus.QUEUE_TIMEOUT)),
                         )
                     )
                     if no_answer_waiting:
@@ -753,6 +817,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
 
                 if not needs_retry_wait:
                     livekit_trunk_id, sip_caller_id = await _resolve_trunk(session, campaign)
+                    org_max_concurrent = await resolve_org_max_concurrent(session, campaign.org_id)
                     tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
 
                     if not livekit_trunk_id:
@@ -836,6 +901,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 org_id=campaign.org_id,
                 livekit_trunk_id=livekit_trunk_id,
                 sip_caller_id=sip_caller_id,
+                org_max_concurrent=org_max_concurrent,
                 **tmpl_kwargs,
                 **d,
             )

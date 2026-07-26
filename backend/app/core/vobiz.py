@@ -28,6 +28,72 @@ def _headers(auth_id: str, auth_token: str) -> dict[str, str]:
     }
 
 
+class VobizValidationError(Exception):
+    """Base for Vobiz account/DID validation failures. Message is safe to show the caller."""
+
+
+class VobizAuthError(VobizValidationError):
+    """auth_id/auth_token are not valid Vobiz API credentials."""
+
+
+class VobizDidNotOwnedError(VobizValidationError):
+    """Credentials are valid, but `did` is not a phone number on this Vobiz account."""
+
+
+async def validate_vobiz_account_and_did(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+) -> None:
+    """
+    Confirm (auth_id, auth_token) are valid Vobiz API credentials AND that
+    `did` (E.164) is a phone number owned by that Vobiz account.
+
+    Raises VobizAuthError or VobizDidNotOwnedError on failure. Returns None
+    (does not raise) on success.
+
+    TODO — UNCONFIRMED ENDPOINT: this calls `/Account/{auth_id}/IncomingPhoneNumber/`,
+    guessed by analogy with the `/Account/{auth_id}/Recording/` endpoint already
+    used in fetch_recording_for_call() above (both assumed to follow the same
+    Plivo-style Account/{id}/{Resource}/ REST shape that the rest of this file
+    is built around). This has NOT been verified against Vobiz's real API docs
+    or a live account — confirm the actual path and response shape (does it
+    return "objects"/"numbers"/"data"? what key holds the E.164 number?) with
+    Vobiz support or their API reference, then update this function before
+    relying on it in production.
+    """
+    hdrs = _headers(auth_id, auth_token)
+    norm_did = did.lstrip("+")
+
+    try:
+        async with http.get(
+            f"{_BASE}/Account/{auth_id}/IncomingPhoneNumber/",
+            headers=hdrs,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status in (401, 403):
+                raise VobizAuthError("Invalid Vobiz auth_id or auth_token")
+            if resp.status != 200:
+                log.warning("vobiz_account_validate_error", status=resp.status)
+                raise VobizAuthError("Could not verify Vobiz credentials — try again")
+            data = await resp.json(content_type=None)
+    except VobizValidationError:
+        raise
+    except Exception as exc:
+        log.warning("vobiz_account_validate_failed", error=str(exc))
+        raise VobizAuthError("Could not reach Vobiz to verify credentials") from exc
+
+    numbers = data.get("objects") or data.get("numbers") or data.get("data") or []
+    for n in numbers:
+        num = str(n.get("number") or n.get("phone_number") or "").lstrip("+")
+        if num and (num == norm_did or norm_did in num or num in norm_did):
+            return
+
+    raise VobizDidNotOwnedError(f"{did} is not a phone number on this Vobiz account")
+
+
 async def fetch_recording_for_call(
     http: aiohttp.ClientSession,
     *,

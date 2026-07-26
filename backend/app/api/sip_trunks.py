@@ -9,16 +9,27 @@ Admin endpoints  (require role=admin):
   POST   /api/sip-trunks/{trunk_id}/assign     — assign trunk to a user
   DELETE /api/sip-trunks/{trunk_id}/assign/{user_id} — remove assignment
   GET    /api/sip-trunks/{trunk_id}/assignments — list users assigned to trunk
+  POST   /api/sip-trunks/connect-vobiz         — self-serve: validate a Vobiz
+                                                   DID and provision a LiveKit
+                                                   outbound trunk for it
+  POST   /api/sip-trunks/{trunk_id}/test       — place a short test call;
+                                                   flips is_active on success
 
 User endpoint (any authenticated user):
   GET    /api/sip-trunks/my                    — list trunks assigned to me
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+import aiohttp
+from fastapi import APIRouter, Depends, HTTPException
+from livekit import api as lk_api
+from livekit.api import LiveKitAPI
+from livekit.api.sip_service import SIPTransport as LKSIPTransport
+from livekit.api.twirp_client import TwirpError
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
+from app.core.vobiz import VobizValidationError, validate_vobiz_account_and_did
 from app.database import get_db
 from app.models.sip import SipTrunk, SipTransport, UserSipTrunk
 from app.models.user import User
@@ -68,6 +80,24 @@ class TrunkOut(BaseModel):
 
 class AssignBody(BaseModel):
     user_id: UUID
+
+
+class ConnectVobizBody(BaseModel):
+    auth_id: str
+    auth_token: str
+    did: str   # E.164, e.g. "+912212345678"
+
+
+class ConnectVobizResponse(BaseModel):
+    trunk_id: str
+    status: str
+    did: str
+
+
+class TestTrunkResponse(BaseModel):
+    trunk_id: str
+    is_active: bool
+    message: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -157,6 +187,144 @@ async def create_trunk(
     await db.commit()
     await db.refresh(trunk)
     return _to_out(trunk)
+
+
+# ── Admin: self-serve Vobiz connect ───────────────────────────────────────────
+
+@router.post("/connect-vobiz", response_model=ConnectVobizResponse, status_code=201)
+async def connect_vobiz(
+    body: ConnectVobizBody,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Self-serve trunk provisioning: validate the org's own Vobiz credentials +
+    DID ownership, create a matching LiveKit outbound SIP trunk, and store it
+    inactive (is_active=false) until POST /{trunk_id}/test confirms it works.
+    """
+    did = body.did.strip().replace(" ", "")
+    if not did.startswith("+"):
+        did = "+91" + did.lstrip("0")
+
+    # 1. Validate Vobiz credentials + DID ownership before touching LiveKit
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+            await validate_vobiz_account_and_did(
+                http, auth_id=body.auth_id, auth_token=body.auth_token, did=did,
+            )
+    except VobizValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not settings.VOBIZ_SIP_DOMAIN:
+        raise HTTPException(status_code=503, detail="VOBIZ_SIP_DOMAIN is not configured on this server")
+
+    # 2. Create the LiveKit outbound SIP trunk for this DID
+    lk = LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
+    try:
+        trunk_info = await lk.sip.create_outbound_trunk(
+            lk_api.CreateSIPOutboundTrunkRequest(
+                trunk=lk_api.SIPOutboundTrunkInfo(
+                    name=f"vobiz-{did}",
+                    address=settings.VOBIZ_SIP_DOMAIN,
+                    numbers=[did],
+                    auth_username=body.auth_id,
+                    auth_password=body.auth_token,
+                    transport=LKSIPTransport.SIP_TRANSPORT_TCP,
+                )
+            )
+        )
+    except TwirpError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not create LiveKit SIP trunk: {exc.message}")
+    finally:
+        await lk.aclose()
+
+    # 3. Store the trunk — inactive until /test succeeds. Vobiz's auth_id/token
+    #    doubles as the SIP auth passed to LiveKit above (Vobiz's SIP registration
+    #    and its REST API appear to share one credential pair); vobiz_auth_id/
+    #    vobiz_auth_token are stored explicitly too so future Vobiz API calls
+    #    (e.g. re-validating the DID) don't need to reuse the sip_* fields.
+    is_first_trunk = not bool(await db.scalar(
+        select(SipTrunk.id).where(SipTrunk.org_id == token.org_id, SipTrunk.deleted_at.is_(None))
+    ))
+
+    trunk = SipTrunk(
+        org_id=token.org_id,
+        name=f"Vobiz {did}",
+        livekit_trunk_id=trunk_info.sip_trunk_id,
+        sip_domain=settings.VOBIZ_SIP_DOMAIN,
+        sip_username=body.auth_id,
+        sip_password=body.auth_token,
+        caller_id=did,
+        transport=SipTransport.TCP,
+        is_default=is_first_trunk,
+        is_active=False,
+    )
+    trunk.vobiz_auth_id = body.auth_id
+    trunk.vobiz_auth_token = body.auth_token
+    db.add(trunk)
+    await db.commit()
+    await db.refresh(trunk)
+
+    return ConnectVobizResponse(trunk_id=str(trunk.id), status="pending_test", did=did)
+
+
+# ── Admin: test a trunk ───────────────────────────────────────────────────────
+
+@router.post("/{trunk_id}/test", response_model=TestTrunkResponse)
+async def test_trunk(
+    trunk_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Place a short test call on this trunk (dials the trunk's own DID) to
+    confirm the LiveKit/Vobiz configuration actually works end to end.
+    Sets is_active=true on success; leaves it false and returns the error
+    on failure.
+    """
+    trunk = await _get_trunk(db, trunk_id, token.org_id)
+
+    room_name = f"trunk-test-{trunk.id.hex}-{int(time.time())}"
+    lk = LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
+    try:
+        try:
+            await lk.room.create_room(lk_api.CreateRoomRequest(name=room_name))
+            await lk.sip.create_sip_participant(
+                lk_api.CreateSIPParticipantRequest(
+                    sip_trunk_id=trunk.livekit_trunk_id,
+                    sip_call_to=trunk.caller_id,
+                    sip_number=trunk.caller_id,
+                    room_name=room_name,
+                    participant_identity="trunk-test",
+                    participant_name="Trunk Test Call",
+                    play_ringtone=False,
+                    wait_until_answered=False,
+                )
+            )
+        except TwirpError as exc:
+            trunk.is_active = False
+            await db.commit()
+            raise HTTPException(status_code=400, detail=f"Test call failed: {exc.message}")
+        except Exception as exc:
+            trunk.is_active = False
+            await db.commit()
+            raise HTTPException(status_code=400, detail=f"Test call failed: {exc}")
+        finally:
+            try:
+                await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
+            except Exception:
+                pass
+    finally:
+        await lk.aclose()
+
+    trunk.is_active = True
+    await db.commit()
+    await db.refresh(trunk)
+    return TestTrunkResponse(
+        trunk_id=str(trunk.id),
+        is_active=trunk.is_active,
+        message="Test call placed successfully",
+    )
 
 
 # ── Admin: update trunk ───────────────────────────────────────────────────────

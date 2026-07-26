@@ -75,6 +75,24 @@ def create_refresh_token(subject: str, org_id: str) -> str:
     return pyjwt.encode(payload, settings.SECRET_KEY, algorithm=_ALGORITHM)
 
 
+def create_platform_token(admin_id: str) -> str:
+    """
+    Create an access token for a PlatformAdmin (SuperAdmin tier).
+    scope="platform" and no org_id — this is what lets require_platform_admin
+    and the org-user dependencies each reject the other's tokens outright.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": admin_id,
+        "scope": "platform",
+        "type": "access",
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        "jti": secrets.token_hex(16),
+    }
+    return pyjwt.encode(payload, settings.SECRET_KEY, algorithm=_ALGORITHM)
+
+
 def decode_token(token: str) -> dict[str, Any]:
     """
     Decode and verify a JWT.

@@ -24,6 +24,18 @@ import app.models  # noqa: F401  — activates any uncommented imports in models
 
 target_metadata = Base.metadata
 
+# Objects that exist in the live DB but can never be expressed in the ORM,
+# so autogenerate would otherwise propose dropping them on every run.
+# Add an entry here (rather than hand-editing the generated migration) whenever
+# a functional/expression index or similar unmappable object is introduced.
+_AUTOGENERATE_IGNORE = {
+    ("index", "ix_call_transcripts_full_text_gin"),  # functional GIN index, see migration 0001
+}
+
+
+def _include_object(object, name, type_, reflected, compare_to) -> bool:
+    return (type_, name) not in _AUTOGENERATE_IGNORE
+
 
 def run_migrations_offline() -> None:
     """Run migrations without a live DB connection (generates SQL script)."""
@@ -33,6 +45,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -45,6 +58,7 @@ def _run_sync_migrations(connection) -> None:
         compare_type=True,
         # Render ENUMs as native Postgres ENUM types
         render_as_batch=False,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

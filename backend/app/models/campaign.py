@@ -44,6 +44,7 @@ class ContactStatus(StrEnum):
     NO_ANSWER = "no_answer"   # awaiting retry (attempt_count < max_retries)
     FAILED = "failed"         # exhausted retries or system error
     DO_NOT_CALL = "do_not_call"  # blocked by org DNC or system DNC
+    QUEUE_TIMEOUT = "queue_timeout"  # org was at its plan's concurrency cap past MAX_WAIT; retry pass picks it up
 
 
 class CampaignFolder(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
@@ -180,6 +181,13 @@ class CampaignContact(Base, TimestampMixin):
         Index("ix_campaign_contacts_campaign_status", "campaign_id", "status"),
         # DNC check query: WHERE org_id = X AND phone = Y
         Index("ix_campaign_contacts_org_phone", "org_id", "phone"),
+        # The following two duplicate coverage already provided above / by the
+        # index=True campaign_id column below, but were added by the 0009
+        # "performance indexes" migration under a shortened "campaign_contact"
+        # (singular) prefix. Kept here (redundant but real) so autogenerate
+        # matches the live DB.
+        Index("ix_campaign_contact_campaign_status", "campaign_id", "status"),
+        Index("ix_campaign_contact_campaign_created", "campaign_id", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)

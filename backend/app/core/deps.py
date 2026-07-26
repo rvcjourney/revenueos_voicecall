@@ -10,9 +10,12 @@ from fastapi import Depends
 from jwt.exceptions import InvalidTokenError
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.security import decode_token
+from app.database import get_db
+from app.models.platform_admin import PlatformAdmin
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -36,6 +39,8 @@ async def get_current_user(
 
     if payload.get("type") != "access":
         raise AuthenticationError("Not an access token")
+    if payload.get("scope") == "platform":
+        raise AuthenticationError("Platform admin tokens cannot be used on org routes")
 
     # Check Redis blocklist — tokens revoked via /auth/logout are stored here until expiry
     jti = payload.get("jti")
@@ -71,3 +76,32 @@ async def require_member_or_admin(
     if token.role not in ("admin", "member"):
         raise PermissionDeniedError("Access denied")
     return token
+
+
+async def require_platform_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformAdmin:
+    """
+    Auth dependency for the SuperAdmin (platform) API. Only accepts tokens
+    minted by create_platform_token (scope="platform") — org access tokens
+    have no "scope" claim at all, so they're rejected here just as platform
+    tokens are rejected by get_current_user above.
+    """
+    if credentials is None:
+        raise AuthenticationError("Missing Bearer token")
+    try:
+        payload = decode_token(credentials.credentials)
+    except InvalidTokenError:
+        raise AuthenticationError("Invalid or expired token")
+
+    if payload.get("type") != "access":
+        raise AuthenticationError("Not an access token")
+    if payload.get("scope") != "platform":
+        raise AuthenticationError("Platform admin access required")
+
+    admin = await db.get(PlatformAdmin, UUID(payload["sub"]))
+    if not admin or not admin.is_active:
+        raise AuthenticationError("Platform admin not found or inactive")
+
+    return admin

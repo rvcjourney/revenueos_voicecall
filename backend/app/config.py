@@ -20,7 +20,7 @@ _SECRET_FIELDS = frozenset({
     "SECRET_KEY", "AGENT_WEBHOOK_SECRET", "LIVEKIT_API_SECRET",
     "MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "VOBIZ_PASSWORD",
     "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
 })
 
 
@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     BCRYPT_ROUNDS: int = 12
     AGENT_WEBHOOK_SECRET: str = Field(..., min_length=32)
+    # Fernet key for at-rest encryption of SIP/Vobiz credentials (app/core/crypto.py).
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    FERNET_KEY: str = Field(..., min_length=32)
 
     # ── Database ───────────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(...)
@@ -142,6 +145,11 @@ class Settings(BaseSettings):
     # ── Internal service communication ────────────────────────────────────────
     BACKEND_INTERNAL_URL: str = "http://api:8000"
     AGENT_TEMPLATE_CACHE_TTL: int = 60
+
+    # ── Concurrency ────────────────────────────────────────────────────────────
+    # Queue-then-reject: max seconds a contact waits for a plan-based org-level
+    # call slot before being marked QUEUE_TIMEOUT (see app/core/concurrency.py).
+    CONCURRENCY_MAX_WAIT_SECONDS: int = 600
 
     @model_validator(mode="after")
     def _validate_production(self) -> "Settings":
