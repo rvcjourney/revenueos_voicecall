@@ -315,14 +315,35 @@ class VoiceAgent(Agent):
             return
         logger.info("TTS filter: [end_call] detected at turn %d — waiting for farewell TTS to finish", self._turn_count)
         self._ending = True
-        # Wait for the farewell to actually finish playing rather than guessing with a
-        # fixed sleep — TTS generation time varies a lot (seen 8s+ for one utterance),
-        # and a fixed sleep can cut the farewell off mid-sentence if generation alone
-        # eats the whole budget. 15s safety cap in case the state signal is ever missed.
+
+        # Bind directly to the SpeechHandle for the in-flight turn (which contains the
+        # farewell text + [end_call]) instead of the call-wide `_speaking_done` Event.
+        # That Event is a single shared flag: if this task starts running before
+        # agent_state_changed has flipped to "speaking" for THIS farewell, the Event
+        # can still be left set() from the end of the PREVIOUS turn, making .wait()
+        # return instantly — before the farewell audio has even started.
+        # session.current_speech doesn't have this race: AgentActivity assigns it
+        # before generation (LLM stream -> TTS text-transforms -> synthesis) begins,
+        # and we're reached here from inside that very TTS text-transform stream, so
+        # it's already bound to this exact farewell handle by construction.
+        speech = self.session.current_speech
+        if speech is None:
+            # Defensive-only fallback in case a future SDK version changes this ordering.
+            for _ in range(20):  # up to ~1s
+                await asyncio.sleep(0.05)
+                speech = self.session.current_speech
+                if speech is not None:
+                    break
+
         try:
-            await asyncio.wait_for(self._speaking_done.wait(), timeout=15.0)
+            if speech is not None:
+                await asyncio.wait_for(speech.wait_for_playout(), timeout=15.0)
+            else:
+                logger.warning("current_speech unavailable for farewell — falling back to state-change wait")
+                await asyncio.wait_for(self._speaking_done.wait(), timeout=15.0)
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for farewell TTS to finish — hanging up anyway")
+
         await asyncio.sleep(0.5)  # let the last audio frames flush through the SIP path
         await self._post_call_report()
         await self._disconnect()
@@ -555,9 +576,14 @@ class VoiceAgent(Agent):
     async def _do_hangup(self) -> None:
         logger.info("Hangup — saying farewell")
         try:
+            # session.say() already awaits true end-to-end playback completion
+            # (SpeechHandle.wait_for_playout(), driven by the audio sink's real
+            # "playback_finished" event). TTS generation alone has been observed
+            # to take 8s+ for a single utterance (see _trigger_hangup below), so
+            # 20s gives real safety margin above the worst observed case.
             await asyncio.wait_for(
                 self.session.say(_FAREWELL, allow_interruptions=False),
-                timeout=5.0,
+                timeout=20.0,
             )
         except asyncio.TimeoutError:
             logger.warning("Farewell TTS timed out — disconnecting anyway")
