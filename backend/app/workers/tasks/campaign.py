@@ -44,6 +44,7 @@ from app.core.concurrency import (
     release_org_slot,
     resolve_org_max_concurrent,
 )
+from app.core.credits import record_call_credits
 from app.core.vobiz import fetch_recording_for_call
 from app.database import make_worker_session_factory
 
@@ -52,7 +53,7 @@ from app.database import make_worker_session_factory
 AsyncSessionLocal = make_worker_session_factory()
 from app.models.agent import AgentTemplate
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
-from app.models.call import Call, CallDirection, CallOutcome, CallStatus
+from app.models.call import Call, CallDirection, CallEvent, CallOutcome, CallStatus
 from app.models.dnc import DoNotCallEntry, SystemDncEntry
 from app.models.sip import SipTrunk
 from app.workers.celery_app import celery_app
@@ -505,6 +506,31 @@ async def _finalize(
             .where(Campaign.id == campaign.id)
             .values(failed_count=Campaign.failed_count + 1)
         )
+
+    # ── Credit billing (1 credit = 1 minute) ───────────────────────────────────
+    # Only calls that actually connected consume call-minutes — a no_answer/failed
+    # dial attempt's "duration" is just ring/setup time, not billable talk time.
+    if place_result == "placed":
+        usage = await record_call_credits(session, org_id=campaign.org_id, duration_seconds=duration)
+        if usage["overage_minutes"] > 0:
+            session.add(CallEvent(
+                call_id=call.id,
+                event_type="credit_overage_billed",
+                payload={
+                    "minutes_billed": usage["minutes_billed"],
+                    "overage_minutes": usage["overage_minutes"],
+                    "overage_cost_cents": usage["overage_cost_cents"],
+                    "credits_used_this_period": usage["credits_used_this_period"],
+                    "credits_per_month": usage["credits_per_month"],
+                },
+            ))
+            log.info(
+                "call_credit_overage_billed",
+                call_id=str(call.id),
+                org_id=str(campaign.org_id),
+                overage_minutes=usage["overage_minutes"],
+                overage_cost_cents=usage["overage_cost_cents"],
+            )
 
 
 # ── Background recording fetch ────────────────────────────────────────────────
