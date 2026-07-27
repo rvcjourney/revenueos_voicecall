@@ -4,8 +4,11 @@ Filled in progressively as models/routers are created in each phase.
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 import pytest_asyncio
+from fakeredis import FakeAsyncRedis
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -14,9 +17,16 @@ from app.database import Base, _async_url, get_db
 from app.main import app
 from app.config import settings
 
-# Separate test database — never touches production data
-_TEST_DB_URL = _async_url(settings.DATABASE_URL).replace(
-    "/motmvoice", "/motmvoice_test"
+# Separate test database — never touches production data.
+# Guard against double-suffixing: pytest's own DATABASE_URL (pyproject.toml) already
+# points at "/motmvoice_test", and a plain .replace("/motmvoice", "/motmvoice_test")
+# would turn that into "/motmvoice_test_test" since "/motmvoice_test" also contains
+# "/motmvoice" as a substring.
+_raw_test_url = _async_url(settings.DATABASE_URL)
+_TEST_DB_URL = (
+    _raw_test_url
+    if _raw_test_url.rsplit("/", 1)[-1].endswith("_test")
+    else _raw_test_url.replace("/motmvoice", "/motmvoice_test")
 )
 
 
@@ -51,6 +61,25 @@ async def client(db):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+
+@pytest_asyncio.fixture(scope="function")
+async def fake_redis():
+    """
+    In-memory Redis stand-in (fakeredis + lupa for Lua/EVAL support) for tests
+    that exercise Redis-based logic (app/core/concurrency.py, per-trunk slots)
+    without a real Redis server. Patches app.core.redis.get_redis — every
+    call site does `from app.core.redis import get_redis` at call time, so
+    this patch is picked up everywhere without further wiring.
+    """
+    fake = FakeAsyncRedis(decode_responses=True)
+
+    async def _get_fake_redis():
+        return fake
+
+    with patch("app.core.redis.get_redis", new=_get_fake_redis):
+        yield fake
+    await fake.aclose()
+
 
 # Phase 2 will add:
 #   - org fixture (creates an Organization row)

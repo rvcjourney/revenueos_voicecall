@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -21,6 +21,10 @@ class AgentAccessRequest(Base, TimestampMixin):
     __tablename__ = "agent_access_requests"
     __table_args__ = (
         UniqueConstraint("agent_id", "user_id", name="uq_agent_access_agent_user"),
+        # Named to match the hand-written 0004 migration (shortened "agent_access"
+        # prefix, not the tablename-derived "agent_access_requests" autogenerate default).
+        Index("ix_agent_access_agent_id", "agent_id"),
+        Index("ix_agent_access_user_id", "user_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
@@ -28,13 +32,11 @@ class AgentAccessRequest(Base, TimestampMixin):
         PG_UUID(as_uuid=True),
         ForeignKey("agent_templates.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     org_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),

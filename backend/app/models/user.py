@@ -8,7 +8,17 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, String, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -30,6 +40,11 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     Soft-deleted (never hard-deleted) for compliance and audit trail.
     """
     __tablename__ = "organizations"
+    __table_args__ = (
+        # Named to match the hand-written 0001 migration, which created this as a
+        # separate object from the ix_organizations_slug unique index below.
+        UniqueConstraint("slug", name="uq_organizations_slug"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -51,6 +66,10 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     )
     # E.164 caller ID used on outbound calls when no trunk-specific caller_id is set
     sip_caller_id: Mapped[str] = mapped_column(String(20), nullable=False, server_default="")
+
+    # Platform-level suspend/activate toggle (SuperAdmin). Distinct from deleted_at:
+    # suspension is reversible and doesn't remove the org's data or history.
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
     # ── Quota tracking ─────────────────────────────────────────────────────────
     plan_tier: Mapped[str] = mapped_column(String(50), nullable=False, server_default="starter")
@@ -85,6 +104,11 @@ class User(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     Passwords are stored as bcrypt hashes (cost=12). Never store plaintext.
     """
     __tablename__ = "users"
+    __table_args__ = (
+        # Named to match the hand-written 0001 migration, which created this as a
+        # separate object from the ix_users_email unique index below.
+        UniqueConstraint("email", name="uq_users_email"),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
     # org_id from OrgScopedMixin

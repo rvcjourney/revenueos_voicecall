@@ -8,7 +8,7 @@ from __future__ import annotations
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -28,8 +28,11 @@ class SipTrunk(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     LiveKit outbound SIP trunk configuration.
     Soft-deleted to preserve audit history of which DID was used for historical calls.
 
-    sip_password is stored as plaintext. Add column-level Fernet encryption
-    (cryptography package) before exposing this table to untrusted operators.
+    sip_password and vobiz_auth_token are encrypted at rest (Fernet, see
+    app/core/crypto.py) — the *_encrypted mapped columns hold ciphertext only;
+    the sip_password / vobiz_auth_token properties below decrypt on read and
+    encrypt on write, so callers use them exactly like a plain string attribute.
+    Never expose either property (or the *_encrypted columns) in an API response.
     """
     __tablename__ = "sip_trunks"
 
@@ -41,7 +44,9 @@ class SipTrunk(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     livekit_trunk_id: Mapped[str] = mapped_column(String(100), nullable=False)
     sip_domain: Mapped[str] = mapped_column(String(255), nullable=False)
     sip_username: Mapped[str] = mapped_column(String(255), nullable=False)
-    sip_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # DB column name stays "sip_password" (pre-existing); Python attribute is
+    # renamed so the `sip_password` property below can own that name instead.
+    sip_password_encrypted: Mapped[str] = mapped_column("sip_password", Text, nullable=False)
     # E.164 caller ID (DID) shown to the called party
     caller_id: Mapped[str] = mapped_column(String(20), nullable=False)
     transport: Mapped[SipTransport] = mapped_column(
@@ -54,6 +59,35 @@ class SipTrunk(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # Enforced in application logic (not DB constraint) to allow easy re-assignment.
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    # ── Vobiz self-serve connect (app/api/sip_trunks.py POST /connect-vobiz) ────
+    # The org's own Vobiz API auth_id/auth_token, used to validate DID ownership
+    # and (later) manage the number via Vobiz's API. auth_id isn't secret on its
+    # own (it's an account identifier, not a credential); auth_token is.
+    vobiz_auth_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vobiz_auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def sip_password(self) -> str:
+        from app.core.crypto import decrypt_value
+        return decrypt_value(self.sip_password_encrypted)
+
+    @sip_password.setter
+    def sip_password(self, plaintext: str) -> None:
+        from app.core.crypto import encrypt_value
+        self.sip_password_encrypted = encrypt_value(plaintext)
+
+    @property
+    def vobiz_auth_token(self) -> str | None:
+        from app.core.crypto import decrypt_value
+        if self.vobiz_auth_token_encrypted is None:
+            return None
+        return decrypt_value(self.vobiz_auth_token_encrypted)
+
+    @vobiz_auth_token.setter
+    def vobiz_auth_token(self, plaintext: str | None) -> None:
+        from app.core.crypto import encrypt_value
+        self.vobiz_auth_token_encrypted = encrypt_value(plaintext) if plaintext is not None else None
 
     # Relationships
     organization: Mapped["Organization"] = relationship(

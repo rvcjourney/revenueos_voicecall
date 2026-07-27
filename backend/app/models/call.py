@@ -12,7 +12,19 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text, func, text
+from sqlalchemy import (
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -66,6 +78,17 @@ class Call(Base, TimestampMixin):
         Index("ix_calls_org_started_at", "org_id", "started_at"),
         # Analytics: outcome breakdown by campaign
         Index("ix_calls_campaign_outcome", "campaign_id", "outcome"),
+        # Named to match the hand-written 0001 migration, which created this as a
+        # separate object from the ix_calls_livekit_room_name unique index below.
+        UniqueConstraint("livekit_room_name", name="uq_calls_livekit_room_name"),
+        # The following four duplicate coverage already provided by the
+        # index=True columns below (ix_calls_*), but were added by the 0009
+        # "performance indexes" migration under a shortened "ix_call_*" prefix.
+        # Kept here (redundant but real) so autogenerate matches the live DB.
+        Index("ix_call_phone_number", "phone_number"),
+        Index("ix_call_campaign_id", "campaign_id"),
+        Index("ix_call_org_created", "org_id", "created_at"),
+        Index("ix_call_started_at", "started_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
