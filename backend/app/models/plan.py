@@ -26,5 +26,16 @@ class Plan(Base, TimestampMixin):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="INR")
     monthly_call_quota: Mapped[int] = mapped_column(Integer, nullable=False)
     max_concurrent_calls: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # ── Credit-based billing (1 credit = 1 minute of call time) ────────────────
+    # Monthly allotment of call-minutes included in the plan price.
+    credits_per_month: Mapped[int] = mapped_column(Integer, nullable=False, server_default="500")
+    # USD cents charged per additional minute once an org exceeds credits_per_month
+    # in its current billing period. See app/core/credits.py for the usage/overage math.
+    credit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
+
+    # Feature gates, keyed by convention (see app/core/plan_features.py):
+    #   allowed_voice_providers: list[str] — subset of app.models.agent.VoiceProvider values
+    #   voice_cloning: bool — can this plan's orgs create ElevenLabs cloned voices
     features: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

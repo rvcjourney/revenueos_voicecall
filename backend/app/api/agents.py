@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError
+from app.core.plan_features import check_agent_voice_settings
 from app.config import settings
 from app.database import get_db
 from app.models.agent import AgentTemplate
@@ -239,6 +240,10 @@ async def create_agent(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    await check_agent_voice_settings(
+        db, token.org_id, voice_provider=body.voice_provider, voice_id=body.voice_id
+    )
+
     agent = AgentTemplate(
         org_id=token.org_id,
         created_by_id=token.user_id,
@@ -285,6 +290,14 @@ async def update_agent(
         )
         if not access:
             raise PermissionDeniedError("You do not have edit permission for this agent")
+
+    if body.voice_provider is not None or body.voice_id is not None:
+        await check_agent_voice_settings(
+            db,
+            token.org_id,
+            voice_provider=body.voice_provider or agent.voice_provider,
+            voice_id=body.voice_id if body.voice_id is not None else agent.voice_id,
+        )
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(agent, field, value)

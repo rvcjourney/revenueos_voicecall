@@ -86,6 +86,20 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
         server_default=text("now() + INTERVAL '30 days'"),
     )
 
+    # ── Credit-based billing (1 credit = 1 minute of call time) ────────────────
+    # Independent of the legacy calls_used_this_period/monthly_call_quota fields
+    # above. Incremented in app/workers/tasks/campaign.py when a call ends; reset
+    # to 0 (with last_credit_reset_at bumped to now) once the period is >30 days
+    # old — see app/core/credits.py:reset_credit_period_if_stale().
+    credits_used_this_period: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_credit_reset_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Platform-level override: force ElevenLabs off for this org even if its plan
+    # allows it (cost control / abuse response). Plan-level gating still applies —
+    # both must be true for ElevenLabs to be usable (see app/core/plan_features.py).
+    elevenlabs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
     # Relationships
     users: Mapped[list["User"]] = relationship(
         "User", back_populates="organization", foreign_keys="User.org_id"

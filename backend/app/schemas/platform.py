@@ -29,6 +29,8 @@ class PlanCreateRequest(BaseModel):
     currency: str = "INR"
     monthly_call_quota: int
     max_concurrent_calls: int
+    credits_per_month: int = 500
+    credit_price_cents: int = 10
     features: dict = {}
     is_active: bool = True
 
@@ -39,6 +41,8 @@ class PlanUpdateRequest(BaseModel):
     currency: str | None = None
     monthly_call_quota: int | None = None
     max_concurrent_calls: int | None = None
+    credits_per_month: int | None = None
+    credit_price_cents: int | None = None
     features: dict | None = None
     is_active: bool | None = None
 
@@ -50,6 +54,8 @@ class PlanOut(BaseModel):
     currency: str
     monthly_call_quota: int
     max_concurrent_calls: int
+    credits_per_month: int
+    credit_price_cents: int
     features: dict
     is_active: bool
 
@@ -69,12 +75,30 @@ class OrgDetailOut(OrgListItemOut):
     users_count: int
     subscription_status: str | None
     subscription_current_period_end: str | None
+    credits_used_this_period: int
+    credits_per_month: int
+    elevenlabs_enabled: bool
 
 
 class OrgPatchRequest(BaseModel):
     is_active: bool | None = None
     plan_id: str | None = None
     monthly_call_quota: int | None = None
+    elevenlabs_enabled: bool | None = None
+
+
+class CreditAdjustRequest(BaseModel):
+    # Positive = consume credits (reduces headroom). Negative = grant credits
+    # (reduces credits_used_this_period, increasing headroom). Result is
+    # clamped at a minimum of 0 — usage can't go negative.
+    delta: int
+    reason: str
+
+
+class CreditAdjustResponse(BaseModel):
+    org_id: str
+    credits_used_this_period: int
+    credits_per_month: int
 
 
 class PlatformMetricsOut(BaseModel):

@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing import compute_blended_monthly_credits
+from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
 from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError as AppValidationError
 from app.core.security import create_platform_token, verify_password
@@ -30,6 +32,8 @@ from app.models.platform_admin import PlatformAdmin
 from app.models.subscription import Subscription
 from app.models.user import Organization, User
 from app.schemas.platform import (
+    CreditAdjustRequest,
+    CreditAdjustResponse,
     OrgDetailOut,
     OrgListItemOut,
     OrgPatchRequest,
@@ -53,6 +57,8 @@ def _to_plan_out(p: Plan) -> PlanOut:
         currency=p.currency,
         monthly_call_quota=p.monthly_call_quota,
         max_concurrent_calls=p.max_concurrent_calls,
+        credits_per_month=p.credits_per_month,
+        credit_price_cents=p.credit_price_cents,
         features=p.features,
         is_active=p.is_active,
     )
@@ -77,6 +83,9 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
         plan = await db.get(Plan, sub.plan_id)
         plan_name = plan.name if plan else None
 
+    await reset_credit_period_if_stale(db, org)
+    credits_per_month = await resolve_org_credits_per_month(db, org.id)
+
     return OrgDetailOut(
         id=str(org.id),
         name=org.name,
@@ -91,6 +100,9 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
         subscription_current_period_end=(
             sub.current_period_end.isoformat() if sub and sub.current_period_end else None
         ),
+        credits_used_this_period=org.credits_used_this_period,
+        credits_per_month=credits_per_month,
+        elevenlabs_enabled=org.elevenlabs_enabled,
     )
 
 
@@ -186,22 +198,43 @@ async def update_org(
         }
         org.monthly_call_quota = body.monthly_call_quota
 
+    if body.elevenlabs_enabled is not None and body.elevenlabs_enabled != org.elevenlabs_enabled:
+        changes["elevenlabs_enabled"] = {
+            "from": org.elevenlabs_enabled,
+            "to": body.elevenlabs_enabled,
+        }
+        org.elevenlabs_enabled = body.elevenlabs_enabled
+
     if body.plan_id is not None:
         try:
             plan_uuid = UUID(body.plan_id)
         except ValueError:
             raise AppValidationError("Invalid plan_id", errors=[])
-        plan = await db.get(Plan, plan_uuid)
-        if not plan:
+        new_plan = await db.get(Plan, plan_uuid)
+        if not new_plan:
             raise AppValidationError("Plan not found", errors=[])
 
         sub = await _active_subscription(db, org.id)
         if sub:
-            changes["plan_id"] = {"from": str(sub.plan_id), "to": str(plan.id)}
-            sub.plan_id = plan.id
+            # Plan change mid-period: blend old/new credits_per_month for the
+            # remainder of the current period (see app/core/billing.py). A fresh
+            # period (next reset) runs at the new plan's rate in full.
+            await reset_credit_period_if_stale(db, org)
+            old_plan = await db.get(Plan, sub.plan_id)
+            old_credits = old_plan.credits_per_month if old_plan else new_plan.credits_per_month
+            blended = compute_blended_monthly_credits(
+                old_plan_credits=old_credits,
+                new_plan_credits=new_plan.credits_per_month,
+                period_start=org.last_credit_reset_at,
+                now=datetime.now(timezone.utc),
+            )
+            sub.prorated_credits_override = blended
+            changes["plan_id"] = {"from": str(sub.plan_id), "to": str(new_plan.id)}
+            changes["prorated_credits_this_period"] = blended
+            sub.plan_id = new_plan.id
         else:
-            db.add(Subscription(org_id=org.id, plan_id=plan.id, status="active"))
-            changes["plan_id"] = {"from": None, "to": str(plan.id)}
+            db.add(Subscription(org_id=org.id, plan_id=new_plan.id, status="active"))
+            changes["plan_id"] = {"from": None, "to": str(new_plan.id)}
 
     db.add(AuditLog(
         actor_type="platform_admin",
@@ -216,6 +249,92 @@ async def update_org(
     await db.commit()
     await db.refresh(org)
     return await _to_org_detail_out(db, org)
+
+
+@router.post("/orgs/{org_id}/credits/adjust", response_model=CreditAdjustResponse)
+async def adjust_org_credits(
+    org_id: UUID,
+    body: CreditAdjustRequest,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually adjust an org's credit usage counter.
+    delta > 0 consumes credits (reduces headroom) — e.g. a manual correction
+    for calls billed outside the normal flow.
+    delta < 0 grants credits (reduces credits_used_this_period) — e.g. a
+    goodwill credit or bonus allotment. Result is clamped at a minimum of 0.
+    """
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+
+    await reset_credit_period_if_stale(db, org)
+    before = org.credits_used_this_period
+    org.credits_used_this_period = max(0, before + body.delta)
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=org.id,
+        action="credits.adjust",
+        target_type="organization",
+        target_id=org.id,
+        audit_metadata={
+            "delta": body.delta,
+            "reason": body.reason,
+            "from": before,
+            "to": org.credits_used_this_period,
+        },
+    ))
+
+    await db.commit()
+    await db.refresh(org)
+    credits_per_month = await resolve_org_credits_per_month(db, org.id)
+    return CreditAdjustResponse(
+        org_id=str(org.id),
+        credits_used_this_period=org.credits_used_this_period,
+        credits_per_month=credits_per_month,
+    )
+
+
+@router.post("/orgs/{org_id}/credits/reset", response_model=CreditAdjustResponse)
+async def reset_org_credits(
+    org_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Zero out an org's credit usage counter and start a fresh billing period now."""
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+
+    before = org.credits_used_this_period
+    org.credits_used_this_period = 0
+    org.last_credit_reset_at = datetime.now(timezone.utc)
+
+    sub = await _active_subscription(db, org.id)
+    if sub is not None:
+        sub.prorated_credits_override = None
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=org.id,
+        action="credits.reset",
+        target_type="organization",
+        target_id=org.id,
+        audit_metadata={"from": before, "to": 0},
+    ))
+
+    await db.commit()
+    await db.refresh(org)
+    credits_per_month = await resolve_org_credits_per_month(db, org.id)
+    return CreditAdjustResponse(
+        org_id=str(org.id),
+        credits_used_this_period=org.credits_used_this_period,
+        credits_per_month=credits_per_month,
+    )
 
 
 @router.get("/plans", response_model=list[PlanOut])
@@ -239,6 +358,8 @@ async def create_plan(
         currency=body.currency,
         monthly_call_quota=body.monthly_call_quota,
         max_concurrent_calls=body.max_concurrent_calls,
+        credits_per_month=body.credits_per_month,
+        credit_price_cents=body.credit_price_cents,
         features=body.features,
         is_active=body.is_active,
     )
@@ -279,6 +400,10 @@ async def update_plan(
         plan.monthly_call_quota = body.monthly_call_quota
     if body.max_concurrent_calls is not None:
         plan.max_concurrent_calls = body.max_concurrent_calls
+    if body.credits_per_month is not None:
+        plan.credits_per_month = body.credits_per_month
+    if body.credit_price_cents is not None:
+        plan.credit_price_cents = body.credit_price_cents
     if body.features is not None:
         plan.features = body.features
     if body.is_active is not None:
