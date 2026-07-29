@@ -67,6 +67,28 @@ def _inject_ctx(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[st
     return event_dict
 
 
+class _BenignPoolCloseFilter(logging.Filter):
+    """Demote the known-benign 'connection aborted while closing' pool noise.
+
+    NullPool opens a fresh DB connection per request and closes it right after.
+    If the socket was already reset (AV/VPN/firewall interference, or a network
+    blip) before the graceful close message could be sent, SQLAlchemy logs it at
+    `error` even though it already catches the exception and never fails the
+    request (sqlalchemy/pool/base.py `_close_connection`). Demote to `debug` so
+    routine cleanup noise doesn't read as a request-breaking failure.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.levelno >= logging.ERROR
+            and record.name.startswith("sqlalchemy.pool")
+            and record.getMessage().startswith(("Exception closing connection", "Exception terminating connection"))
+        ):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
 def configure_logging() -> None:
     """
     Configure structlog + stdlib root logger.
@@ -99,6 +121,7 @@ def configure_logging() -> None:
     )
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
+    handler.addFilter(_BenignPoolCloseFilter())
 
     root = logging.getLogger()
     root.handlers.clear()

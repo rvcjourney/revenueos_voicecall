@@ -443,6 +443,7 @@ async def _finalize(
     campaign: Campaign,
     place_result: str,
     wait_result: str,
+    answered_at: datetime | None = None,
 ) -> None:
     """
     Write final Call status, CampaignContact status, and Campaign aggregate
@@ -469,11 +470,19 @@ async def _finalize(
         call_outcome = None  # sentinel: skip outcome update
         contact_status = ContactStatus.COMPLETED
 
+    # duration is measured from when the call was actually answered (SIP call
+    # confirmed connected — see wait_until_answered in _place_call), not from
+    # Call.started_at. started_at is stamped when the dial attempt's row is
+    # created, which can run well before the call connects (DNC checks, trunk/
+    # org slot waits, Celery queue backlog) — using it inflates duration by
+    # however long that gap was instead of reflecting real call time.
     duration = (
-        int((now - call.started_at).total_seconds()) if call.started_at else None
+        int((now - answered_at).total_seconds()) if answered_at else None
     )
 
     call_values: dict = dict(status=call_status, ended_at=now, duration_seconds=duration)
+    if answered_at is not None:
+        call_values["answered_at"] = answered_at
     if call_outcome is not None:
         call_values["outcome"] = call_outcome
 
@@ -690,7 +699,12 @@ async def _run_one_call(
                             await session.delete(call_row)
                 return
 
+            answered_at: datetime | None = None
             if place_result == "placed":
+                # _place_call uses wait_until_answered=True, so reaching here
+                # means the call was just confirmed answered — this is the
+                # correct anchor for duration, not the row's started_at.
+                answered_at = datetime.now(timezone.utc)
                 wait_result = await _wait_for_room_empty(
                     http,
                     room_name=room_name,
@@ -718,6 +732,7 @@ async def _run_one_call(
                             campaign=campaign_row,
                             place_result=place_result,
                             wait_result=wait_result,
+                            answered_at=answered_at,
                         )
             except Exception:
                 log.exception("finalize_error", call_id=str(call_id), contact_id=str(contact_id))
@@ -1047,7 +1062,15 @@ async def _run_test_call_async(
 
         log.info("test_call_placed", call_id=call_id, result=place_result)
 
+        answered_at: datetime | None = None
         if place_result == "placed":
+            # _place_call uses wait_until_answered=True, so reaching here means
+            # the call was just confirmed answered — the correct anchor for
+            # duration. Call.started_at is stamped when the row is created
+            # (API request time, before this task is even picked up off the
+            # Celery queue), so it can be far earlier than the actual dial and
+            # would otherwise inflate duration by however long the task sat queued.
+            answered_at = datetime.now(timezone.utc)
             await _wait_for_room_empty(
                 http,
                 room_name=room_name,
@@ -1069,8 +1092,9 @@ async def _run_test_call_async(
                 # Agent will POST the real outcome via /calls/{id}/agent-report
                 call_row.status = CallStatus.COMPLETED
             call_row.ended_at = now
-            if call_row.started_at:
-                call_row.duration_seconds = int((now - call_row.started_at).total_seconds())
+            if answered_at:
+                call_row.answered_at = answered_at
+                call_row.duration_seconds = int((now - answered_at).total_seconds())
             await session.commit()
 
     log.info("test_call_done", call_id=call_id, result=place_result)

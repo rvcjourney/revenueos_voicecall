@@ -3,12 +3,14 @@ app/database.py — SQLAlchemy 2.0 async engine, session factory, and base model
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import ssl
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import asyncpg
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -19,6 +21,27 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+
+# Each request opens a brand-new asyncpg connection (see NullPool below), which
+# means a single transient DNS/network hiccup (e.g. Windows getaddrinfo error
+# 11001) surfaces as a hard failure on whatever request hit it. Retry the raw
+# connect a few times with a short backoff before giving up — real auth/config
+# errors (bad password, unknown database) aren't OSErrors and still fail immediately.
+_CONNECT_RETRIES = 3
+_CONNECT_RETRY_DELAY = 0.5
+
+
+async def _connect_with_retry(*args: Any, **kwargs: Any) -> asyncpg.Connection:
+    last_exc: OSError | None = None
+    for attempt in range(_CONNECT_RETRIES):
+        try:
+            return await asyncpg.connect(*args, **kwargs)
+        except OSError as exc:
+            last_exc = exc
+            if attempt < _CONNECT_RETRIES - 1:
+                await asyncio.sleep(_CONNECT_RETRY_DELAY * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def _async_url(url: str) -> str:
@@ -38,6 +61,7 @@ def _connect_args() -> dict[str, Any]:
         # generates a UUID per statement so names never collide.
         "statement_cache_size": 0,
         "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__",
+        "async_creator_fn": _connect_with_retry,
     }
     if settings.DB_SSL_REQUIRED:
         ctx = ssl.create_default_context()
