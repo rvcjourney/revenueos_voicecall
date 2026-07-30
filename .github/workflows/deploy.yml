@@ -8,6 +8,28 @@ jobs:
   # ── Lint & syntax check ─────────────────────────────────────────────────────
   lint:
     runs-on: ubuntu-latest
+    # tests/conftest.py + pyproject.toml's [tool.pytest.ini_options] hardcode
+    # DATABASE_URL=postgresql://motm:test@localhost:5432/motmvoice_test — the
+    # test suite (added by the SaaS-platform merge) needs a real Postgres to
+    # create/drop tables against. Without this service every push touching
+    # backend/ or agent/ fails here with "password authentication failed for
+    # user motm" before a single test even runs, which silently skips the
+    # deploy job below (it `needs: lint`) — code merged to main never reaches
+    # the VPS even though the push itself looks successful on GitHub.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: motm
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: motmvoice_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
