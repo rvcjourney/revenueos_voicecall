@@ -500,8 +500,18 @@ class VoiceAgent(Agent):
             except Exception as e2:
                 if "closing" in str(e2).lower() or "closed" in str(e2).lower():
                     logger.debug("Session closed before fallback say()")
-                else:
-                    logger.error("say() fallback also failed: %s", e2)
+                    return
+                # Both the LLM-generated reply and the plain say() fallback failed —
+                # the TTS pipeline itself is broken (bad voice_id, provider auth
+                # failure, etc). The call is connected but the agent can never speak.
+                # Previously this was only logged, leaving the call to run silently
+                # for up to _max_duration_guard's 600s and get misreported by the
+                # outcome classifier. End it now and flag it as a real system failure.
+                logger.error("say() fallback also failed — TTS is broken, ending call: %s", e2)
+                self._ending = True
+                await self._report_system_failure(f"TTS failed: {e2}")
+                await self._disconnect()
+                return
         self._last_user_activity = time.monotonic()
         _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
         _safe_task(self._silence_watchdog(), "silence-watchdog")
@@ -555,6 +565,27 @@ class VoiceAgent(Agent):
             self._ending = True
             _safe_task(self._do_hangup(), "hangup-from-keyword")
             return
+
+    async def _report_system_failure(self, error_text: str) -> None:
+        """The TTS pipeline itself failed before the agent ever spoke — the call
+        connected but is completely silent. Report it as a real system failure
+        (CallStatus.FAILED + error_message) instead of leaving it to be silently
+        misclassified as a normal (but quiet) conversation outcome."""
+        if not self._call_id or not self._backend_url:
+            return
+        if self._reported:
+            return
+        self._reported = True
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                await http.post(
+                    f"{self._backend_url}/api/calls/{self._call_id}/agent-report",
+                    json={"outcome": "pending", "summary": "", "transcript": [], "error_message": error_text},
+                )
+            logger.info("post_call_report_sent | call=%s status=failed error=%s", self._call_id, error_text)
+        except Exception as exc:
+            logger.error("report_system_failure failed to reach backend: %s", exc)
 
     async def _post_call_report(self) -> None:
         """Classify outcome with Groq and POST to backend. Called once after every call."""
