@@ -1,5 +1,5 @@
 """
-app/core/vobiz.py — Vobiz Recording API helper.
+app/core/vobiz.py — Vobiz Recording + Numbers API helpers.
 
 Queries the Recording API directly by to_number — skips CDR lookup because
 Vobiz recordings appear in the Recording list ~1-2 minutes after the call ends
@@ -53,24 +53,15 @@ async def validate_vobiz_account_and_did(
 
     Raises VobizAuthError or VobizDidNotOwnedError on failure. Returns None
     (does not raise) on success.
-
-    TODO — UNCONFIRMED ENDPOINT: this calls `/Account/{auth_id}/IncomingPhoneNumber/`,
-    guessed by analogy with the `/Account/{auth_id}/Recording/` endpoint already
-    used in fetch_recording_for_call() above (both assumed to follow the same
-    Plivo-style Account/{id}/{Resource}/ REST shape that the rest of this file
-    is built around). This has NOT been verified against Vobiz's real API docs
-    or a live account — confirm the actual path and response shape (does it
-    return "objects"/"numbers"/"data"? what key holds the E.164 number?) with
-    Vobiz support or their API reference, then update this function before
-    relying on it in production.
     """
     hdrs = _headers(auth_id, auth_token)
     norm_did = did.lstrip("+")
 
     try:
         async with http.get(
-            f"{_BASE}/Account/{auth_id}/IncomingPhoneNumber/",
+            f"{_BASE}/Account/{auth_id}/numbers",
             headers=hdrs,
+            params={"page": 1, "per_page": 100},
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             body_text = await resp.text()
@@ -97,9 +88,9 @@ async def validate_vobiz_account_and_did(
         log.warning("vobiz_account_validate_failed", error=str(exc))
         raise VobizAuthError("Could not reach Vobiz to verify credentials") from exc
 
-    numbers = data.get("objects") or data.get("numbers") or data.get("data") or []
+    numbers = data.get("items") or []
     for n in numbers:
-        num = str(n.get("number") or n.get("phone_number") or "").lstrip("+")
+        num = str(n.get("e164") or "").lstrip("+")
         if num and (num == norm_did or norm_did in num or num in norm_did):
             return
 
