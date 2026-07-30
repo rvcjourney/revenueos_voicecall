@@ -60,34 +60,6 @@ jobs:
     needs: lint
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Detect changed services
-        id: changes
-        run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD)
-          echo "$CHANGED"
-
-          if echo "$CHANGED" | grep -q '^agent/'; then
-            echo "agent=1" >> $GITHUB_OUTPUT
-          else
-            echo "agent=0" >> $GITHUB_OUTPUT
-          fi
-
-          if echo "$CHANGED" | grep -q '^backend/'; then
-            echo "backend=1" >> $GITHUB_OUTPUT
-          else
-            echo "backend=0" >> $GITHUB_OUTPUT
-          fi
-
-          if echo "$CHANGED" | grep -q '^frontend/'; then
-            echo "frontend=1" >> $GITHUB_OUTPUT
-          else
-            echo "frontend=0" >> $GITHUB_OUTPUT
-          fi
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -101,11 +73,26 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
           set -e
           cd ~/motmvoice/motmvoice
+
+          # Diff against what THIS SERVER currently has checked out, not what
+          # GitHub Actions assumes (previously `HEAD~1 HEAD` in a separate job
+          # step — that undercounts whenever an earlier push's lint job failed
+          # and never deployed, or when a push bundles more than one commit,
+          # since only the last commit's diff was ever examined). Computing it
+          # here means every change since the VPS's last successful deploy is
+          # always caught, regardless of how many commits or failed runs sit
+          # in between.
+          PRE_PULL_SHA=$(git rev-parse HEAD)
+
           # Authenticate this pull inline instead of persisting the token into the
           # 'origin' remote — that used to overwrite any manually-configured PAT
           # (used for ad-hoc pulls on the VPS) with this run's short-lived CI token,
           # breaking manual `git pull` once the CI token expired (~1h).
           git pull "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/motmautomation2026/MOTM-AI-VOICE-CALL.git" main
+
+          CHANGED=$(git diff --name-only "$PRE_PULL_SHA" HEAD)
+          echo "Changed since last deploy:"
+          echo "$CHANGED"
 
           # Rebuild api image first so migrations always run on fresh code
           echo "Building api image..."
@@ -117,9 +104,10 @@ jobs:
           docker compose run --rm --no-deps api alembic upgrade head
           echo "Migrations complete ✓"
 
-          BUILD_AGENT=${{ steps.changes.outputs.agent }}
-          BUILD_BACKEND=${{ steps.changes.outputs.backend }}
-          BUILD_FRONTEND=${{ steps.changes.outputs.frontend }}
+          BUILD_AGENT=0; BUILD_BACKEND=0; BUILD_FRONTEND=0
+          echo "$CHANGED" | grep -q '^agent/'    && BUILD_AGENT=1
+          echo "$CHANGED" | grep -q '^backend/'  && BUILD_BACKEND=1
+          echo "$CHANGED" | grep -q '^frontend/' && BUILD_FRONTEND=1
 
           SERVICES=""
           [ "$BUILD_AGENT"    = "1" ] && SERVICES="$SERVICES agent"
