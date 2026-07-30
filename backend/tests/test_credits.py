@@ -352,6 +352,11 @@ async def test_finalize_bills_credits_for_a_connected_call(db):
         await campaign_module._finalize(
             db, call=call, contact=contact, campaign=campaign,
             place_result="placed", wait_result="done",
+            # Production always passes answered_at when place_result=="placed"
+            # (see _run_one_call) — it's the anchor _finalize uses to compute
+            # duration_seconds. call.started_at was set ~4 minutes in the past
+            # by _make_call_setup, giving the ~4-minute duration this test expects.
+            answered_at=call.started_at,
         )
 
     await db.refresh(org)
@@ -379,6 +384,7 @@ async def test_finalize_writes_overage_call_event(db):
         await campaign_module._finalize(
             db, call=call, contact=contact, campaign=campaign,
             place_result="placed", wait_result="done",
+            answered_at=call.started_at,
         )
 
     events = (await db.execute(

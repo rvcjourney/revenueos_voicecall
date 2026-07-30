@@ -7,6 +7,7 @@ ElevenLabs and LiveKit are always mocked — these tests never touch the network
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -325,7 +326,18 @@ async def test_campaign_dispatch_uses_cloned_voice_id_and_elevenlabs_provider(db
 
     place_call_mock = AsyncMock(return_value="placed")
     monkeypatch.setattr(campaign_module, "_place_call", place_call_mock)
-    monkeypatch.setattr(campaign_module, "_wait_for_room_empty", AsyncMock(return_value="done"))
+
+    # _finalize bills credits from the real wall-clock gap between answered_at
+    # (stamped right before this call) and its own datetime.now() a moment
+    # later. An instant AsyncMock leaves that gap at ~0ms, which floors to
+    # duration_seconds=0 and bills nothing — this call needs to actually take
+    # just over a second so the ~4-minute-call assertion below has something
+    # real to measure (minutes_for_duration rounds up, so >0s already bills 1).
+    async def _wait_then_done(*args, **kwargs):
+        await asyncio.sleep(1.1)
+        return "done"
+
+    monkeypatch.setattr(campaign_module, "_wait_for_room_empty", _wait_then_done)
     monkeypatch.setattr(campaign_module, "_acquire_cps_slot", AsyncMock(return_value=None))
     monkeypatch.setattr(campaign_module.settings, "VOBIZ_AUTH_ID", "")
     monkeypatch.setattr(campaign_module.settings, "VOBIZ_AUTH_TOKEN", "")
