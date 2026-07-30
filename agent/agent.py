@@ -925,17 +925,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant):
-        # Customer hung up — ensure post-call report is always sent
-        if not voice_agent._reported:
-            logger.info("Participant disconnected — triggering post-call report")
-            _safe_task(voice_agent._post_call_report(), "post-call-on-disconnect")
+        # Customer hung up — classify + POST the outcome BEFORE tearing the room
+        # down ourselves. close_on_disconnect is deliberately off (below): with it
+        # on, RoomIO closes the session/room on this same event, and that teardown
+        # was consistently winning the race against this handler's fire-and-forget
+        # report (an httpx POST plus a Groq LLM call — real network time), because
+        # a customer-initiated hangup has no farewell TTS to wait out first. The
+        # job process exits once the room disconnects, killing the report
+        # mid-flight, which is why every customer-hangup call was landing on
+        # outcome=pending regardless of how the call actually went. Routing through
+        # _silent_hangup (await report, then disconnect) makes this path match the
+        # agent-initiated hangup paths, which already await the report first.
+        if not voice_agent._ending:
+            voice_agent._ending = True
+            logger.info("Participant disconnected — reporting outcome before disconnect")
+            _safe_task(voice_agent._silent_hangup(), "post-call-on-disconnect")
 
     try:
         await session.start(
             agent       = voice_agent,
             room        = ctx.room,
             room_options= RoomOptions(
-                close_on_disconnect  = True,
+                close_on_disconnect  = False,
                 delete_room_on_close = True,
             ),
         )
@@ -955,7 +966,7 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             entrypoint_fnc    = entrypoint,
             prewarm_fnc       = prewarm,
-            agent_name        = "voice-call-agent-dev",  # TEMP local-only name — isolates local testing from production's worker on the same LiveKit project. Revert to "voice-call-agent" before committing/pushing.
+            agent_name        = "voice-call-agent",
             worker_type       = agents.WorkerType.ROOM,
             num_idle_processes = 3,   # keep 3 processes warm for fast dispatch
             load_threshold    = 0.9,  # allow up to 90% CPU before refusing new jobs

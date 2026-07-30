@@ -347,7 +347,7 @@ async def _place_call(
             await asyncio.gather(
                 lk.agent_dispatch.create_dispatch(
                     lk_api.CreateAgentDispatchRequest(
-                        agent_name="voice-call-agent-dev",  # TEMP local-only name — matches agent/agent.py's temp dev registration. Revert to "voice-call-agent" before committing/pushing.
+                        agent_name="voice-call-agent",
                         room=room_name,
                         metadata=json.dumps({"agent_template_id": agent_template_id}),
                     )
