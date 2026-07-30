@@ -13,5 +13,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // The Docker container runs this dev server directly in production
+    // (see frontend/motm-voice-frontend/Dockerfile), behind the Caddy
+    // reverse proxy at motmvoice.b2botix.ai. Vite blocks requests with an
+    // unrecognized Host header by default (DNS-rebinding protection), so
+    // the production domain must be explicitly allow-listed here.
+    allowedHosts: ["motmvoice.b2botix.ai", "localhost"],
   },
 });
