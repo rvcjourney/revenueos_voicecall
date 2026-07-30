@@ -246,10 +246,12 @@ Register at `http://localhost:6001/register` or POST to `http://localhost:7000/a
 │   │   └── main.py             # App factory, middleware, exception handlers
 │   └── alembic/                # Database migrations
 │
-├── frontend/motmvoice-main/    # React 19 + TanStack Start dashboard
+├── frontend/motm-voice-frontend/  # React 19 + Vite dashboard (active)
 │   └── src/
 │       ├── routes/             # Page routes
 │       └── components/         # Reusable UI components
+│
+├── frontend/motmvoice-main-legacy/  # Old TanStack Start dashboard (unused, kept for reference)
 │
 └── docker-compose.yml          # Production deployment
 ```
