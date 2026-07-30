@@ -10,6 +10,8 @@ import logging
 import re
 import time
 import certifi
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
@@ -104,16 +106,112 @@ _HANGUP_RE = re.compile(
     r")\b",
     re.IGNORECASE | re.UNICODE,
 )
-_FAREWELL = "Bahut shukriya sir, aapka time dene ke liye! Take care, Bye"
+_FAREWELL = "Bahut shukriya ji, aapka time dene ke liye! Take care, Bye"
 
 # ── Silence / voicemail / bot detection ───────────────────────────────────────
 _SILENCE_INITIAL_SLEEP  = 15.0   # initial wait (covers welcome TTS playback + response window)
 _SILENCE_FIRST_TIMEOUT  = 18.0   # seconds of no user speech before first probe
 _SILENCE_PROBE_INTERVAL = 10.0   # seconds between subsequent probes
 _SILENCE_PROBES = [
-    "Hello sir? Kya aap sun rahe hain mujhe? Am I audible?",
-    "Sir, koi awaaz nahi aa rahi aapki taraf se. Are you still there?",
+    "Hello ji? Kya aap sun rahe hain mujhe? Am I audible?",
+    "Koi awaaz nahi aa rahi aapki taraf se. Are you still there?",
 ]
+
+# ── Time-of-day greeting + gender-neutral address ─────────────────────────────
+# Every campaign in this system already defaults to "Asia/Kolkata" when no
+# timezone is configured (see Campaign.timezone / _in_calling_window in
+# backend/app/workers/tasks/campaign.py) — reuse the same default here so a
+# stored welcome_message's greeting always matches the real time of the call,
+# and never assumes the customer's gender via "Sir"/"Ma'am".
+_GREETING_RE = re.compile(r"\bgood\s+(morning|afternoon|evening|night)\b", re.IGNORECASE)
+_HONORIFIC_RE = re.compile(r"\b(sir|ma'?am|madam)\b", re.IGNORECASE)
+
+
+def _time_of_day_greeting(tz_name: str = "Asia/Kolkata") -> str:
+    try:
+        hour = datetime.now(ZoneInfo(tz_name)).hour
+    except Exception:
+        # Covers ZoneInfoNotFoundError (bad tz name) AND the IANA tzdata
+        # package being entirely unavailable (e.g. Windows / slim Docker
+        # images without the `tzdata` PyPI package) — never let a timezone
+        # lookup failure crash the whole call. Falls back to system local
+        # time, which is still correct for the single-region (India) case
+        # this deployment runs in.
+        hour = datetime.now().hour
+    if hour < 12:
+        return "Good Morning"
+    if hour < 17:
+        return "Good Afternoon"
+    return "Good Evening"
+
+
+def _localize_welcome_message(text: str, tz_name: str = "Asia/Kolkata") -> str:
+    """Correct a stored welcome_message's time-of-day greeting to match right now,
+    and swap gendered honorifics for the neutral Hinglish "ji" — same message,
+    spoken at the right time to the right person."""
+    if not text:
+        return text
+    try:
+        corrected = _GREETING_RE.sub(_time_of_day_greeting(tz_name), text)
+        corrected = _HONORIFIC_RE.sub("ji", corrected)
+        return corrected
+    except Exception:
+        logger.warning("greeting localization failed — using original text unchanged", exc_info=True)
+        return text
+
+
+_HONORIFIC_GREETING_RE = re.compile(
+    r"\bgood\s+(?:morning|afternoon|evening|night)\b|\b(?:sir|ma'?am|madam)\b",
+    re.IGNORECASE,
+)
+
+
+def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
+    """Backstop for the LIVE TTS stream, not just the pre-corrected welcome_message text.
+    Guardrail 1a tells the LLM not to say "Sir"/"Ma'am" and to use the right time-of-day
+    greeting, but that's a soft instruction — the LLM can still improvise it on the opening
+    line ("speak naturally") or later in the call. Rewrite every chunk deterministically so
+    a wrong honorific/greeting can never actually reach the caller.
+
+    A match is only substituted once `tail` further characters have arrived after it —
+    i.e. once its right word-boundary is confirmed by text actually received, not just
+    "nothing else happened to arrive yet". Without that, a chunk boundary landing right
+    after "Sir" (before the "f" of "Sirf" arrives) would wrongly treat "Sir" as a whole
+    word and mangle it into "jif"."""
+    tail = max(len("good afternoon"), len("madam")) - 1
+    greeting = _time_of_day_greeting(tz_name)
+
+    def _replace(m: re.Match) -> str:
+        return greeting if m.group(0)[0].lower() == "g" else "ji"
+
+    async def _filter(text_stream):
+        buf = ""
+        async for chunk in text_stream:
+            buf += chunk
+            confirmed_end = len(buf) - tail
+            if confirmed_end > 0:
+                # Build output from the matches themselves (using their real position in
+                # `buf`, which already has `tail` chars of real lookahead past them) rather
+                # than slicing off a prefix and re-running the regex on it in isolation —
+                # re-matching an isolated slice loses that lookahead and reintroduces the
+                # exact false-positive ("Sirf" split right after "Sir") this is guarding against.
+                out_end = confirmed_end
+                parts, last = [], 0
+                for m in _HONORIFIC_GREETING_RE.finditer(buf):
+                    if m.end() > confirmed_end:
+                        out_end = min(out_end, m.start())
+                        break
+                    parts.append(buf[last:m.start()])
+                    parts.append(_replace(m))
+                    last = m.end()
+                if out_end > 0:
+                    parts.append(buf[last:out_end])
+                    yield "".join(parts)
+                    buf = buf[out_end:]
+        if buf:
+            yield _HONORIFIC_GREETING_RE.sub(_replace, buf)
+
+    return _filter
 
 _VOICEMAIL_RE = re.compile(
     r"\b("
@@ -193,6 +291,8 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         opening_block = (
             "[FIRST TURN — no customer input yet]\n"
             f'Open the call with this line, spoken naturally: "{welcome_message.strip()}"\n'
+            "This line's time-of-day greeting and address term are already correct for right "
+            "now — say it as-is, naturally, like a real person on the phone, not read off a script.\n"
             "Then stop immediately and wait for the customer to respond.\n\n"
         )
 
@@ -201,6 +301,8 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "1. Speak like a real Indian salesperson on a phone call — warm, natural, confident. "
         "Replies should feel human and conversational. Usually 1-2 sentences, occasionally 3 if needed. "
         "Never lecture. Never sound robotic or scripted.\n"
+        "1a. Never assume or state the customer's gender. Do not address them as 'Sir' or 'Ma'am' — "
+        "use the warm, gender-neutral Hinglish 'ji', or their name once you know it.\n"
         "2. Keep the SAME tone and energy from the very first word to the last — consistent warmth throughout.\n"
         "3. Never invent product grades, prices, or specs not in your instructions.\n"
         "4. Never reveal you are an AI, chatbot, or language model.\n"
@@ -214,7 +316,7 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         f"{language.upper()} only. Consistent language from first word to last.\n"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "11. To end the call: first say a complete warm goodbye OUT LOUD "
-        "(e.g. 'Bahut shukriya sir, koi zaroorat ho toh zaroor call karein, take care!'), "
+        "(e.g. 'Bahut shukriya ji, koi zaroorat ho toh zaroor call karein, take care!'), "
         "then immediately output the EXACT text [end_call] on its own. "
         "The system will end the call automatically — never say 'end_call' as a spoken word.\n"
         "12. Only end the call when ALL of these are true:\n"
@@ -227,7 +329,7 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "ok / theek hai / accha / haan / hmm / ji / bilkul / shukriya / phir milenge / sochta hoon.\n"
         "If ANY condition is not met — keep the conversation going. "
         "If the customer has not given contact info yet, ask: "
-        "'Ek kaam karo sir, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
+        "'Ek kaam karo ji, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
         "Never end early.\n"
     )
     return opening_block + guardrails + "\n" + p
@@ -643,8 +745,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception:
             pass
 
-    raw_prompt      = meta.get("system_prompt") or AGENT_SYSTEM_PROMPT
-    welcome_message = meta.get("welcome_message") or AGENT_WELCOME_MESSAGE
+    tz_name         = meta.get("timezone") or "Asia/Kolkata"
+    # Correct greeting/honorific wording wherever it lives — either the dedicated
+    # welcome_message field, or baked into the system_prompt's own OPENING section
+    # (older templates generated before the gender-neutral/time-of-day fix have it
+    # hardcoded there, e.g. a literal "Good Morning Sir" line).
+    raw_prompt      = _localize_welcome_message(
+        meta.get("system_prompt") or AGENT_SYSTEM_PROMPT, tz_name
+    )
+    welcome_message = _localize_welcome_message(
+        meta.get("welcome_message") or AGENT_WELCOME_MESSAGE, tz_name
+    )
     voice_provider  = (meta.get("voice_provider") or "elevenlabs").lower()
     voice_id        = meta.get("voice_id") or (
         CARTESIA_VOICE_ID if voice_provider == "cartesia"
@@ -791,6 +902,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         webhook_secret=AGENT_WEBHOOK_SECRET,
     )
     end_call_transform = _end_call_filter_transform(voice_agent._trigger_hangup)
+    honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name)
 
     session = AgentSession(
         stt=sarvam.STT(
@@ -808,7 +920,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 "min_words":    12,   # customer must say ~12 words to interrupt agent — prevents "haan/achha" and noise-triggered blips from breaking sentences
             },
         ),
-        tts_text_transforms=["filter_markdown", "filter_emoji", end_call_transform],
+        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, end_call_transform],
     )
 
     @ctx.room.on("participant_disconnected")
@@ -843,7 +955,7 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             entrypoint_fnc    = entrypoint,
             prewarm_fnc       = prewarm,
-            agent_name        = "voice-call-agent",
+            agent_name        = "voice-call-agent-dev",  # TEMP local-only name — isolates local testing from production's worker on the same LiveKit project. Revert to "voice-call-agent" before committing/pushing.
             worker_type       = agents.WorkerType.ROOM,
             num_idle_processes = 3,   # keep 3 processes warm for fast dispatch
             load_threshold    = 0.9,  # allow up to 90% CPU before refusing new jobs

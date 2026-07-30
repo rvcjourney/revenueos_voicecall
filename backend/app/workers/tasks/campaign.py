@@ -347,7 +347,7 @@ async def _place_call(
             await asyncio.gather(
                 lk.agent_dispatch.create_dispatch(
                     lk_api.CreateAgentDispatchRequest(
-                        agent_name="voice-call-agent",
+                        agent_name="voice-call-agent-dev",  # TEMP local-only name — matches agent/agent.py's temp dev registration. Revert to "voice-call-agent" before committing/pushing.
                         room=room_name,
                         metadata=json.dumps({"agent_template_id": agent_template_id}),
                     )
@@ -445,6 +445,7 @@ async def _finalize(
     place_result: str,
     wait_result: str,
     answered_at: datetime | None = None,
+    duration_cap_seconds: int | None = None,
 ) -> None:
     """
     Write final Call status, CampaignContact status, and Campaign aggregate
@@ -477,9 +478,16 @@ async def _finalize(
     # created, which can run well before the call connects (DNC checks, trunk/
     # org slot waits, Celery queue backlog) — using it inflates duration by
     # however long that gap was instead of reflecting real call time.
-    duration = (
-        int((now - answered_at).total_seconds()) if answered_at else None
-    )
+    #
+    # Clamped to duration_cap_seconds (the same timeout _wait_for_room_empty
+    # enforces before force-closing the room): if the worker process itself
+    # stalls or the host sleeps mid-poll, wall-clock now-answered_at can balloon
+    # far past any real call length even though the room was already closed.
+    duration = None
+    if answered_at:
+        duration = int((now - answered_at).total_seconds())
+        if duration_cap_seconds is not None:
+            duration = min(duration, duration_cap_seconds)
 
     call_values: dict = dict(status=call_status, ended_at=now, duration_seconds=duration)
     if answered_at is not None:
@@ -759,6 +767,7 @@ async def _run_one_call(
                             place_result=place_result,
                             wait_result=wait_result,
                             answered_at=answered_at,
+                            duration_cap_seconds=max_duration + 60,
                         )
             except Exception:
                 log.exception("finalize_error", call_id=str(call_id), contact_id=str(contact_id))
@@ -1120,7 +1129,9 @@ async def _run_test_call_async(
             call_row.ended_at = now
             if answered_at:
                 call_row.answered_at = answered_at
-                call_row.duration_seconds = int((now - answered_at).total_seconds())
+                call_row.duration_seconds = min(
+                    int((now - answered_at).total_seconds()), 660
+                )
             await session.commit()
 
     log.info("test_call_done", call_id=call_id, result=place_result)
