@@ -21,6 +21,13 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Celery's built-in default queue is literally named "celery" — distinct from
+    # the "default" queue the worker listens to (see docker-compose.yml:
+    # `--queues calls,campaigns,exports,default`). Any task dispatched without an
+    # explicit queue= (both beat_schedule entries below, and run_campaign.delay()
+    # in app/workers/tasks/campaign.py) would otherwise silently land in "celery",
+    # which nothing consumes, and pile up in the broker forever.
+    task_default_queue="default",
     # Re-queue task if the worker process dies while the task is running.
     task_acks_late=True,
     task_reject_on_worker_lost=True,
