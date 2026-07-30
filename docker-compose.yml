@@ -112,7 +112,7 @@ services:
   # ── Frontend (TanStack Start / React) ───────────────────────────────────────
   frontend:
     build:
-      context: ./frontend/motmvoice-main
+      context: ./frontend/motm-voice-frontend
       dockerfile: Dockerfile
     container_name: motm-frontend
     restart: always

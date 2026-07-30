@@ -1,0 +1,85 @@
+import { lazy, Suspense } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/lib/auth";
+import { ThemeProvider } from "@/lib/theme";
+import { AuthedLayout } from "@/components/layout/AuthedLayout";
+import { PageLoader } from "@/components/shared/PageLoader";
+
+const Landing = lazy(() => import("@/routes/Landing"));
+const Login = lazy(() => import("@/routes/Login"));
+const Signup = lazy(() => import("@/routes/Signup"));
+const NotFound = lazy(() => import("@/routes/NotFound"));
+
+const Dashboard = lazy(() => import("@/routes/Dashboard"));
+const CampaignsList = lazy(() => import("@/routes/CampaignsList"));
+const CampaignNew = lazy(() => import("@/routes/CampaignNew"));
+const CampaignDetail = lazy(() => import("@/routes/CampaignDetail"));
+const CallsList = lazy(() => import("@/routes/CallsList"));
+const CallDetail = lazy(() => import("@/routes/CallDetail"));
+const Agents = lazy(() => import("@/routes/Agents"));
+const VoiceCloning = lazy(() => import("@/routes/VoiceCloning"));
+const Analytics = lazy(() => import("@/routes/Analytics"));
+const Settings = lazy(() => import("@/routes/Settings"));
+const AdminTeam = lazy(() => import("@/routes/admin/AdminTeam"));
+const AdminPhoneNumbers = lazy(() => import("@/routes/admin/AdminPhoneNumbers"));
+const AdminDnc = lazy(() => import("@/routes/admin/AdminDnc"));
+const AdminAudit = lazy(() => import("@/routes/admin/AdminAudit"));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+      // Data younger than this is served straight from cache with no background
+      // refetch — stops re-visiting a recently-seen page from firing a redundant
+      // request that competes with the new page's own (first-load) requests.
+      staleTime: 15_000,
+    },
+  },
+});
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <AuthProvider>
+          <TooltipProvider delayDuration={200}>
+            <BrowserRouter>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  <Route path="/" element={<Landing />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/signup" element={<Signup />} />
+
+                  <Route element={<AuthedLayout />}>
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/campaigns" element={<CampaignsList />} />
+                    <Route path="/campaigns/new" element={<CampaignNew />} />
+                    <Route path="/campaigns/:id" element={<CampaignDetail />} />
+                    <Route path="/calls" element={<CallsList />} />
+                    <Route path="/calls/:id" element={<CallDetail />} />
+                    <Route path="/agents" element={<Agents />} />
+                    <Route path="/voice-cloning" element={<VoiceCloning />} />
+                    <Route path="/analytics" element={<Analytics />} />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/admin/team" element={<AdminTeam />} />
+                    <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
+                    <Route path="/admin/dnc" element={<AdminDnc />} />
+                    <Route path="/admin/audit" element={<AdminAudit />} />
+                  </Route>
+
+                  <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </BrowserRouter>
+            <Toaster position="top-right" />
+          </TooltipProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+}

@@ -1,0 +1,247 @@
+import axios from "axios";
+import type {
+  ActivityEvent,
+  AdminUser,
+  AgentAccessRequest,
+  AgentCreate,
+  AgentCreationRequest,
+  AgentCreationRequestAdmin,
+  AgentTemplate,
+  ApprovedAccess,
+  Call,
+  CallDetail,
+  Campaign,
+  CampaignContact,
+  CampaignCreate,
+  CampaignFolder,
+  ClonedVoice,
+  ConcurrencyUsage,
+  CreditUsage,
+  DashboardStats,
+  DncEntry,
+  ListResponse,
+  LoginResponse,
+  OrgInfo,
+  OrgQuotaInfo,
+  OrgStats,
+  SipTrunk,
+  SipTrunkAssignment,
+  TrunkCapacity,
+  User,
+} from "./types";
+
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+export const TOKEN_KEY = "motm_access_token";
+export const REFRESH_TOKEN_KEY = "motm_refresh_token";
+export const USER_KEY = "motm_user";
+
+export const api = axios.create({ baseURL: API_BASE_URL, timeout: 20000 });
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    }
+    return Promise.reject(error);
+  }
+);
+
+/** True when the request failed because the backend couldn't be reached at all. */
+export function isNetworkError(error: unknown): boolean {
+  return axios.isAxiosError(error) && !error.response;
+}
+
+export function apiErrorMessage(error: unknown, fallback = "Something went wrong."): string {
+  if (axios.isAxiosError(error)) {
+    if (!error.response) return "Can't reach the Talkryn server. Is the backend running?";
+    const detail = error.response.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (error.response.status === 401) return "Your session has expired. Please log in again.";
+    if (error.response.status === 403) return "You don't have permission to do that.";
+    if (error.response.status === 404) return "Not found.";
+  }
+  return fallback;
+}
+
+async function downloadBlob(path: string, filename: string) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!res.ok) throw new Error("Export failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────
+export const authApi = {
+  login: (email: string, password: string) =>
+    api.post<LoginResponse>("/api/auth/login", { email, password }),
+  register: (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) =>
+    api.post<LoginResponse>("/api/auth/register", data),
+  registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) =>
+    api.post<LoginResponse>("/api/auth/register-member", data),
+  logout: () => api.post("/api/auth/logout").catch(() => undefined),
+  me: () => api.get<User>("/api/auth/me"),
+  updateProfile: (data: { full_name?: string; password?: string }) =>
+    api.patch<User>("/api/auth/profile", data),
+  orgInfo: () => api.get<OrgQuotaInfo>("/api/auth/org-info"),
+};
+
+// ── AI Agents ────────────────────────────────────────────────────────────
+export const agentsApi = {
+  list: () => api.get<ListResponse<AgentTemplate> | AgentTemplate[]>("/api/agents"),
+  get: (id: string) => api.get<AgentTemplate>(`/api/agents/${id}`),
+  create: (data: AgentCreate) => api.post<AgentTemplate>("/api/agents", data),
+  update: (id: string, data: Partial<AgentCreate>) => api.patch<AgentTemplate>(`/api/agents/${id}`, data),
+  remove: (id: string) => api.delete(`/api/agents/${id}`),
+  requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
+  testCall: (id: string, phone_number: string) =>
+    api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number }),
+  optimizePrompt: (raw_input: string) =>
+    api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", { raw_input }),
+  requestCreation: (form: FormData) =>
+    api.post<{ id: string; message: string }>("/api/agents/creation-request", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  myCreationRequests: () => api.get<AgentCreationRequest[]>("/api/agents/my-creation-requests"),
+};
+
+// ── Campaigns ────────────────────────────────────────────────────────────
+export const campaignsApi = {
+  list: (params?: { status?: string; folder_id?: string }) =>
+    api.get<ListResponse<Campaign> | Campaign[]>("/api/campaigns", { params }),
+  get: (id: string) => api.get<Campaign>(`/api/campaigns/${id}`),
+  create: (data: CampaignCreate) => api.post<Campaign>("/api/campaigns", data),
+  update: (id: string, data: Partial<Campaign>) => api.patch<Campaign>(`/api/campaigns/${id}`, data),
+  remove: (id: string) => api.delete(`/api/campaigns/${id}`),
+  contacts: (id: string, params?: { status?: string; limit?: number; offset?: number }) =>
+    api.get<ListResponse<CampaignContact>>(`/api/campaigns/${id}/contacts`, { params }),
+  uploadContacts: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<{ count: number; message: string }>(`/api/campaigns/${id}/contacts`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  launch: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/launch`),
+  pause: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/pause`),
+  duplicate: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/duplicate`),
+  exportInterested: (id: string, filename = "interested-leads.csv") =>
+    downloadBlob(`/api/campaigns/${id}/export/interested`, filename),
+  exportNoAnswer: (id: string, filename = "no-answer.csv") =>
+    downloadBlob(`/api/campaigns/${id}/export/no_answer`, filename),
+  exportCallbacks: (id: string, filename = "callback-requests.csv") =>
+    downloadBlob(`/api/campaigns/${id}/export/callback_requested`, filename),
+  exportAll: (id: string, filename = "all-results.csv") =>
+    downloadBlob(`/api/campaigns/${id}/export/all`, filename),
+};
+
+// ── Folders ──────────────────────────────────────────────────────────────
+export const foldersApi = {
+  list: () => api.get<ListResponse<CampaignFolder> | CampaignFolder[]>("/api/folders"),
+  create: (data: { name: string; color?: string }) => api.post<CampaignFolder>("/api/folders", data),
+  update: (id: string, data: { name?: string; color?: string }) =>
+    api.patch<CampaignFolder>(`/api/folders/${id}`, data),
+  remove: (id: string) => api.delete(`/api/folders/${id}`),
+};
+
+// ── Calls ────────────────────────────────────────────────────────────────
+export const callsApi = {
+  list: (params?: { campaign_id?: string; outcome?: string; limit?: number; offset?: number }) =>
+    api.get<ListResponse<Call> | Call[]>("/api/calls", { params }),
+  get: (id: string) => api.get<CallDetail>(`/api/calls/${id}`),
+  fetchRecording: (id: string) =>
+    api.post<{ found: boolean; recording_url?: string }>(`/api/calls/${id}/fetch-recording`),
+  recordingUrl: (id: string, download = false) =>
+    `${API_BASE_URL}/api/calls/${id}/recording${download ? "?download=true" : ""}`,
+};
+
+// ── Analytics & usage ────────────────────────────────────────────────────
+export const analyticsApi = {
+  dashboard: () => api.get<DashboardStats>("/api/analytics/dashboard"),
+};
+
+export const usageApi = {
+  concurrency: () => api.get<ConcurrencyUsage>("/api/usage/concurrency"),
+  credits: () => api.get<CreditUsage>("/api/usage/credits"),
+};
+
+// ── Voice cloning ────────────────────────────────────────────────────────
+export const voiceCloningApi = {
+  list: () => api.get<ListResponse<ClonedVoice> | ClonedVoice[]>("/api/voice-cloning"),
+  create: (data: { name: string; file: File }) => {
+    const form = new FormData();
+    form.append("name", data.name);
+    form.append("file", data.file);
+    return api.post<ClonedVoice>("/api/voice-cloning", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  remove: (id: string) => api.delete(`/api/voice-cloning/${id}`),
+};
+
+// ── SIP trunks / phone numbers ───────────────────────────────────────────
+export const sipTrunksApi = {
+  list: () => api.get<ListResponse<SipTrunk> | SipTrunk[]>("/api/sip-trunks"),
+  create: (data: Partial<SipTrunk>) => api.post<SipTrunk>("/api/sip-trunks", data),
+  update: (id: string, data: Partial<SipTrunk>) => api.put<SipTrunk>(`/api/sip-trunks/${id}`, data),
+  remove: (id: string) => api.delete(`/api/sip-trunks/${id}`),
+  assign: (id: string, user_id: string) => api.post(`/api/sip-trunks/${id}/assign`, { user_id }),
+  unassign: (id: string, userId: string) => api.delete(`/api/sip-trunks/${id}/assign/${userId}`),
+  assignments: (id: string) => api.get<SipTrunkAssignment[]>(`/api/sip-trunks/${id}/assignments`),
+  connectVobiz: (data: { auth_id: string; auth_token: string; did: string }) =>
+    api.post<{ trunk_id: string; status: string; did: string }>("/api/sip-trunks/connect-vobiz", data),
+  test: (id: string) => api.post<{ is_active: boolean }>(`/api/sip-trunks/${id}/test`),
+  capacity: () => api.get<TrunkCapacity[]>("/api/sip-trunks/capacity"),
+  my: () => api.get<ListResponse<SipTrunk> | SipTrunk[]>("/api/sip-trunks/my"),
+};
+
+// ── Admin ────────────────────────────────────────────────────────────────
+export const adminApi = {
+  org: () => api.get<OrgInfo>("/api/admin/org"),
+  stats: () => api.get<OrgStats>("/api/admin/stats"),
+  users: () => api.get<AdminUser[]>("/api/admin/users"),
+  createUser: (data: { full_name: string; email: string; password: string; role: string }) =>
+    api.post<AdminUser>("/api/admin/users", data),
+  updateUser: (id: string, data: { full_name?: string; role?: string; is_active?: boolean }) =>
+    api.patch<AdminUser>(`/api/admin/users/${id}`, data),
+  removeUser: (id: string) => api.delete(`/api/admin/users/${id}`),
+  agentRequests: (status?: string) =>
+    api.get<AgentAccessRequest[]>("/api/admin/agent-requests", { params: { status } }),
+  approveAgentRequest: (id: string) => api.post(`/api/admin/agent-requests/${id}/approve`),
+  rejectAgentRequest: (id: string) => api.post(`/api/admin/agent-requests/${id}/reject`),
+  revokeAgentAccess: (id: string) => api.post(`/api/admin/agent-requests/${id}/revoke`),
+  agentAccess: () => api.get<ApprovedAccess[]>("/api/admin/agent-access"),
+  setEditPermission: (id: string, can_edit: boolean) =>
+    api.patch(`/api/admin/agent-access/${id}/edit-permission`, { can_edit }),
+  activity: () => api.get<ActivityEvent[]>("/api/admin/activity"),
+  dnc: (q?: string) => api.get<DncEntry[]>("/api/admin/dnc", { params: q ? { q } : undefined }),
+  addDnc: (data: { phone_number: string; notes?: string }) => api.post<DncEntry>("/api/admin/dnc", data),
+  removeDnc: (id: string) => api.delete(`/api/admin/dnc/${id}`),
+  agentCreationRequests: (status?: string) =>
+    api.get<AgentCreationRequestAdmin[]>("/api/admin/agent-creation-requests", { params: { status } }),
+  reviewAgentCreationRequest: (id: string, admin_notes?: string) =>
+    api.patch(`/api/admin/agent-creation-requests/${id}/review`, { admin_notes }),
+};
+
+/** Normalizes list endpoints that may return either a bare array or { items, total }. */
+export function unwrapList<T>(data: ListResponse<T> | T[] | undefined): T[] {
+  if (!data) return [];
+  return Array.isArray(data) ? data : data.items;
+}

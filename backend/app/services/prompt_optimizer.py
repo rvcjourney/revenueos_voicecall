@@ -49,6 +49,16 @@ _FIXED_RULES = """\
 - Info not in this prompt → "Iske liye aap hamare website par jaiye."
 - Always try to collect WhatsApp number or email before ending any call where the \
 customer showed interest.
+- Passive replies like "haan", "theek hai", "accha", "ok", "hmm" are politeness, NOT \
+interest — never treat them as a buying signal. Ask a direct question about their need, \
+usage, or timeline and judge interest from their actual answer, not from filler words.
+- If the customer keeps giving only vague one-word replies after 2-3 direct questions, \
+treat them as not interested and close politely — don't keep pushing.
+- When collecting a WhatsApp/phone number, check it sounds like a real 10-digit Indian \
+mobile number starting with 6-9. If it has the wrong digit count, is an obvious fake \
+(repeated digit, simple sequence like 123456789), or was unclear, politely ask the \
+customer to repeat it — don't accept it silently. Always read the number back \
+digit-by-digit to confirm before ending the call.
 - When the customer genuinely wants to end the call, close warmly and naturally. \
 Never persist.
 - NEVER say the words "end_call" out loud — the system ends the call automatically.\
@@ -112,6 +122,10 @@ Ask ONE question at a time. Like a curious colleague, not an interrogator.
 customers. Use Hinglish. Each question on its own line starting with -]
 
 ## IF INTERESTED
+
+Only enter this section on a genuine, active signal — a specific question, agreeing to \
+receive info, confirming current usage, or a clear "yes". A passive "haan"/"theek hai" \
+alone is NOT enough; ask one more direct question first if unsure.
 
 Dig deeper into their application, then move to collecting contact details.
 
