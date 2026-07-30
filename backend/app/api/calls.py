@@ -16,7 +16,7 @@ from app.config import settings
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import NotFoundError
 from app.database import get_db
-from app.models.call import Call, CallOutcome, CallTranscript
+from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
 router = APIRouter()
@@ -91,6 +91,11 @@ class AgentReportIn(BaseModel):
     outcome: str
     summary: str = ""
     transcript: list[dict] = []
+    # Set by the agent when the TTS pipeline itself failed (e.g. both generate_reply()
+    # and the say() fallback raised) — the call connected but the agent never actually
+    # spoke. Distinguishes a genuine silent-system-failure from a normal conversation
+    # outcome so it isn't misreported as e.g. "not_interested".
+    error_message: str | None = None
 
 
 @router.post("/{call_id}/agent-report", status_code=status.HTTP_204_NO_CONTENT)
@@ -108,11 +113,12 @@ async def agent_report(
     # Fetch the call to get campaign_id before updating
     call_row = (await db.execute(select(Call).where(Call.id == call_id))).scalar_one_or_none()
 
-    await db.execute(
-        update(Call)
-        .where(Call.id == call_id)
-        .values(outcome=outcome, summary=body.summary or None)
-    )
+    values: dict = {"outcome": outcome, "summary": body.summary or None}
+    if body.error_message:
+        values["status"] = CallStatus.FAILED
+        values["error_message"] = body.error_message[:2000]
+
+    await db.execute(update(Call).where(Call.id == call_id).values(**values))
 
     # Atomically increment campaign interested_count when outcome is interested
     if outcome == "interested" and call_row and call_row.campaign_id:
