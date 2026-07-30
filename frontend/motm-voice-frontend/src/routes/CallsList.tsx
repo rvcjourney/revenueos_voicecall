@@ -53,9 +53,9 @@ export default function CallsList() {
   const stats = useMemo(() => {
     const list = calls.data ?? [];
     const interested = list.filter((c) => c.outcome === "interested").length;
-    const withDuration = list.filter((c) => callDurationSeconds(c) > 0);
+    const withDuration = list.filter((c) => (callDurationSeconds(c) ?? 0) > 0);
     const avgDuration = withDuration.length
-      ? Math.round(withDuration.reduce((sum, c) => sum + callDurationSeconds(c), 0) / withDuration.length)
+      ? Math.round(withDuration.reduce((sum, c) => sum + (callDurationSeconds(c) ?? 0), 0) / withDuration.length)
       : 0;
     const totalCost = list.reduce((sum, c) => sum + (c.cost_inr ?? 0), 0);
     return { total: list.length, interested, avgDuration, totalCost };
