@@ -73,10 +73,22 @@ async def validate_vobiz_account_and_did(
             headers=hdrs,
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
+            body_text = await resp.text()
             if resp.status in (401, 403):
+                log.warning(
+                    "vobiz_account_validate_auth_error",
+                    status=resp.status,
+                    url=str(resp.url),
+                    body=body_text[:500],
+                )
                 raise VobizAuthError("Invalid Vobiz auth_id or auth_token")
             if resp.status != 200:
-                log.warning("vobiz_account_validate_error", status=resp.status)
+                log.warning(
+                    "vobiz_account_validate_error",
+                    status=resp.status,
+                    url=str(resp.url),
+                    body=body_text[:500],
+                )
                 raise VobizAuthError("Could not verify Vobiz credentials — try again")
             data = await resp.json(content_type=None)
     except VobizValidationError:
