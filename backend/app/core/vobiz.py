@@ -170,29 +170,39 @@ async def fetch_recording_for_call(
     """
     hdrs = _headers(auth_id, auth_token)
     norm_to = to_number.lstrip("+")
+    _LIMIT = 100
+
+    async def _fetch_page(offset: int) -> tuple[list[dict], int | None]:
+        async with http.get(
+            f"{_BASE}/Account/{auth_id}/Recording/",
+            headers=hdrs,
+            params={"limit": _LIMIT, "offset": offset},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                log.warning("vobiz_recording_list_error", status=resp.status, offset=offset)
+                return [], None
+            data = await resp.json(content_type=None)
+        recs = data.get("objects") or data.get("recordings") or data.get("data") or []
+        total = (data.get("meta") or {}).get("total_count")
+        return recs, total
 
     for attempt in range(retries):
         if attempt > 0:
             await asyncio.sleep(retry_delay)
 
         try:
-            async with http.get(
-                f"{_BASE}/Account/{auth_id}/Recording/",
-                headers=hdrs,
-                # Vobiz's Recording API has no to_number or date-range filter (confirmed
-                # against their docs) — we always fetch a page and filter client-side.
-                # Request the max page size (default is only 20) so a busy account
-                # doesn't push the call we're looking for off the first page before
-                # we ever see it.
-                params={"limit": 100, "offset": 0},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    log.warning("vobiz_recording_list_error", status=resp.status, attempt=attempt)
-                    continue
-                data = await resp.json(content_type=None)
-
-            recordings = data.get("objects") or data.get("recordings") or data.get("data") or []
+            # Vobiz's Recording API has no to_number or date-range filter, and its
+            # default sort order isn't documented — so once an account has more than
+            # one page of recordings, our target could be on the first page OR the
+            # last page depending which way it sorts. Check both: if the account has
+            # more than _LIMIT recordings, also fetch the last page (computed from
+            # meta.total_count), which is where a new recording will land if Vobiz
+            # sorts oldest-first (the more common REST default).
+            recordings, total_count = await _fetch_page(0)
+            if total_count and total_count > _LIMIT:
+                last_page, _ = await _fetch_page(max(0, total_count - _LIMIT))
+                recordings = recordings + last_page
 
             for rec in recordings:
                 rec_to = (rec.get("to_number") or "").lstrip("+")
