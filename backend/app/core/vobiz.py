@@ -179,6 +179,12 @@ async def fetch_recording_for_call(
             async with http.get(
                 f"{_BASE}/Account/{auth_id}/Recording/",
                 headers=hdrs,
+                # Vobiz's Recording API has no to_number or date-range filter (confirmed
+                # against their docs) — we always fetch a page and filter client-side.
+                # Request the max page size (default is only 20) so a busy account
+                # doesn't push the call we're looking for off the first page before
+                # we ever see it.
+                params={"limit": 100, "offset": 0},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
