@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Bot, Download, FileText, ListTree, Loader2, MessageSquare, RefreshCw, User } from "lucide-react";
@@ -9,13 +10,44 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { CallOutcomeBadge, CallStatusBadge, SentimentBadge } from "@/components/shared/StatusBadge";
 import { useCall, useFetchRecording } from "@/lib/hooks";
-import { callsApi, apiErrorMessage } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { callDurationSeconds, cn, formatDateTime, formatDuration, titleCase } from "@/lib/utils";
 
 export default function CallDetail() {
   const { id } = useParams<{ id: string }>();
   const call = useCall(id);
   const fetchRecording = useFetchRecording();
+  const [recordingBlobUrl, setRecordingBlobUrl] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState(false);
+
+  // <audio src>/<a href> can't carry the app's Authorization header, and the
+  // recording proxy endpoint requires one — fetch it as an authenticated
+  // blob instead and point playback/download at the resulting object URL.
+  useEffect(() => {
+    const recordingUrl = call.data?.recording_url;
+    const callId = call.data?.id;
+    if (!recordingUrl || !callId) {
+      setRecordingBlobUrl(null);
+      return;
+    }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setRecordingError(false);
+    api
+      .get(`/api/calls/${callId}/recording`, { responseType: "blob" })
+      .then((res) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(res.data);
+        setRecordingBlobUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setRecordingError(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [call.data?.id, call.data?.recording_url]);
 
   if (call.isLoading) {
     return (
@@ -153,14 +185,22 @@ export default function CallDetail() {
             <CardHeader><CardTitle>Recording</CardTitle></CardHeader>
             <CardContent className="space-y-3 pt-0">
               {c.recording_url ? (
-                <>
-                  <audio controls className="w-full" src={callsApi.recordingUrl(c.id)} />
-                  <Button variant="outline" size="sm" className="w-full" asChild>
-                    <a href={callsApi.recordingUrl(c.id, true)}>
-                      <Download className="h-3.5 w-3.5" /> Download
-                    </a>
-                  </Button>
-                </>
+                recordingBlobUrl ? (
+                  <>
+                    <audio controls className="w-full" src={recordingBlobUrl} />
+                    <Button variant="outline" size="sm" className="w-full" asChild>
+                      <a href={recordingBlobUrl} download={`call_${c.id}.mp3`}>
+                        <Download className="h-3.5 w-3.5" /> Download
+                      </a>
+                    </Button>
+                  </>
+                ) : recordingError ? (
+                  <p className="text-center text-sm text-destructive">Couldn't load the recording.</p>
+                ) : (
+                  <div className="flex justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )
               ) : (
                 <div className="space-y-2 text-center">
                   <p className="text-sm text-muted-foreground">No recording yet — it can take a few minutes to arrive.</p>
