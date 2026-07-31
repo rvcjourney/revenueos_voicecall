@@ -1142,6 +1142,25 @@ async def _run_test_call_async(
 
     log.info("test_call_done", call_id=call_id, result=place_result)
 
+    if place_result == "placed":
+        # Awaited directly (not fire-and-forget like _run_one_call) — a test call
+        # is a single one-off task with nothing else keeping its asyncio.run()
+        # loop alive, so a asyncio.create_task() here would be silently killed
+        # when this function returns and the loop closes before the task runs.
+        async with AsyncSessionLocal() as session:
+            vobiz_creds = await resolve_vobiz_credentials(
+                session, org_id=_UUID(org_id), livekit_trunk_id=livekit_trunk_id,
+            )
+        if vobiz_creds:
+            vobiz_auth_id, vobiz_auth_token = vobiz_creds
+            await _save_recording_async(
+                call_id=_UUID(call_id),
+                to_number=phone_number,
+                called_after=answered_at or datetime.now(timezone.utc) - timedelta(minutes=30),
+                auth_id=vobiz_auth_id,
+                auth_token=vobiz_auth_token,
+            )
+
 
 @celery_app.task(
     name="app.workers.tasks.campaign.place_test_call",
