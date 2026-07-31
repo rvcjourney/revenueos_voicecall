@@ -35,27 +35,21 @@ async def dashboard_stats(
         call_filter.append(Call.campaign_id.in_(member_camp_ids))
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
-    calls_today = (await db.execute(
-        select(func.count(Call.id)).where(*call_filter, Call.created_at >= today_start)
-    )).scalar_one()
+    # Same four counts as before, computed with conditional aggregates so they
+    # round-trip to the DB once instead of four times.
+    kpi_row = (await db.execute(
+        select(
+            func.count(Call.id).label("calls_today"),
+            func.count(Call.id).filter(Call.outcome == "interested").label("interested_today"),
+            func.avg(Call.duration_seconds).filter(Call.duration_seconds.is_not(None)).label("avg_duration"),
+            func.count(Call.id).filter(Call.status == "completed").label("answered"),
+        ).where(*call_filter, Call.created_at >= today_start)
+    )).one()
 
-    interested_today = (await db.execute(
-        select(func.count(Call.id)).where(
-            *call_filter, Call.created_at >= today_start, Call.outcome == "interested"
-        )
-    )).scalar_one()
-
-    avg_duration = (await db.execute(
-        select(func.avg(Call.duration_seconds)).where(
-            *call_filter, Call.created_at >= today_start, Call.duration_seconds.is_not(None)
-        )
-    )).scalar_one()
-
-    answered = (await db.execute(
-        select(func.count(Call.id)).where(
-            *call_filter, Call.created_at >= today_start, Call.status == "completed"
-        )
-    )).scalar_one()
+    calls_today = kpi_row.calls_today
+    interested_today = kpi_row.interested_today
+    avg_duration = kpi_row.avg_duration
+    answered = kpi_row.answered
 
     pickup_rate = round((answered / calls_today * 100), 1) if calls_today else 0
 
