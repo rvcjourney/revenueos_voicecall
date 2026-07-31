@@ -22,11 +22,21 @@ from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
-# Each request opens a brand-new asyncpg connection (see NullPool below), which
-# means a single transient DNS/network hiccup (e.g. Windows getaddrinfo error
-# 11001) surfaces as a hard failure on whatever request hit it. Retry the raw
-# connect a few times with a short backoff before giving up — real auth/config
-# errors (bad password, unknown database) aren't OSErrors and still fail immediately.
+# Prepared-statement collisions under PgBouncer transaction mode are already
+# solved at the asyncpg level (statement_cache_size=0 + UUID-named prepared
+# statements below) — that's what actually makes it safe for a *physical*
+# connection to serve different backend transactions across requests. Given
+# that, SQLAlchemy-level pooling is safe too, and skipping it (NullPool) was
+# forcing a brand-new TCP+TLS+auth handshake to the DB on every single API
+# request, which is the dominant cost for a remote Postgres (e.g. Supabase).
+# Reusing physical connections via a real pool removes that per-request cost.
+
+# Every new physical connection (pool checkout on first use, overflow, or a
+# recycle) goes through here. A transient DNS/network hiccup (e.g. Windows
+# getaddrinfo error 11001) would otherwise surface as a hard failure on
+# whatever request triggered the connect. Retry the raw connect a few times
+# with a short backoff before giving up — real auth/config errors (bad
+# password, unknown database) aren't OSErrors and still fail immediately.
 _CONNECT_RETRIES = 3
 _CONNECT_RETRY_DELAY = 0.5
 
@@ -72,16 +82,30 @@ def _connect_args() -> dict[str, Any]:
 
 
 def _make_engine(url: str, *, testing: bool = False):
-    # NullPool: required for PgBouncer transaction mode (port 6543).
-    # Each session opens a fresh connection and closes it when done — no
-    # pooled state leaks across requests, so prepared statements are always
-    # on the same backend that created them.
+    if testing:
+        # NullPool prevents connection reuse across test functions.
+        return create_async_engine(
+            _async_url(url),
+            echo=settings.DB_ECHO,
+            future=True,
+            connect_args=_connect_args(),
+            poolclass=NullPool,
+        )
     return create_async_engine(
         _async_url(url),
         echo=settings.DB_ECHO,
         future=True,
         connect_args=_connect_args(),
-        poolclass=NullPool,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+        # Verify the connection is alive before handing it out — cheap
+        # (SELECT 1 on checkout) and avoids surfacing a stale/closed
+        # connection (Supabase/PgBouncer can drop idle ones) as a request failure.
+        pool_pre_ping=True,
+        # Recycle before Supabase's own idle-connection timeout (~1h) to avoid
+        # handing out a connection the server already closed.
+        pool_recycle=1800,
     )
 
 
