@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Bell, CreditCard, Loader2, Phone, User as UserIcon, Users as UsersIcon, type LucideIcon } from "lucide-react";
+import { Bell, Loader2, Phone, User as UserIcon, Users as UsersIcon, type LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,16 +10,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/lib/auth";
-import { useCreditUsage, useMyTrunks } from "@/lib/hooks";
+import { useMyTrunks } from "@/lib/hooks";
 import { authApi, apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const tabs = [
   { value: "profile", label: "Profile", icon: UserIcon },
   { value: "team", label: "Team", icon: UsersIcon },
-  { value: "billing", label: "Billing", icon: CreditCard },
   { value: "phone-numbers", label: "Phone Numbers", icon: Phone },
   { value: "notifications", label: "Notifications", icon: Bell },
 ];
@@ -45,7 +43,6 @@ export default function Settings() {
         <div className="flex-1">
           <TabsContent value="profile"><ProfileTab /></TabsContent>
           <TabsContent value="team"><TeamTab /></TabsContent>
-          <TabsContent value="billing"><BillingTab /></TabsContent>
           <TabsContent value="phone-numbers"><PhoneNumbersTab /></TabsContent>
           <TabsContent value="notifications"><ComingSoon icon={Bell} title="Notification preferences" /></TabsContent>
         </div>
@@ -128,38 +125,6 @@ function TeamTab() {
             Ask your organization admin to add or remove team members, or to grant you access to AI agents.
           </p>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function BillingTab() {
-  const credits = useCreditUsage();
-  const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
-
-  return (
-    <Card>
-      <CardContent className="max-w-md space-y-4 pt-6">
-        <div>
-          <p className="font-medium">Billing</p>
-          <p className="text-sm text-muted-foreground">Your organization's credit usage this period</p>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <p className="font-medium">Credits used</p>
-            {credits.data && (
-              <p className="text-muted-foreground">
-                {credits.data.used.toLocaleString()} / {credits.data.allotted.toLocaleString()}
-              </p>
-            )}
-          </div>
-          {credits.isLoading || !credits.data ? <Skeleton className="h-2 w-full" /> : <Progress value={pct} />}
-          {credits.data && credits.data.overage_minutes > 0 && (
-            <p className="text-xs text-warning">
-              {credits.data.overage_minutes.toLocaleString()} overage minute{credits.data.overage_minutes === 1 ? "" : "s"} this period
-            </p>
-          )}
-        </div>
       </CardContent>
     </Card>
   );
