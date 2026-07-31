@@ -5,12 +5,13 @@ import {
   Megaphone,
   Phone,
   BarChart3,
-  Bot,
+  Headset,
   Mic,
   Users,
   PhoneCall,
   ShieldBan,
   ClipboardList,
+  CreditCard,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -28,7 +29,7 @@ const mainNav = [
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/agents", label: "AI Agents", icon: Bot },
+  { to: "/agents", label: "AI Agents", icon: Headset },
 ];
 
 const adminNav = [
@@ -98,6 +99,7 @@ export function Sidebar() {
         )}
 
         <div className="space-y-1">
+          <NavItem to="/billing" label="Billing" icon={CreditCard} collapsed={collapsed} />
           <NavItem to="/settings" label="Settings" icon={Settings} collapsed={collapsed} />
         </div>
       </nav>

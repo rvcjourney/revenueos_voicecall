@@ -1,11 +1,13 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/lib/auth";
+import { PlatformAuthProvider } from "@/lib/platformAuth";
 import { ThemeProvider } from "@/lib/theme";
 import { AuthedLayout } from "@/components/layout/AuthedLayout";
+import { PlatformAuthedLayout } from "@/components/platform/PlatformShell";
 import { PageLoader } from "@/components/shared/PageLoader";
 
 const Landing = lazy(() => import("@/routes/Landing"));
@@ -22,11 +24,20 @@ const CallDetail = lazy(() => import("@/routes/CallDetail"));
 const Agents = lazy(() => import("@/routes/Agents"));
 const VoiceCloning = lazy(() => import("@/routes/VoiceCloning"));
 const Analytics = lazy(() => import("@/routes/Analytics"));
+const Billing = lazy(() => import("@/routes/Billing"));
 const Settings = lazy(() => import("@/routes/Settings"));
 const AdminTeam = lazy(() => import("@/routes/admin/AdminTeam"));
 const AdminPhoneNumbers = lazy(() => import("@/routes/admin/AdminPhoneNumbers"));
 const AdminDnc = lazy(() => import("@/routes/admin/AdminDnc"));
 const AdminAudit = lazy(() => import("@/routes/admin/AdminAudit"));
+
+// SuperAdmin / Platform Console — separate route namespace, auth context, and
+// token storage from the tenant app above. Never linked from tenant nav.
+const PlatformLogin = lazy(() => import("@/routes/platform/PlatformLogin"));
+const PlatformDashboard = lazy(() => import("@/routes/platform/PlatformDashboard"));
+const PlatformOrganizations = lazy(() => import("@/routes/platform/PlatformOrganizations"));
+const PlatformOrgDetail = lazy(() => import("@/routes/platform/PlatformOrgDetail"));
+const PlatformPlans = lazy(() => import("@/routes/platform/PlatformPlans"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -64,6 +75,7 @@ export default function App() {
                     <Route path="/agents" element={<Agents />} />
                     <Route path="/voice-cloning" element={<VoiceCloning />} />
                     <Route path="/analytics" element={<Analytics />} />
+                    <Route path="/billing" element={<Billing />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/admin/team" element={<AdminTeam />} />
                     <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
@@ -72,6 +84,25 @@ export default function App() {
                   </Route>
 
                   <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+
+                  <Route
+                    path="/ops/*"
+                    element={
+                      <PlatformAuthProvider>
+                        <Outlet />
+                      </PlatformAuthProvider>
+                    }
+                  >
+                    <Route path="login" element={<PlatformLogin />} />
+                    <Route element={<PlatformAuthedLayout />}>
+                      <Route index element={<Navigate to="/ops/dashboard" replace />} />
+                      <Route path="dashboard" element={<PlatformDashboard />} />
+                      <Route path="organizations" element={<PlatformOrganizations />} />
+                      <Route path="organizations/:id" element={<PlatformOrgDetail />} />
+                      <Route path="plans" element={<PlatformPlans />} />
+                    </Route>
+                  </Route>
+
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>

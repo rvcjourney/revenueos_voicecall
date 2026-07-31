@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Bot,
+  Headset,
   Loader2,
   Lock,
   Pencil,
@@ -182,7 +183,7 @@ function AgentCard({
       <div className="flex flex-1 flex-col gap-3 p-3.5 pt-4">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[image:var(--gradient-primary)]">
-            <Bot className="h-4 w-4 text-primary-foreground" />
+            <Headset className="h-4 w-4 text-primary-foreground" />
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold leading-tight">{agent.name}</p>
