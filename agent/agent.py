@@ -611,15 +611,19 @@ class VoiceAgent(Agent):
         import json as _json
         import httpx
 
-        if not self._user_messages:
-            return  # no conversation to classify; leave outcome as PENDING
-
         # Try to get full conversation (user + agent) from session history
         full_transcript: list[dict] = []
         try:
             ctx = getattr(self.session, "history", None) or getattr(self.session, "_chat_ctx", None)
             if ctx:
-                items = getattr(ctx, "messages", None) or getattr(ctx, "items", [])
+                # ChatContext.messages is a METHOD (not a property) — must be
+                # called. `getattr(ctx, "messages", None)` alone returns a
+                # truthy bound method, which previously short-circuited the
+                # `or ctx.items` fallback and then raised TypeError when
+                # iterated, silently swallowed below and degrading every
+                # transcript to customer-only.
+                messages_attr = getattr(ctx, "messages", None)
+                items = messages_attr() if callable(messages_attr) else getattr(ctx, "items", [])
                 for msg in items:
                     role_raw = str(getattr(msg, "role", "")).lower()
                     if "system" in role_raw:
@@ -635,12 +639,16 @@ class VoiceAgent(Agent):
                         text = str(content).strip()
                     if text:
                         full_transcript.append({"role": role_out, "text": text})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("transcript_history_read_failed | call=%s error=%s", self._call_id, exc)
 
         # Fallback: if session history unavailable, use only captured user messages
         if not full_transcript:
             full_transcript = [{"role": "user", "text": t} for t in self._user_messages]
+
+        if not full_transcript:
+            logger.info("post_call_report_skipped | call=%s reason=no_conversation_captured", self._call_id)
+            return  # nothing was said by either side; leave outcome as PENDING
 
         # Build text for Groq — show both sides when available
         transcript_text = "\n".join(
