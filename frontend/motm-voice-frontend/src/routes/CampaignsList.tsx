@@ -15,7 +15,7 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiErrorMessage } from "@/lib/api";
-import { cn, formatDate, initials } from "@/lib/utils";
+import { formatDate, initials } from "@/lib/utils";
 
 const FOLDER_COLORS = ["#8FAE8B", "#C9A45C", "#7C98B3", "#C97B5C", "#A97CA5", "#9CA86B"];
 
