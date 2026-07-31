@@ -12,7 +12,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import NotFoundError
 from app.database import get_db
@@ -180,21 +179,24 @@ async def fetch_recording(
     if not call:
         raise NotFoundError("Call not found")
 
-    if not settings.VOBIZ_AUTH_ID or not settings.VOBIZ_AUTH_TOKEN:
+    from app.core.vobiz import fetch_recording_for_call, resolve_vobiz_credentials
+
+    vobiz_creds = await resolve_vobiz_credentials(db, org_id=call.org_id, campaign_id=call.campaign_id)
+    if not vobiz_creds:
         raise HTTPException(status_code=503, detail="Vobiz credentials not configured")
+    vobiz_auth_id, vobiz_auth_token = vobiz_creds
 
     # Use a wide window (2 hours before call start) to avoid timezone/clock-skew issues
     called_after = (call.started_at - timedelta(hours=2)) if call.started_at else None
     if not called_after:
         raise HTTPException(status_code=422, detail="Call has no start time")
 
-    from app.core.vobiz import fetch_recording_for_call
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
             url = await fetch_recording_for_call(
                 http,
-                auth_id=settings.VOBIZ_AUTH_ID,
-                auth_token=settings.VOBIZ_AUTH_TOKEN,
+                auth_id=vobiz_auth_id,
+                auth_token=vobiz_auth_token,
                 to_number=call.phone_number,
                 called_after=called_after.replace(tzinfo=timezone.utc) if called_after.tzinfo is None else called_after,
                 retries=2,
@@ -226,13 +228,20 @@ async def proxy_recording(
     if not call or not call.recording_url:
         raise NotFoundError("Recording not found")
 
+    from app.core.vobiz import resolve_vobiz_credentials
+
+    vobiz_creds = await resolve_vobiz_credentials(db, org_id=call.org_id, campaign_id=call.campaign_id)
+    if not vobiz_creds:
+        raise HTTPException(status_code=503, detail="Vobiz credentials not configured")
+    vobiz_auth_id, vobiz_auth_token = vobiz_creds
+
     try:
         async with httpx.AsyncClient(verify=False, timeout=60) as client:
             vobiz = await client.get(
                 call.recording_url,
                 headers={
-                    "X-Auth-ID": settings.VOBIZ_AUTH_ID,
-                    "X-Auth-Token": settings.VOBIZ_AUTH_TOKEN,
+                    "X-Auth-ID": vobiz_auth_id,
+                    "X-Auth-Token": vobiz_auth_token,
                 },
             )
     except Exception:

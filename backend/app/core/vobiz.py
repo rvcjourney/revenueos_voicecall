@@ -97,6 +97,62 @@ async def validate_vobiz_account_and_did(
     raise VobizDidNotOwnedError(f"{did} is not a phone number on this Vobiz account")
 
 
+async def resolve_vobiz_credentials(
+    session,
+    *,
+    org_id,
+    trunk_id=None,
+    livekit_trunk_id: str | None = None,
+    campaign_id=None,
+) -> tuple[str, str] | None:
+    """
+    Resolve which Vobiz auth_id/auth_token to use for a recording lookup.
+
+    Each org can self-serve connect its own Vobiz account (app/api/sip_trunks.py
+    POST /connect-vobiz), storing that account's credentials on the SipTrunk row
+    itself — so a single global credential pair can't fetch every org's
+    recordings. Resolution order: explicit trunk_id -> campaign's assigned
+    trunk -> matching livekit_trunk_id -> org's default trunk -> global
+    settings.VOBIZ_AUTH_ID/VOBIZ_AUTH_TOKEN (legacy shared trunk, pre self-serve).
+    Returns None if no credentials could be resolved at all.
+    """
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.models.campaign import Campaign
+    from app.models.sip import SipTrunk
+
+    trunk = None
+    if trunk_id:
+        trunk = await session.get(SipTrunk, trunk_id)
+    if trunk is None and campaign_id:
+        campaign = await session.get(Campaign, campaign_id)
+        if campaign and campaign.sip_trunk_id:
+            trunk = await session.get(SipTrunk, campaign.sip_trunk_id)
+    if trunk is None and livekit_trunk_id:
+        trunk = await session.scalar(
+            select(SipTrunk).where(
+                SipTrunk.org_id == org_id,
+                SipTrunk.livekit_trunk_id == livekit_trunk_id,
+            )
+        )
+    if trunk is None:
+        trunk = await session.scalar(
+            select(SipTrunk).where(
+                SipTrunk.org_id == org_id,
+                SipTrunk.is_default.is_(True),
+                SipTrunk.deleted_at.is_(None),
+            )
+        )
+
+    if trunk and trunk.vobiz_auth_id and trunk.vobiz_auth_token:
+        return trunk.vobiz_auth_id, trunk.vobiz_auth_token
+
+    if settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
+        return settings.VOBIZ_AUTH_ID, settings.VOBIZ_AUTH_TOKEN
+    return None
+
+
 async def fetch_recording_for_call(
     http: aiohttp.ClientSession,
     *,

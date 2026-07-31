@@ -45,7 +45,7 @@ from app.core.concurrency import (
     resolve_org_max_concurrent,
 )
 from app.core.credits import record_call_credits
-from app.core.vobiz import fetch_recording_for_call
+from app.core.vobiz import fetch_recording_for_call, resolve_vobiz_credentials
 from app.database import make_worker_session_factory
 
 # NullPool: fresh DB connection per session, no reuse across asyncio.run() calls.
@@ -788,14 +788,20 @@ async def _run_one_call(
                 except Exception:
                     log.exception("finalize_recovery_error", contact_id=str(contact_id))
 
-            if place_result == "placed" and settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
-                asyncio.create_task(_save_recording_async(
-                    call_id=call_id,
-                    to_number=contact_phone,
-                    called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
-                    auth_id=settings.VOBIZ_AUTH_ID,
-                    auth_token=settings.VOBIZ_AUTH_TOKEN,
-                ))
+            if place_result == "placed":
+                async with AsyncSessionLocal() as session:
+                    vobiz_creds = await resolve_vobiz_credentials(
+                        session, org_id=org_id, livekit_trunk_id=livekit_trunk_id, campaign_id=uuid.UUID(campaign_id),
+                    )
+                if vobiz_creds:
+                    vobiz_auth_id, vobiz_auth_token = vobiz_creds
+                    asyncio.create_task(_save_recording_async(
+                        call_id=call_id,
+                        to_number=contact_phone,
+                        called_after=call_started_at_utc or datetime.now(timezone.utc) - timedelta(minutes=30),
+                        auth_id=vobiz_auth_id,
+                        auth_token=vobiz_auth_token,
+                    ))
         finally:
             await _release_trunk_slot(livekit_trunk_id)
     finally:
