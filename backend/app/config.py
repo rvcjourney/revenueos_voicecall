@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     DOCS_ENABLED: bool = True
     LOG_LEVEL: str = "INFO"
+    # Public HTTPS origin this backend is reachable at — used to build callback
+    # URLs for external services (e.g. Vobiz's recording webhook) that need a
+    # real internet-facing address, not the internal docker-network one.
+    PUBLIC_BASE_URL: str = ""
 
     # ── Security ───────────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(..., min_length=32)

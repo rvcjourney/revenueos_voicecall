@@ -1,9 +1,10 @@
 """
 tests/test_vobiz_connect.py — Self-serve Vobiz trunk provisioning tests.
 
-Mocks the Vobiz validation call (app.core.vobiz.validate_vobiz_account_and_did)
-and the LiveKit SDK (app.api.sip_trunks.LiveKitAPI) so these run without any
-real network access to Vobiz or LiveKit Cloud.
+Mocks the Vobiz validation call (app.core.vobiz.validate_vobiz_account_and_did),
+the Vobiz trunk-creation call (app.core.vobiz.create_vobiz_outbound_trunk), and
+the LiveKit SDK (app.api.sip_trunks.LiveKitAPI) so these run without any real
+network access to Vobiz or LiveKit Cloud.
 """
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ def _fake_livekit_client(*, trunk_id: str = "ST_fake123", participant_error: Exc
 
 async def test_connect_vobiz_invalid_creds_returns_400(client, db, monkeypatch):
     _org, _user, token = await _make_org_and_admin(db)
-    monkeypatch.setattr(settings, "VOBIZ_SIP_DOMAIN", "test.sip.vobiz.ai")
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://test.example.com")
 
     with patch(
         "app.api.sip_trunks.validate_vobiz_account_and_did",
@@ -72,7 +73,7 @@ async def test_connect_vobiz_invalid_creds_returns_400(client, db, monkeypatch):
 
 async def test_connect_vobiz_did_not_owned_returns_400(client, db, monkeypatch):
     _org, _user, token = await _make_org_and_admin(db)
-    monkeypatch.setattr(settings, "VOBIZ_SIP_DOMAIN", "test.sip.vobiz.ai")
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://test.example.com")
 
     with patch(
         "app.api.sip_trunks.validate_vobiz_account_and_did",
@@ -89,11 +90,15 @@ async def test_connect_vobiz_did_not_owned_returns_400(client, db, monkeypatch):
 
 async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_password(client, db, monkeypatch):
     org, _user, token = await _make_org_and_admin(db)
-    monkeypatch.setattr(settings, "VOBIZ_SIP_DOMAIN", "test.sip.vobiz.ai")
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://test.example.com")
 
     fake_lk = _fake_livekit_client(trunk_id="ST_livekit_abc")
 
     with patch("app.api.sip_trunks.validate_vobiz_account_and_did", new=AsyncMock(return_value=None)), \
+         patch(
+             "app.api.sip_trunks.create_vobiz_outbound_trunk",
+             new=AsyncMock(return_value="abc123.sip.vobiz.ai"),
+         ) as mock_create_trunk, \
          patch("app.api.sip_trunks.LiveKitAPI", return_value=fake_lk):
         resp = await client.post(
             "/api/sip-trunks/connect-vobiz",
@@ -106,12 +111,17 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
     assert body["status"] == "pending_test"
     assert body["did"] == "+912212345678"
 
+    # The Vobiz trunk-create call should carry our webhook URL, built from PUBLIC_BASE_URL
+    mock_create_trunk.assert_awaited_once()
+    assert mock_create_trunk.call_args.kwargs["webhook_url"] == "https://test.example.com/webhooks/vobiz/recording"
+
     trunk = await db.get(SipTrunk, UUID(body["trunk_id"]))
     assert trunk is not None
     assert trunk.org_id == org.id
     assert trunk.is_active is False
     assert trunk.is_default is True  # first trunk for this org
     assert trunk.livekit_trunk_id == "ST_livekit_abc"
+    assert trunk.sip_domain == "abc123.sip.vobiz.ai"  # the org's own new Vobiz trunk domain
 
     # Raw stored value must never contain the plaintext secret...
     assert "super-secret-vobiz-token" not in trunk.sip_password_encrypted
@@ -123,7 +133,6 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
 
 async def test_trunk_test_endpoint_flips_is_active_to_true_on_success(client, db, monkeypatch):
     org, _user, token = await _make_org_and_admin(db)
-    monkeypatch.setattr(settings, "VOBIZ_SIP_DOMAIN", "test.sip.vobiz.ai")
 
     trunk = SipTrunk(
         org_id=org.id,

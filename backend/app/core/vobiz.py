@@ -97,6 +97,60 @@ async def validate_vobiz_account_and_did(
     raise VobizDidNotOwnedError(f"{did} is not a phone number on this Vobiz account")
 
 
+class VobizTrunkCreateError(VobizValidationError):
+    """Could not create an outbound trunk on the org's own Vobiz account."""
+
+
+async def create_vobiz_outbound_trunk(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+    webhook_url: str,
+) -> str:
+    """
+    Create a dedicated outbound SIP trunk on the org's own Vobiz account, with
+    call recording and the recording webhook pre-enabled in the same request —
+    so a non-technical admin never has to open Vobiz's console to turn either
+    on manually; self-serve "Connect your number" does it automatically.
+
+    Returns the trunk's assigned SIP domain (e.g. "ae06f8a1.sip.vobiz.ai").
+    Raises VobizTrunkCreateError on failure.
+    """
+    hdrs = _headers(auth_id, auth_token)
+    try:
+        async with http.post(
+            f"{_BASE}/Account/{auth_id}/trunks",
+            headers=hdrs,
+            json={
+                "name": f"motmvoice-{did.lstrip('+')}",
+                "trunk_direction": "outbound",
+                "transport": "tcp",
+                "recording": True,
+                "recording_webhook_enabled": True,
+                "webhook_url": webhook_url,
+                "webhook_method": "POST",
+            },
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body_text = await resp.text()
+            if resp.status not in (200, 201):
+                log.warning("vobiz_trunk_create_error", status=resp.status, body=body_text[:500])
+                raise VobizTrunkCreateError(f"Vobiz rejected outbound trunk creation (status {resp.status})")
+            data = await resp.json(content_type=None)
+    except VobizValidationError:
+        raise
+    except Exception as exc:
+        log.warning("vobiz_trunk_create_failed", error=str(exc))
+        raise VobizTrunkCreateError("Could not reach Vobiz to create the outbound trunk") from exc
+
+    trunk_domain = data.get("trunk_domain")
+    if not trunk_domain:
+        raise VobizTrunkCreateError("Vobiz did not return a trunk domain")
+    return trunk_domain
+
+
 async def resolve_vobiz_credentials(
     session,
     *,

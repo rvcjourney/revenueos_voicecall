@@ -37,7 +37,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
-from app.core.vobiz import VobizValidationError, validate_vobiz_account_and_did
+from app.core.vobiz import (
+    VobizValidationError,
+    create_vobiz_outbound_trunk,
+    validate_vobiz_account_and_did,
+)
 from app.database import get_db
 from app.models.sip import SipTrunk, SipTransport, UserSipTrunk
 from app.models.user import User
@@ -199,14 +203,17 @@ async def connect_vobiz(
 ):
     """
     Self-serve trunk provisioning: validate the org's own Vobiz credentials +
-    DID ownership, create a matching LiveKit outbound SIP trunk, and store it
-    inactive (is_active=false) until POST /{trunk_id}/test confirms it works.
+    DID ownership, create a dedicated outbound trunk on the org's own Vobiz
+    account (recording + our recording webhook pre-enabled automatically — no
+    manual Vobiz console step required from the admin), create a matching
+    LiveKit outbound SIP trunk pointed at it, and store it inactive
+    (is_active=false) until POST /{trunk_id}/test confirms it works.
     """
     did = body.did.strip().replace(" ", "")
     if not did.startswith("+"):
         did = "+91" + did.lstrip("0")
 
-    # 1. Validate Vobiz credentials + DID ownership before touching LiveKit
+    # 1. Validate Vobiz credentials + DID ownership before creating anything
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
             await validate_vobiz_account_and_did(
@@ -215,17 +222,32 @@ async def connect_vobiz(
     except VobizValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if not settings.VOBIZ_SIP_DOMAIN:
-        raise HTTPException(status_code=503, detail="VOBIZ_SIP_DOMAIN is not configured on this server")
+    if not settings.PUBLIC_BASE_URL:
+        raise HTTPException(status_code=503, detail="PUBLIC_BASE_URL is not configured on this server")
 
-    # 2. Create the LiveKit outbound SIP trunk for this DID
+    # 2. Create a dedicated outbound trunk on the org's own Vobiz account, with
+    #    recording + the recording webhook pre-enabled in the same request.
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+            vobiz_sip_domain = await create_vobiz_outbound_trunk(
+                http,
+                auth_id=body.auth_id,
+                auth_token=body.auth_token,
+                did=did,
+                webhook_url=f"{settings.PUBLIC_BASE_URL}/webhooks/vobiz/recording",
+            )
+    except VobizValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # 3. Create the LiveKit outbound SIP trunk for this DID, pointed at the
+    #    org's own new Vobiz trunk domain (not a shared platform-wide one)
     lk = LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
     try:
         trunk_info = await lk.sip.create_outbound_trunk(
             lk_api.CreateSIPOutboundTrunkRequest(
                 trunk=lk_api.SIPOutboundTrunkInfo(
                     name=f"vobiz-{did}",
-                    address=settings.VOBIZ_SIP_DOMAIN,
+                    address=vobiz_sip_domain,
                     numbers=[did],
                     auth_username=body.auth_id,
                     auth_password=body.auth_token,
@@ -238,11 +260,12 @@ async def connect_vobiz(
     finally:
         await lk.aclose()
 
-    # 3. Store the trunk — inactive until /test succeeds. Vobiz's auth_id/token
+    # 4. Store the trunk — inactive until /test succeeds. Vobiz's auth_id/token
     #    doubles as the SIP auth passed to LiveKit above (Vobiz's SIP registration
     #    and its REST API appear to share one credential pair); vobiz_auth_id/
     #    vobiz_auth_token are stored explicitly too so future Vobiz API calls
-    #    (e.g. re-validating the DID) don't need to reuse the sip_* fields.
+    #    (e.g. re-validating the DID, recording lookups) don't need to reuse
+    #    the sip_* fields.
     is_first_trunk = not bool(await db.scalar(
         select(SipTrunk.id).where(SipTrunk.org_id == token.org_id, SipTrunk.deleted_at.is_(None))
     ))
@@ -251,7 +274,7 @@ async def connect_vobiz(
         org_id=token.org_id,
         name=f"Vobiz {did}",
         livekit_trunk_id=trunk_info.sip_trunk_id,
-        sip_domain=settings.VOBIZ_SIP_DOMAIN,
+        sip_domain=vobiz_sip_domain,
         sip_username=body.auth_id,
         sip_password=body.auth_token,
         caller_id=did,
