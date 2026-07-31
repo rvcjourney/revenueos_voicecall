@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Check, Loader2, Phone, PhoneCall, Plus, UserMinus, UserPlus } from "lucide-react";
+import { Check, Loader2, Phone, PhoneCall, Plus, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,6 +98,23 @@ function TrunkCard({ trunk }: { trunk: SipTrunk }) {
     }
   }
 
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!confirm(`Delete ${trunk.caller_id}? Campaigns or agents still using this number will stop being able to call.`)) return;
+    setDeleting(true);
+    try {
+      await sipTrunksApi.remove(trunk.id);
+      qc.invalidateQueries({ queryKey: ["sip-trunks"] });
+      qc.invalidateQueries({ queryKey: ["my-trunks"] });
+      toast.success("Phone number deleted");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't delete phone number"));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const assignedIds = new Set((assignments.data ?? []).map((a) => a.user_id));
   const available = (users.data ?? []).filter((u) => !assignedIds.has(u.id));
   const accent = trunk.is_active ? "var(--success)" : "var(--muted-foreground)";
@@ -129,6 +146,9 @@ function TrunkCard({ trunk }: { trunk: SipTrunk }) {
             <Button variant="outline" size="sm" onClick={runTest} disabled={testing}>
               {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PhoneCall className="h-3.5 w-3.5" />}
               Test call
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDelete} disabled={deleting}>
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5 text-destructive" />}
             </Button>
           </div>
         </div>
