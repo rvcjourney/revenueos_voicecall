@@ -419,6 +419,7 @@ class VoiceAgent(Agent):
         self._user_messages: list[str] = []
         self._turn_count      = 0
         self._last_user_activity = 0.0  # time.monotonic() — updated on user speech
+        self._probing = False  # True while _silence_watchdog's own say() is in flight
         self._speaking_done = asyncio.Event()
         self._speaking_done.set()  # not speaking initially
 
@@ -525,7 +526,12 @@ class VoiceAgent(Agent):
             # not from the last user turn. Otherwise the agent's own thinking+speaking
             # time silently eats into the "silence" budget, and the probe can fire
             # almost immediately after the agent finishes a sentence.
-            self._last_user_activity = time.monotonic()
+            # Skip this during _silence_watchdog's own probe utterance — otherwise the
+            # probe itself resets the clock to "just now", probe_idx keeps getting reset
+            # to 0 next loop iteration, and the watchdog can never advance past probe #1
+            # or reach its hangup-after-N-probes path (silence just resets indefinitely).
+            if not self._probing:
+                self._last_user_activity = time.monotonic()
 
     async def _max_duration_guard(self, max_seconds: float) -> None:
         await asyncio.sleep(max_seconds)
@@ -783,10 +789,13 @@ class VoiceAgent(Agent):
             if probe_idx < len(_SILENCE_PROBES):
                 probe_idx += 1
                 logger.info("Silence probe #%d (%.1fs silent)", probe_idx, silence_sec)
+                self._probing = True
                 try:
                     await self.session.say(_SILENCE_PROBES[probe_idx - 1], allow_interruptions=True)
                 except Exception as e:
                     logger.warning("Silence probe TTS failed: %s", e)
+                finally:
+                    self._probing = False
                 await asyncio.sleep(_SILENCE_PROBE_INTERVAL)
             else:
                 logger.info("Silence hangup — %.1fs no response after %d probes", silence_sec, len(_SILENCE_PROBES))
