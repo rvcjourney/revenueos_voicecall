@@ -228,9 +228,11 @@ async def proxy_recording(
     if not call or not call.recording_url:
         raise NotFoundError("Recording not found")
 
-    from app.core.vobiz import resolve_vobiz_credentials
+    from app.core.vobiz import resolve_vobiz_credentials, resolve_vobiz_credentials_by_recording_url
 
-    vobiz_creds = await resolve_vobiz_credentials(db, org_id=call.org_id, campaign_id=call.campaign_id)
+    vobiz_creds = await resolve_vobiz_credentials_by_recording_url(
+        db, org_id=call.org_id, recording_url=call.recording_url
+    ) or await resolve_vobiz_credentials(db, org_id=call.org_id, campaign_id=call.campaign_id)
     if not vobiz_creds:
         raise HTTPException(status_code=503, detail="Vobiz credentials not configured")
     vobiz_auth_id, vobiz_auth_token = vobiz_creds

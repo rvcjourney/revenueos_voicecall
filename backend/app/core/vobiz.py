@@ -10,6 +10,7 @@ Auth: X-Auth-ID + X-Auth-Token headers (from Vobiz console → dashboard).
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -18,6 +19,7 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _BASE = "https://api.vobiz.ai/api/v1"
+_ACCOUNT_URL_RE = re.compile(r"/Account/([^/]+)/")
 
 
 def _headers(auth_id: str, auth_token: str) -> dict[str, str]:
@@ -204,6 +206,38 @@ async def resolve_vobiz_credentials(
 
     if settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN:
         return settings.VOBIZ_AUTH_ID, settings.VOBIZ_AUTH_TOKEN
+    return None
+
+
+async def resolve_vobiz_credentials_by_recording_url(
+    session, *, org_id, recording_url: str
+) -> tuple[str, str] | None:
+    """
+    Resolve credentials from the Vobiz account id embedded in an already-saved
+    recording URL (e.g. https://media.vobiz.ai/v1/Account/MA_xxx/Recording/yyy).
+
+    Authoritative for playback/download: it names the exact account that owns
+    the file, so it can't be thrown off by which trunk happens to be marked
+    is_default (which caused test-call recordings to save fine but 401 on
+    playback, since the browser-facing proxy had no way to know which of the
+    org's several Vobiz accounts actually placed that call).
+    """
+    from sqlalchemy import select
+
+    from app.models.sip import SipTrunk
+
+    m = _ACCOUNT_URL_RE.search(recording_url)
+    if not m:
+        return None
+    account_id = m.group(1)
+    trunk = await session.scalar(
+        select(SipTrunk).where(
+            SipTrunk.org_id == org_id,
+            SipTrunk.vobiz_auth_id == account_id,
+        )
+    )
+    if trunk and trunk.vobiz_auth_id and trunk.vobiz_auth_token:
+        return trunk.vobiz_auth_id, trunk.vobiz_auth_token
     return None
 
 
