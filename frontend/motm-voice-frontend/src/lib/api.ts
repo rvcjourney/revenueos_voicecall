@@ -111,8 +111,8 @@ export const agentsApi = {
   update: (id: string, data: Partial<AgentCreate>) => api.patch<AgentTemplate>(`/api/agents/${id}`, data),
   remove: (id: string) => api.delete(`/api/agents/${id}`),
   requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
-  testCall: (id: string, phone_number: string) =>
-    api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number }),
+  testCall: (id: string, phone_number: string, trunk_id?: string) =>
+    api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, trunk_id }),
   optimizePrompt: (raw_input: string) =>
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", { raw_input }),
   requestCreation: (form: FormData) =>

@@ -1046,6 +1046,7 @@ async def _run_test_call_async(
     phone_number: str,
     call_id: str,
     org_id: str,
+    trunk_id: str | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
     from uuid import UUID as _UUID
@@ -1059,16 +1060,32 @@ async def _run_test_call_async(
 
         room_name = call_row.livekit_room_name
 
-        _default_trunk = await session.scalar(
-            select(SipTrunk).where(
-                SipTrunk.org_id == _UUID(org_id),
-                SipTrunk.is_default.is_(True),
-                SipTrunk.is_active.is_(True),
-                SipTrunk.deleted_at.is_(None),
+        # Caller explicitly picked a "From" number in the test-call dialog —
+        # use that exact trunk rather than guessing via is_default, which can
+        # silently point at a stale/misconfigured trunk (see: trunk with no
+        # Vobiz credentials left marked is_default after a later reconnect).
+        chosen_trunk = None
+        if trunk_id:
+            chosen_trunk = await session.scalar(
+                select(SipTrunk).where(
+                    SipTrunk.id == _UUID(trunk_id),
+                    SipTrunk.org_id == _UUID(org_id),
+                    SipTrunk.is_active.is_(True),
+                    SipTrunk.deleted_at.is_(None),
+                )
             )
-        )
-        livekit_trunk_id = (_default_trunk.livekit_trunk_id if _default_trunk else None) or settings.DEFAULT_SIP_TRUNK_ID
-        sip_caller_id    = (_default_trunk.caller_id        if _default_trunk else None) or settings.DEFAULT_SIP_CALLER_ID
+        if chosen_trunk is None:
+            chosen_trunk = await session.scalar(
+                select(SipTrunk).where(
+                    SipTrunk.org_id == _UUID(org_id),
+                    SipTrunk.is_default.is_(True),
+                    SipTrunk.is_active.is_(True),
+                    SipTrunk.deleted_at.is_(None),
+                )
+            )
+        resolved_trunk_id = chosen_trunk.id if chosen_trunk else None
+        livekit_trunk_id = (chosen_trunk.livekit_trunk_id if chosen_trunk else None) or settings.DEFAULT_SIP_TRUNK_ID
+        sip_caller_id    = (chosen_trunk.caller_id        if chosen_trunk else None) or settings.DEFAULT_SIP_CALLER_ID
 
         system_prompt   = agent.system_prompt or ""
         welcome_msg     = agent.welcome_message or ""
@@ -1149,7 +1166,7 @@ async def _run_test_call_async(
         # when this function returns and the loop closes before the task runs.
         async with AsyncSessionLocal() as session:
             vobiz_creds = await resolve_vobiz_credentials(
-                session, org_id=_UUID(org_id), livekit_trunk_id=livekit_trunk_id,
+                session, org_id=_UUID(org_id), trunk_id=resolved_trunk_id, livekit_trunk_id=livekit_trunk_id,
             )
         if vobiz_creds:
             vobiz_auth_id, vobiz_auth_token = vobiz_creds
@@ -1168,9 +1185,9 @@ async def _run_test_call_async(
     max_retries=0,
     acks_late=True,
 )
-def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id: str) -> None:
+def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id: str, trunk_id: str | None = None) -> None:
     """Place a single test call for an agent template (no campaign)."""
-    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id))
+    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id))
 
 
 @celery_app.task(name="app.workers.tasks.campaign.launch_scheduled_campaigns", bind=True)

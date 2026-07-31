@@ -38,6 +38,7 @@ import {
   useDeleteAgent,
   useRequestAgentAccess,
   useUpdateAgent,
+  useMyTrunks,
 } from "@/lib/hooks";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
@@ -445,13 +446,18 @@ function toFormValues(agent: AgentTemplate): AgentCreate {
 
 function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; onOpenChange: () => void }) {
   const [phone, setPhone] = useState("+91");
+  const [trunkId, setTrunkId] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const trunks = useMyTrunks();
+
+  const trunkOptions = trunks.data ?? [];
+  const selectedTrunk = trunkOptions.find((t) => t.id === trunkId) ?? trunkOptions[0];
 
   async function handleCall() {
     if (!agent) return;
     setLoading(true);
     try {
-      await agentsApi.testCall(agent.id, phone);
+      await agentsApi.testCall(agent.id, phone, selectedTrunk?.id);
       toast.success("Test call started — it should ring shortly");
       onOpenChange();
     } catch (err) {
@@ -468,11 +474,28 @@ function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; 
           <DialogTitle>Test call — {agent?.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-1.5">
-          <Label>Phone number</Label>
+          <Label>From</Label>
+          {trunks.isLoading ? (
+            <Skeleton className="h-9 w-full" />
+          ) : trunkOptions.length > 0 ? (
+            <Select value={selectedTrunk?.id ?? ""} onValueChange={setTrunkId}>
+              <SelectTrigger className="w-full"><SelectValue placeholder="Select a number..." /></SelectTrigger>
+              <SelectContent>
+                {trunkOptions.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.caller_id} — {t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <p className="text-sm text-muted-foreground">No connected numbers available to call from.</p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label>To</Label>
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
         </div>
         <DialogFooter>
-          <Button variant="gradient" onClick={handleCall} disabled={loading}>
+          <Button variant="gradient" onClick={handleCall} disabled={loading || !selectedTrunk}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}
             Place test call
           </Button>

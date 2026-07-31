@@ -328,6 +328,7 @@ async def delete_agent(
 
 class TestCallRequest(BaseModel):
     phone_number: str
+    trunk_id: str | None = None
 
 
 class TestCallResponse(BaseModel):
@@ -368,6 +369,29 @@ async def test_call(
     if not phone.startswith("+"):
         phone = "+91" + phone.lstrip("0")
 
+    # Validate the chosen "From" trunk belongs to this org (and, for
+    # non-admins, is actually assigned to them) before handing it to the
+    # worker — otherwise a stale/foreign trunk_id would silently fall back
+    # to is_default inside _run_test_call_async.
+    trunk_id: str | None = None
+    if body.trunk_id:
+        from app.models.sip import SipTrunk, UserSipTrunk
+
+        trunk_query = select(SipTrunk).where(
+            SipTrunk.id == UUID(body.trunk_id),
+            SipTrunk.org_id == token.org_id,
+            SipTrunk.is_active.is_(True),
+            SipTrunk.deleted_at.is_(None),
+        )
+        if token.role != "admin":
+            trunk_query = trunk_query.join(UserSipTrunk, UserSipTrunk.trunk_id == SipTrunk.id).where(
+                UserSipTrunk.user_id == token.user_id
+            )
+        trunk = await db.scalar(trunk_query)
+        if not trunk:
+            raise NotFoundError("Selected phone number not found")
+        trunk_id = str(trunk.id)
+
     # Create a Call record immediately so we can return call_id to the frontend
     room_name = f"test-{_uuid_module.uuid4().hex}"
     call = Call(
@@ -386,7 +410,7 @@ async def test_call(
     # Dispatch to Celery worker (calls queue)
     from app.workers.tasks.campaign import place_test_call
     place_test_call.apply_async(
-        args=[str(agent_id), phone, str(call.id), str(token.org_id)],
+        args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id],
         queue="calls",
     )
 
