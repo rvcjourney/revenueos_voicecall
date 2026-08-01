@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -242,9 +242,15 @@ function AgentEditorDialog({
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
 
-  function onOpenAutoFocus() {
-    setForm(agent ? toFormValues(agent) : emptyForm);
-  }
+  // AgentEditorDialog stays mounted permanently (only `open` toggles) so the
+  // form must be re-synced here whenever it's opened for a different agent --
+  // Radix's onOpenChange only fires for user-driven close events, never when
+  // the parent flips `open` externally (which is how "Edit" opens this).
+  useEffect(() => {
+    if (open) {
+      setForm(agent ? toFormValues(agent) : emptyForm);
+    }
+  }, [open, agent]);
 
   function update<K extends keyof AgentCreate>(key: K, value: AgentCreate[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -289,13 +295,7 @@ function AgentEditorDialog({
   const saving = createAgent.isPending || updateAgent.isPending;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (v) onOpenAutoFocus();
-        onOpenChange(v);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{agent ? "Edit agent" : "Create agent"}</DialogTitle>
