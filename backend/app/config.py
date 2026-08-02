@@ -131,6 +131,7 @@ class Settings(BaseSettings):
     BUCKET_EXPORTS: str = "motm-exports"
     BUCKET_TRANSCRIPTS: str = "motm-transcripts"
     BUCKET_BACKUPS: str = "motm-backups"
+    BUCKET_VOICE_CONSENT: str = "motm-voice-consent"
     EXPORT_URL_EXPIRY_SECONDS: int = 600
 
     # ── Celery ────────────────────────────────────────────────────────────────

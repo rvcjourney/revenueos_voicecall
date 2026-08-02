@@ -242,7 +242,7 @@ export function useClonedVoices() {
 export function useCreateClonedVoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; file: File }) => voiceCloningApi.create(data),
+    mutationFn: (data: { name: string; file: File; consentVideo: File }) => voiceCloningApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cloned-voices"] }),
   });
 }

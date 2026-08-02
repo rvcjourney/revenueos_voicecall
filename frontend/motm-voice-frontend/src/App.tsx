@@ -38,6 +38,7 @@ const PlatformDashboard = lazy(() => import("@/routes/platform/PlatformDashboard
 const PlatformOrganizations = lazy(() => import("@/routes/platform/PlatformOrganizations"));
 const PlatformOrgDetail = lazy(() => import("@/routes/platform/PlatformOrgDetail"));
 const PlatformPlans = lazy(() => import("@/routes/platform/PlatformPlans"));
+const PlatformVoiceCloneRequests = lazy(() => import("@/routes/platform/PlatformVoiceCloneRequests"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -100,6 +101,7 @@ export default function App() {
                       <Route path="organizations" element={<PlatformOrganizations />} />
                       <Route path="organizations/:id" element={<PlatformOrgDetail />} />
                       <Route path="plans" element={<PlatformPlans />} />
+                      <Route path="voice-clone-requests" element={<PlatformVoiceCloneRequests />} />
                     </Route>
                   </Route>
 

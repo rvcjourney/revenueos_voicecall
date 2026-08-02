@@ -75,3 +75,18 @@ export interface PlatformListResponse<T> {
   items: T[];
   total: number;
 }
+
+export interface PlatformVoiceCloneRequest {
+  id: string;
+  org_id: string;
+  org_name: string;
+  user_name: string | null;
+  user_email: string | null;
+  name: string;
+  audio_url: string;
+  video_url: string;
+  status: "pending" | "approved" | "rejected";
+  rejection_reason: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}

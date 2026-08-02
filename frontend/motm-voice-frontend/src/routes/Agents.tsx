@@ -412,7 +412,7 @@ function ClonedVoicesSection({
           <SelectTrigger><SelectValue placeholder="Pick a cloned voice…" /></SelectTrigger>
           <SelectContent>
             {readyVoices.map((v) => (
-              <SelectItem key={v.id} value={v.elevenlabs_voice_id}>{v.name}</SelectItem>
+              <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

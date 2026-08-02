@@ -185,10 +185,11 @@ export const usageApi = {
 // ── Voice cloning ────────────────────────────────────────────────────────
 export const voiceCloningApi = {
   list: () => api.get<ListResponse<ClonedVoice> | ClonedVoice[]>("/api/voice-cloning"),
-  create: (data: { name: string; file: File }) => {
+  create: (data: { name: string; file: File; consentVideo: File }) => {
     const form = new FormData();
     form.append("name", data.name);
     form.append("file", data.file);
+    form.append("consent_video", data.consentVideo);
     return api.post<ClonedVoice>("/api/voice-cloning", form, {
       headers: { "Content-Type": "multipart/form-data" },
     });

@@ -16,14 +16,16 @@ from sqlalchemy import select
 
 import app.workers.tasks.campaign as campaign_module
 from app.core.elevenlabs_voice import ElevenLabsVoiceError
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token, create_platform_token, hash_password
 from app.models.agent import AgentTemplate, VoiceProvider
 from app.models.call import Call, CallDirection, CallStatus
 from app.models.campaign import Campaign, CampaignContact, ContactStatus
 from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
+from app.models.platform_admin import PlatformAdmin
 from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
+from app.models.voice_clone_request import VoiceCloneRequest
 
 
 async def _make_org_and_admin(db, *, plan_features: dict | None = None) -> tuple[Organization, User, str]:
@@ -52,6 +54,29 @@ async def _make_org_and_admin(db, *, plan_features: dict | None = None) -> tuple
 
     token = create_access_token(str(user.id), str(user.org_id), user.role)
     return org, user, token
+
+
+async def _make_platform_admin(db) -> tuple[PlatformAdmin, str]:
+    admin = PlatformAdmin(
+        email=f"super-{uuid.uuid4().hex[:8]}@motmvoice.test",
+        hashed_password=hash_password("super-pw-123"),
+        full_name="Super Admin",
+        is_active=True,
+    )
+    db.add(admin)
+    await db.commit()
+    await db.refresh(admin)
+    return admin, create_platform_token(str(admin.id))
+
+
+def _fake_storage() -> MagicMock:
+    """Stand-in for app.storage.backend.get_storage() -- no real MinIO in tests."""
+    storage = MagicMock()
+    storage.upload = AsyncMock(return_value="fake-key")
+    storage.download = AsyncMock(return_value=b"fake-audio-bytes")
+    storage.delete = AsyncMock(return_value=None)
+    storage.presigned_url = AsyncMock(return_value="https://example.test/fake-presigned-url")
+    return storage
 
 
 FREE_FEATURES = {"allowed_voice_providers": ["sarvam"], "voice_cloning": False}
@@ -141,7 +166,7 @@ async def test_create_agent_rejects_elevenlabs_when_org_flag_disabled(client, db
     assert resp.status_code == 403
 
 
-# ── Voice cloning API ──────────────────────────────────────────────────────
+# ── Voice cloning API (submission → superadmin approval/rejection) ─────────
 
 async def test_voice_cloning_rejected_on_pro_plan(client, db):
     _org, _user, token = await _make_org_and_admin(db, plan_features=PRO_FEATURES)
@@ -149,50 +174,142 @@ async def test_voice_cloning_rejected_on_pro_plan(client, db):
     resp = await client.post(
         "/api/voice-cloning",
         data={"name": "My Voice"},
-        files={"file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg")},
+        files={
+            "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+            "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
 
 
-async def test_voice_cloning_creates_model_on_premium_plan(client, db):
+async def test_voice_cloning_submission_creates_pending_request(client, db):
+    """Submitting no longer calls ElevenLabs directly -- it sits as pending
+    until a platform superadmin reviews the consent video."""
     org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
 
-    with patch(
-        "app.api.voice_cloning.clone_voice",
-        new=AsyncMock(return_value="elevenlabs-voice-xyz"),
-    ):
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
         resp = await client.post(
             "/api/voice-cloning",
             data={"name": "My Voice"},
-            files={"file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg")},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
 
     assert resp.status_code == 201
     body = resp.json()
-    assert body["elevenlabs_voice_id"] == "elevenlabs-voice-xyz"
-    assert body["status"] == "ready"
+    assert body["status"] == "pending"
+    assert body["elevenlabs_voice_id"] is None
+
+    req = await db.scalar(select(VoiceCloneRequest).where(VoiceCloneRequest.org_id == org.id))
+    assert req is not None
+    assert req.status == "pending"
+    assert req.name == "My Voice"
+
+    # Not usable anywhere yet -- no ClonedVoice row exists until approval
+    cloned = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
+    assert cloned is None
+
+
+async def test_voice_clone_request_approval_creates_model(client, db):
+    org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
+    _admin, admin_token = await _make_platform_admin(db)
+
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        submit_resp = await client.post(
+            "/api/voice-cloning",
+            data={"name": "My Voice"},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    request_id = submit_resp.json()["id"]
+
+    with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
+         patch("app.api.platform.clone_voice", new=AsyncMock(return_value="elevenlabs-voice-xyz")):
+        approve_resp = await client.post(
+            f"/api/platform/voice-clone-requests/{request_id}/approve",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["status"] == "approved"
 
     cloned = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
     assert cloned is not None
     assert cloned.elevenlabs_voice_id == "elevenlabs-voice-xyz"
+    assert cloned.status == "ready"
+
+    # Now shows up as a real, ready voice in the org's own list
+    list_resp = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
+    items = list_resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == "ready"
+    assert items[0]["elevenlabs_voice_id"] == "elevenlabs-voice-xyz"
 
 
-async def test_voice_cloning_elevenlabs_rejection_returns_400(client, db):
+async def test_voice_clone_request_approval_elevenlabs_rejection_returns_400(client, db):
     _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
+    _admin, admin_token = await _make_platform_admin(db)
 
-    with patch(
-        "app.api.voice_cloning.clone_voice",
-        new=AsyncMock(side_effect=ElevenLabsVoiceError("ElevenLabs rejected the sample")),
-    ):
-        resp = await client.post(
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        submit_resp = await client.post(
             "/api/voice-cloning",
             data={"name": "My Voice"},
-            files={"file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg")},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
-    assert resp.status_code == 400
+    request_id = submit_resp.json()["id"]
+
+    with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
+         patch(
+             "app.api.platform.clone_voice",
+             new=AsyncMock(side_effect=ElevenLabsVoiceError("ElevenLabs rejected the sample")),
+         ):
+        approve_resp = await client.post(
+            f"/api/platform/voice-clone-requests/{request_id}/approve",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+    assert approve_resp.status_code == 400
+
+
+async def test_voice_clone_request_rejection_shows_reason_to_org_admin(client, db):
+    _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
+    _admin, admin_token = await _make_platform_admin(db)
+
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        submit_resp = await client.post(
+            "/api/voice-cloning",
+            data={"name": "My Voice"},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    request_id = submit_resp.json()["id"]
+
+    reject_resp = await client.post(
+        f"/api/platform/voice-clone-requests/{request_id}/reject",
+        json={"reason": "Video doesn't clearly show the person's face"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert reject_resp.status_code == 200
+    assert reject_resp.json()["status"] == "rejected"
+
+    list_resp = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
+    items = list_resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == "rejected"
+    assert items[0]["rejection_reason"] == "Video doesn't clearly show the person's face"
 
 
 async def test_voice_cloning_list_and_delete(client, db):

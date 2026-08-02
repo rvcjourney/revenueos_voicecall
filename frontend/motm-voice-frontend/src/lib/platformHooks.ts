@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { platformMetricsApi, platformOrgsApi, platformPlansApi, unwrapPlatformList } from "./platformApi";
+import {
+  platformMetricsApi,
+  platformOrgsApi,
+  platformPlansApi,
+  platformVoiceCloneRequestsApi,
+  unwrapPlatformList,
+} from "./platformApi";
 import type { PlatformOrgUpdate, PlatformPlanCreate } from "./platformTypes";
 
 // ── Metrics ──────────────────────────────────────────────────────────────
@@ -82,5 +88,29 @@ export function useUpdatePlatformPlan() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<PlatformPlanCreate> }) => platformPlansApi.update(id, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-plans"] }),
+  });
+}
+
+// ── Voice clone requests ─────────────────────────────────────────────────
+export function usePlatformVoiceCloneRequests(params: { status?: string; q?: string } = {}) {
+  return useQuery({
+    queryKey: ["platform-voice-clone-requests", params],
+    queryFn: () => platformVoiceCloneRequestsApi.list(params).then((r) => unwrapPlatformList(r.data)),
+  });
+}
+
+export function useApprovePlatformVoiceCloneRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => platformVoiceCloneRequestsApi.approve(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-voice-clone-requests"] }),
+  });
+}
+
+export function useRejectPlatformVoiceCloneRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => platformVoiceCloneRequestsApi.reject(id, reason),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-voice-clone-requests"] }),
   });
 }

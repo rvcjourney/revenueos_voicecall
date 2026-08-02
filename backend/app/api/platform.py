@@ -15,22 +15,36 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import aiohttp
+
+from app.config import settings
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
-from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError as AppValidationError
+from app.core.elevenlabs_voice import ElevenLabsVoiceError, clone_voice
+from app.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError as AppValidationError,
+)
+from app.core.plan_features import is_voice_cloning_allowed, is_voice_provider_allowed
 from app.core.security import create_platform_token, verify_password
 from app.database import get_db
+from app.storage.backend import get_storage
+from app.models.agent import VoiceProvider
 from app.models.audit_log import AuditLog
 from app.models.campaign import Campaign, CampaignStatus
+from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
 from app.models.platform_admin import PlatformAdmin
 from app.models.subscription import Subscription
 from app.models.user import Organization, User
+from app.models.voice_clone_request import VoiceCloneRequest
 from app.schemas.platform import (
     CreditAdjustRequest,
     CreditAdjustResponse,
@@ -44,6 +58,8 @@ from app.schemas.platform import (
     PlatformLoginRequest,
     PlatformMetricsOut,
     PlatformTokenResponse,
+    VoiceCloneRequestOut,
+    VoiceCloneRequestRejectRequest,
 )
 
 router = APIRouter()
@@ -448,3 +464,154 @@ async def get_metrics(
         active_campaigns=active_campaigns or 0,
         total_calls_used=total_calls_used or 0,
     )
+
+
+# ── Voice clone request review ───────────────────────────────────────────────
+# Consent gate in front of ClonedVoice creation (app/api/voice_cloning.py):
+# an org admin submits a name + audio sample + consent video, which sits here
+# as "pending" until reviewed. Approving is what actually calls ElevenLabs and
+# creates the real ClonedVoice row; rejecting just records a reason the org
+# admin can see. See app/models/voice_clone_request.py for the full design note.
+
+async def _to_voice_clone_request_out(db: AsyncSession, req: VoiceCloneRequest) -> VoiceCloneRequestOut:
+    org = await db.get(Organization, req.org_id)
+    user = await db.get(User, req.created_by_id) if req.created_by_id else None
+    storage = get_storage()
+    audio_url = await storage.presigned_url(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key, expiry=3600)
+    video_url = await storage.presigned_url(settings.BUCKET_VOICE_CONSENT, req.consent_video_key, expiry=3600)
+
+    return VoiceCloneRequestOut(
+        id=str(req.id),
+        org_id=str(req.org_id),
+        org_name=org.name if org else "Unknown org",
+        user_name=user.full_name if user else None,
+        user_email=user.email if user else None,
+        name=req.name,
+        audio_url=audio_url,
+        video_url=video_url,
+        status=req.status,
+        rejection_reason=req.rejection_reason,
+        reviewed_at=req.reviewed_at.isoformat() if req.reviewed_at else None,
+        created_at=req.created_at.isoformat(),
+    )
+
+
+@router.get("/voice-clone-requests", response_model=list[VoiceCloneRequestOut])
+async def list_voice_clone_requests(
+    status: str = Query("pending"),
+    q: str | None = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(VoiceCloneRequest)
+    if status != "all":
+        query = query.where(VoiceCloneRequest.status == status)
+    if q:
+        query = query.join(Organization, Organization.id == VoiceCloneRequest.org_id).where(
+            Organization.name.ilike(f"%{q}%") | VoiceCloneRequest.name.ilike(f"%{q}%")
+        )
+    rows = (await db.execute(
+        query.order_by(VoiceCloneRequest.created_at.desc()).limit(limit).offset(offset)
+    )).scalars().all()
+    return [await _to_voice_clone_request_out(db, r) for r in rows]
+
+
+@router.post("/voice-clone-requests/{request_id}/approve", response_model=VoiceCloneRequestOut)
+async def approve_voice_clone_request(
+    request_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(VoiceCloneRequest, request_id)
+    if not req:
+        raise NotFoundError("Voice clone request not found")
+    if req.status != "pending":
+        raise ConflictError(f"Request has already been {req.status}")
+
+    # Re-check gates at approval time — the org's plan or the ElevenLabs
+    # kill-switch may have changed since submission (could be days earlier).
+    if not await is_voice_cloning_allowed(db, req.org_id):
+        raise ConflictError("This org's plan no longer allows voice cloning")
+    if not await is_voice_provider_allowed(db, req.org_id, VoiceProvider.ELEVENLABS):
+        raise ConflictError("Voice cloning has since been disabled for this org")
+
+    sample_bytes = await get_storage().download(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
+
+    try:
+        async with aiohttp.ClientSession() as http:
+            elevenlabs_voice_id = await clone_voice(
+                http,
+                api_key=settings.ELEVENLABS_API_KEY,
+                name=req.name,
+                sample_bytes=sample_bytes,
+                sample_filename=req.audio_sample_file_name or "sample.mp3",
+                content_type=req.audio_sample_content_type,
+            )
+    except ElevenLabsVoiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    cloned = ClonedVoice(
+        org_id=req.org_id,
+        created_by_id=req.created_by_id,
+        name=req.name,
+        elevenlabs_voice_id=elevenlabs_voice_id,
+        sample_file_name=req.audio_sample_file_name,
+    )
+    db.add(cloned)
+    await db.flush()  # assign cloned.id before the request references it
+
+    req.status = "approved"
+    req.reviewed_by_admin_id = admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+    req.cloned_voice_id = cloned.id
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=req.org_id,
+        action="voice_clone_request.approve",
+        target_type="voice_clone_request",
+        target_id=req.id,
+        audit_metadata={"cloned_voice_id": str(cloned.id), "elevenlabs_voice_id": elevenlabs_voice_id},
+    ))
+
+    await db.commit()
+    await db.refresh(req)
+    return await _to_voice_clone_request_out(db, req)
+
+
+@router.post("/voice-clone-requests/{request_id}/reject", response_model=VoiceCloneRequestOut)
+async def reject_voice_clone_request(
+    request_id: UUID,
+    body: VoiceCloneRequestRejectRequest,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(VoiceCloneRequest, request_id)
+    if not req:
+        raise NotFoundError("Voice clone request not found")
+    if req.status != "pending":
+        raise ConflictError(f"Request has already been {req.status}")
+    if not body.reason.strip():
+        raise AppValidationError("A rejection reason is required", errors=[])
+
+    req.status = "rejected"
+    req.rejection_reason = body.reason.strip()
+    req.reviewed_by_admin_id = admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=req.org_id,
+        action="voice_clone_request.reject",
+        target_type="voice_clone_request",
+        target_id=req.id,
+        audit_metadata={"reason": req.rejection_reason},
+    ))
+
+    await db.commit()
+    await db.refresh(req)
+    return await _to_voice_clone_request_out(db, req)

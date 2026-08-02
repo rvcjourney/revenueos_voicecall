@@ -1,4 +1,4 @@
-import { Building2, LayoutDashboard, Layers, LogOut } from "lucide-react";
+import { Building2, LayoutDashboard, Layers, LogOut, Mic } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { usePlatformAuth } from "@/lib/platformAuth";
 import { cn } from "@/lib/utils";
@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: "/ops/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/ops/organizations", label: "Organizations", icon: Building2 },
   { to: "/ops/plans", label: "Plans", icon: Layers },
+  { to: "/ops/voice-clone-requests", label: "Voice Requests", icon: Mic },
 ];
 
 /** Route guard + chrome for everything under /ops, gated on the platform (not tenant) session. */

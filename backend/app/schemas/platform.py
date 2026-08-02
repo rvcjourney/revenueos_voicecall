@@ -105,3 +105,22 @@ class PlatformMetricsOut(BaseModel):
     org_count: int
     active_campaigns: int
     total_calls_used: int
+
+
+class VoiceCloneRequestOut(BaseModel):
+    id: str
+    org_id: str
+    org_name: str
+    user_name: str | None
+    user_email: str | None
+    name: str
+    audio_url: str
+    video_url: str
+    status: str  # "pending" | "approved" | "rejected"
+    rejection_reason: str | None
+    reviewed_at: str | None
+    created_at: str
+
+
+class VoiceCloneRequestRejectRequest(BaseModel):
+    reason: str

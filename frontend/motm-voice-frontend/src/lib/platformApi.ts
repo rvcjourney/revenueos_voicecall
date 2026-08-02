@@ -8,6 +8,7 @@ import type {
   PlatformOrgUpdate,
   PlatformPlan,
   PlatformPlanCreate,
+  PlatformVoiceCloneRequest,
 } from "./platformTypes";
 
 // Separate axios instance + storage keys from the tenant app's `api`/TOKEN_KEY in
@@ -92,6 +93,19 @@ export const platformPlansApi = {
   create: (data: PlatformPlanCreate) => platformApi.post<PlatformPlan>("/api/platform/plans", data),
   update: (id: string, data: Partial<PlatformPlanCreate>) =>
     platformApi.patch<PlatformPlan>(`/api/platform/plans/${id}`, data),
+};
+
+// ── Voice clone requests ─────────────────────────────────────────────────
+export const platformVoiceCloneRequestsApi = {
+  list: (params?: { status?: string; q?: string; limit?: number; offset?: number }) =>
+    platformApi.get<PlatformListResponse<PlatformVoiceCloneRequest> | PlatformVoiceCloneRequest[]>(
+      "/api/platform/voice-clone-requests",
+      { params }
+    ),
+  approve: (id: string) =>
+    platformApi.post<PlatformVoiceCloneRequest>(`/api/platform/voice-clone-requests/${id}/approve`),
+  reject: (id: string, reason: string) =>
+    platformApi.post<PlatformVoiceCloneRequest>(`/api/platform/voice-clone-requests/${id}/reject`, { reason }),
 };
 
 export function unwrapPlatformList<T>(data: PlatformListResponse<T> | T[] | undefined): T[] {

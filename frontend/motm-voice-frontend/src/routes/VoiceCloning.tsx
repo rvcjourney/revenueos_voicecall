@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Mic, Play, Square, Trash2, Upload, Volume2 } from "lucide-react";
+import { Loader2, Mic, Play, Square, Trash2, Upload, Video, Volume2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { useClonedVoices, useCreateClonedVoice, useDeleteClonedVoice } from "@/lib/hooks";
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { VOICE_CLONING_CONSENT_SCRIPT } from "@/lib/consentScript";
 
 function formatElapsed(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -20,15 +22,30 @@ function formatElapsed(seconds: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+const STATUS_VARIANTS: Record<string, "success" | "warning" | "destructive"> = {
+  ready: "success",
+  pending: "warning",
+  rejected: "destructive",
+  failed: "destructive",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  ready: "Ready",
+  pending: "Pending review",
+  rejected: "Rejected",
+  failed: "Failed",
+};
+
 export default function VoiceCloning() {
   const clonedVoices = useClonedVoices();
   const createVoice = useCreateClonedVoice();
   const deleteVoice = useDeleteClonedVoice();
 
   const [name, setName] = useState("");
+
+  // ── Audio sample (upload or record) ─────────────────────────────────────
   const [source, setSource] = useState<"upload" | "record">("upload");
   const [file, setFile] = useState<File | null>(null);
-
   const [recording, setRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
@@ -39,11 +56,29 @@ export default function VoiceCloning() {
   const recordedUrlRef = useRef<string | null>(null);
   recordedUrlRef.current = recordedUrl;
 
+  // ── Consent video (upload or record) ────────────────────────────────────
+  const [videoSource, setVideoSource] = useState<"upload" | "record">("record");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoRecording, setVideoRecording] = useState(false);
+  const [recordedVideoBlob, setRecordedVideoBlob] = useState<Blob | null>(null);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
+  const [videoElapsed, setVideoElapsed] = useState(0);
+  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+  const videoChunksRef = useRef<Blob[]>([]);
+  const videoTimerRef = useRef<number | null>(null);
+  const recordedVideoUrlRef = useRef<string | null>(null);
+  recordedVideoUrlRef.current = recordedVideoUrl;
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+
   useEffect(() => {
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
       if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current);
       mediaRecorderRef.current?.stream.getTracks().forEach((t) => t.stop());
+
+      if (videoTimerRef.current) window.clearInterval(videoTimerRef.current);
+      if (recordedVideoUrlRef.current) URL.revokeObjectURL(recordedVideoUrlRef.current);
+      videoRecorderRef.current?.stream.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -91,6 +126,54 @@ export default function VoiceCloning() {
     setElapsed(0);
   }
 
+  async function startVideoRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = stream;
+      }
+      const recorder = new MediaRecorder(stream);
+      videoChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) videoChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(videoChunksRef.current, { type: recorder.mimeType || "video/webm" });
+        setRecordedVideoBlob(blob);
+        setRecordedVideoUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+        stream.getTracks().forEach((t) => t.stop());
+        if (videoPreviewRef.current) videoPreviewRef.current.srcObject = null;
+      };
+      recorder.start();
+      videoRecorderRef.current = recorder;
+      setVideoRecording(true);
+      setVideoElapsed(0);
+      videoTimerRef.current = window.setInterval(() => setVideoElapsed((e) => e + 1), 1000);
+    } catch {
+      toast.error("Couldn't access your camera — check browser permissions");
+    }
+  }
+
+  function stopVideoRecording() {
+    videoRecorderRef.current?.stop();
+    setVideoRecording(false);
+    if (videoTimerRef.current) {
+      window.clearInterval(videoTimerRef.current);
+      videoTimerRef.current = null;
+    }
+  }
+
+  function resetVideoSource() {
+    setVideoFile(null);
+    setRecordedVideoBlob(null);
+    if (recordedVideoUrl) URL.revokeObjectURL(recordedVideoUrl);
+    setRecordedVideoUrl(null);
+    setVideoElapsed(0);
+  }
+
   async function handleCreate() {
     if (!name.trim()) {
       toast.error("Give your cloned voice a name");
@@ -110,13 +193,30 @@ export default function VoiceCloning() {
       return;
     }
 
+    const consentVideoFile =
+      videoSource === "upload"
+        ? videoFile
+        : recordedVideoBlob
+        ? new File(
+            [recordedVideoBlob],
+            `${name.trim().replace(/\s+/g, "-").toLowerCase()}-consent.webm`,
+            { type: recordedVideoBlob.type || "video/webm" }
+          )
+        : null;
+
+    if (!consentVideoFile) {
+      toast.error(videoSource === "upload" ? "Upload your consent video" : "Record your consent video first");
+      return;
+    }
+
     try {
-      await createVoice.mutateAsync({ name: name.trim(), file: audioFile });
-      toast.success("Voice cloning started");
+      await createVoice.mutateAsync({ name: name.trim(), file: audioFile, consentVideo: consentVideoFile });
+      toast.success("Submitted for review — you'll see it here once approved");
       setName("");
       resetSource();
+      resetVideoSource();
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't clone voice"));
+      toast.error(apiErrorMessage(err, "Couldn't submit voice cloning request"));
     }
   }
 
@@ -124,9 +224,9 @@ export default function VoiceCloning() {
     if (!confirm("Delete this cloned voice? Agents using it will need a new voice assigned.")) return;
     try {
       await deleteVoice.mutateAsync(id);
-      toast.success("Cloned voice deleted");
+      toast.success("Deleted");
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't delete cloned voice"));
+      toast.error(apiErrorMessage(err, "Couldn't delete"));
     }
   }
 
@@ -141,7 +241,10 @@ export default function VoiceCloning() {
         <CardContent className="space-y-4 pt-6">
           <div>
             <p className="font-medium">Create a cloned voice</p>
-            <p className="text-sm text-muted-foreground">Name it, then upload a sample or record one right here.</p>
+            <p className="text-sm text-muted-foreground">
+              Name it, provide a voice sample, and record a short consent video — every submission is reviewed
+              before the voice becomes usable.
+            </p>
           </div>
 
           <div className="max-w-sm space-y-1.5">
@@ -197,9 +300,72 @@ export default function VoiceCloning() {
             </TabsContent>
           </Tabs>
 
+          <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+            <div>
+              <p className="font-medium">Consent video</p>
+              <p className="text-sm text-muted-foreground">
+                Read the script below on camera — this is kept as proof of consent and reviewed before approval.
+              </p>
+            </div>
+            <p className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-sm italic text-foreground/90">
+              &ldquo;{VOICE_CLONING_CONSENT_SCRIPT}&rdquo;
+            </p>
+
+            <Tabs
+              value={videoSource}
+              onValueChange={(v) => {
+                setVideoSource(v as "upload" | "record");
+                resetVideoSource();
+              }}
+            >
+              <TabsList>
+                <TabsTrigger value="record" className="gap-1.5">
+                  <Video className="h-3.5 w-3.5" /> Record video
+                </TabsTrigger>
+                <TabsTrigger value="upload" className="gap-1.5">
+                  <Upload className="h-3.5 w-3.5" /> Upload video
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="upload" className="max-w-sm space-y-1.5">
+                <Label>Consent video file</Label>
+                <Input type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)} />
+              </TabsContent>
+
+              <TabsContent value="record" className="space-y-3">
+                <div className="flex items-center gap-3 rounded-lg border border-border p-3">
+                  {!videoRecording ? (
+                    <Button type="button" variant="outline" size="sm" onClick={startVideoRecording}>
+                      <Video className="h-3.5 w-3.5" /> Start recording
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="destructive" size="sm" onClick={stopVideoRecording}>
+                      <Square className="h-3.5 w-3.5" /> Stop
+                    </Button>
+                  )}
+                  <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    {videoRecording && <span className="h-2 w-2 rounded-full bg-destructive animate-pulse-glow" />}
+                    {formatElapsed(videoElapsed)}
+                  </span>
+                  {recordedVideoUrl && !videoRecording && (
+                    <span className="flex items-center gap-1.5 text-xs text-success">
+                      <Play className="h-3 w-3" /> Video ready
+                    </span>
+                  )}
+                </div>
+                {videoRecording && (
+                  <video ref={videoPreviewRef} autoPlay muted playsInline className="max-w-sm rounded-lg border border-border" />
+                )}
+                {recordedVideoUrl && !videoRecording && (
+                  <video src={recordedVideoUrl} controls className="max-w-sm rounded-lg border border-border" />
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+
           <Button type="button" variant="gradient" onClick={handleCreate} disabled={createVoice.isPending}>
             {createVoice.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
-            Clone voice
+            Submit for review
           </Button>
         </CardContent>
       </Card>
@@ -224,15 +390,14 @@ export default function VoiceCloning() {
                   <TableRow key={v.id}>
                     <TableCell className="font-medium">{v.name}</TableCell>
                     <TableCell>
-                      <span
-                        className={
-                          v.status === "ready"
-                            ? "inline-flex rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-medium text-success"
-                            : "inline-flex rounded-full bg-destructive/15 px-2.5 py-0.5 text-xs font-medium text-destructive"
-                        }
-                      >
-                        {v.status === "ready" ? "Ready" : "Failed"}
-                      </span>
+                      <div className="space-y-1">
+                        <Badge variant={STATUS_VARIANTS[v.status] ?? "destructive"}>
+                          {STATUS_LABELS[v.status] ?? v.status}
+                        </Badge>
+                        {v.status === "rejected" && v.rejection_reason && (
+                          <p className="text-xs text-muted-foreground">Reason: {v.rejection_reason}</p>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDate(v.created_at)}</TableCell>
                     <TableCell className="text-right">

@@ -266,8 +266,9 @@ export interface ConcurrencyUsage {
 export interface ClonedVoice {
   id: string;
   name: string;
-  elevenlabs_voice_id: string;
-  status: "ready" | "failed";
+  elevenlabs_voice_id: string | null;
+  status: "ready" | "failed" | "pending" | "rejected";
+  rejection_reason?: string | null;
   created_at: string;
 }
 

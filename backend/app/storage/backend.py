@@ -5,11 +5,12 @@ Both backends use the same boto3 S3 API since MinIO is S3-compatible.
 Sync boto3 calls are run in a thread pool via asyncio.to_thread so the
 event loop is never blocked.
 
-Four buckets are created on startup if they don't exist:
-  motm-recordings  — call recordings (set by LiveKit egress, URL stored in DB)
-  motm-exports     — generated Excel export files
-  motm-transcripts — raw transcript JSON blobs
-  motm-backups     — database backup archives
+Five buckets are created on startup if they don't exist:
+  motm-recordings    — call recordings (set by LiveKit egress, URL stored in DB)
+  motm-exports       — generated Excel export files
+  motm-transcripts   — raw transcript JSON blobs
+  motm-backups       — database backup archives
+  motm-voice-consent — voice-cloning audio samples + consent videos (pending review)
 """
 from __future__ import annotations
 
@@ -57,6 +58,7 @@ class StorageBackend:
             settings.BUCKET_EXPORTS,
             settings.BUCKET_TRANSCRIPTS,
             settings.BUCKET_BACKUPS,
+            settings.BUCKET_VOICE_CONSENT,
         ]
 
     async def ensure_buckets(self) -> None:
@@ -123,6 +125,14 @@ class StorageBackend:
             )
         )
         return url
+
+    async def download(self, bucket: str, key: str) -> bytes:
+        """Download an object's bytes (e.g. to re-feed a stored sample to an external API)."""
+        buf = io.BytesIO()
+        await asyncio.to_thread(
+            functools.partial(self._client.download_fileobj, bucket, key, buf)
+        )
+        return buf.getvalue()
 
     async def delete(self, bucket: str, key: str) -> None:
         await asyncio.to_thread(
