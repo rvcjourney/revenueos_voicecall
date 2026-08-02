@@ -353,9 +353,17 @@ export default function VoiceCloning() {
                     </span>
                   )}
                 </div>
-                {videoRecording && (
-                  <video ref={videoPreviewRef} autoPlay muted playsInline className="max-w-sm rounded-lg border border-border" />
-                )}
+                {/* Always mounted (not conditional on videoRecording) so videoPreviewRef
+                    is already attached by the time startVideoRecording() assigns
+                    srcObject -- otherwise that assignment lands on a still-null ref,
+                    since the state update that would mount it hasn't re-rendered yet. */}
+                <video
+                  ref={videoPreviewRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className={`max-w-sm rounded-lg border border-border ${videoRecording ? "" : "hidden"}`}
+                />
                 {recordedVideoUrl && !videoRecording && (
                   <video src={recordedVideoUrl} controls className="max-w-sm rounded-lg border border-border" />
                 )}
