@@ -33,6 +33,10 @@ class PlanCreateRequest(BaseModel):
     credit_price_cents: int = 10
     features: dict = {}
     is_active: bool = True
+    discount_price_minor: int | None = None
+    is_custom_pricing: bool = False
+    is_highlighted: bool = False
+    marketing_bullets: list[str] = []
 
 
 class PlanUpdateRequest(BaseModel):
@@ -45,6 +49,10 @@ class PlanUpdateRequest(BaseModel):
     credit_price_cents: int | None = None
     features: dict | None = None
     is_active: bool | None = None
+    discount_price_minor: int | None = None
+    is_custom_pricing: bool | None = None
+    is_highlighted: bool | None = None
+    marketing_bullets: list[str] | None = None
 
 
 class PlanOut(BaseModel):
@@ -58,6 +66,38 @@ class PlanOut(BaseModel):
     credit_price_cents: int
     features: dict
     is_active: bool
+    discount_price_minor: int | None
+    is_custom_pricing: bool
+    is_highlighted: bool
+    marketing_bullets: list[str]
+
+
+class PublicPlanOut(BaseModel):
+    """Display-safe subset of PlanOut for unauthenticated/tenant consumers."""
+    id: str
+    name: str
+    price_minor: int
+    discount_price_minor: int | None
+    currency: str
+    credits_per_month: int
+    is_custom_pricing: bool
+    is_highlighted: bool
+    marketing_bullets: list[str]
+
+
+class BillingCurrentOut(BaseModel):
+    plan: PublicPlanOut
+    subscription_status: str | None
+    current_period_end: str | None
+
+
+class CostSettingsOut(BaseModel):
+    cost_per_minute_minor: int
+    currency: str
+
+
+class CostSettingsUpdateRequest(BaseModel):
+    cost_per_minute_minor: int
 
 
 class OrgListItemOut(BaseModel):
@@ -135,14 +175,27 @@ class UsageSeriesPoint(BaseModel):
 class UsageAnalyticsOut(BaseModel):
     """
     Real, derived data only: daily calls/credits come straight from the calls
-    table, and mrr_minor is the sum of active subscriptions' plan price right
-    now. There's no subscription-history/payment-ledger table yet, so a true
-    revenue-over-time trend can't be computed without fabricating numbers —
-    mrr_minor is a current snapshot, not a series.
+    table, and mrr_minor is the sum of active subscriptions' effective
+    (discounted, if set) plan price right now. There's no subscription-history/
+    payment-ledger table yet, so a true revenue-over-time trend can't be
+    computed without fabricating numbers — mrr_minor is a current snapshot,
+    not a series.
+
+    estimated_cogs_minor_30d / estimated_gross_margin_minor /
+    estimated_margin_percent are ESTIMATES: 30-day real call-minutes (from
+    `series`) multiplied by the superadmin-set cost_per_minute_minor rate
+    (app/api/platform.py: /settings/cost), compared against the MRR snapshot.
+    Not a precise per-org P&L — there's no real per-call provider cost capture
+    (Groq/ElevenLabs/Vobiz/LiveKit) anywhere in the system yet.
     """
     series: list[UsageSeriesPoint]
     mrr_minor: int
     currency: str = "INR"
+    average_plan_price_minor: int
+    cost_per_minute_minor: int
+    estimated_cogs_minor_30d: int
+    estimated_gross_margin_minor: int
+    estimated_margin_percent: float
 
 
 class PlatformHealthOut(BaseModel):

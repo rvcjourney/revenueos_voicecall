@@ -8,6 +8,7 @@ import type {
   AgentCreationRequestAdmin,
   AgentTemplate,
   ApprovedAccess,
+  BillingCurrent,
   Call,
   CallDetail,
   Campaign,
@@ -26,6 +27,7 @@ import type {
   OrgInfo,
   OrgQuotaInfo,
   OrgStats,
+  PublicPlan,
   SipTrunk,
   SipTrunkAssignment,
   TrunkCapacity,
@@ -192,6 +194,15 @@ export const analyticsApi = {
 export const usageApi = {
   concurrency: () => api.get<ConcurrencyUsage>("/api/usage/concurrency"),
   credits: () => api.get<CreditUsage>("/api/usage/credits"),
+};
+
+// ── Public pricing & billing ─────────────────────────────────────────────
+export const plansApi = {
+  list: () => api.get<PublicPlan[]>("/api/plans"),
+};
+
+export const billingApi = {
+  current: () => api.get<BillingCurrent>("/api/billing/current"),
 };
 
 // ── Voice cloning ────────────────────────────────────────────────────────

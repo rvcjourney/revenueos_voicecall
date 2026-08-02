@@ -45,6 +45,7 @@ from app.models.campaign import Campaign, CampaignStatus
 from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
 from app.models.platform_admin import PlatformAdmin
+from app.models.platform_cost_settings import PlatformCostSettings
 from app.models.subscription import Subscription
 from app.models.user import Organization, User
 from app.models.voice_clone_request import VoiceCloneRequest
@@ -57,6 +58,8 @@ from app.schemas.platform import (
     PlanCreateRequest,
     PlanOut,
     PlanUpdateRequest,
+    CostSettingsOut,
+    CostSettingsUpdateRequest,
     PlatformAdminOut,
     PlatformHealthOut,
     PlatformLoginRequest,
@@ -84,7 +87,20 @@ def _to_plan_out(p: Plan) -> PlanOut:
         credit_price_cents=p.credit_price_cents,
         features=p.features,
         is_active=p.is_active,
+        discount_price_minor=p.discount_price_minor,
+        is_custom_pricing=p.is_custom_pricing,
+        is_highlighted=p.is_highlighted,
+        marketing_bullets=p.marketing_bullets,
     )
+
+
+async def _get_or_create_cost_settings(db: AsyncSession) -> PlatformCostSettings:
+    settings_row = await db.get(PlatformCostSettings, 1)
+    if settings_row is None:
+        settings_row = PlatformCostSettings(id=1)
+        db.add(settings_row)
+        await db.flush()
+    return settings_row
 
 
 async def _active_subscription(db: AsyncSession, org_id: UUID) -> Subscription | None:
@@ -385,6 +401,10 @@ async def create_plan(
         credit_price_cents=body.credit_price_cents,
         features=body.features,
         is_active=body.is_active,
+        discount_price_minor=body.discount_price_minor,
+        is_custom_pricing=body.is_custom_pricing,
+        is_highlighted=body.is_highlighted,
+        marketing_bullets=body.marketing_bullets,
     )
     db.add(plan)
     await db.flush()  # assign plan.id before the audit log row references it
@@ -431,6 +451,19 @@ async def update_plan(
         plan.features = body.features
     if body.is_active is not None:
         plan.is_active = body.is_active
+    # discount_price_minor is nullable and must be independently clearable
+    # (send {"discount_price_minor": null} to remove a discount), so this one
+    # field is checked via model_fields_set rather than `is not None` --
+    # otherwise there'd be no way to distinguish "clear the discount" from
+    # "field omitted, leave unchanged."
+    if "discount_price_minor" in body.model_fields_set:
+        plan.discount_price_minor = body.discount_price_minor
+    if body.is_custom_pricing is not None:
+        plan.is_custom_pricing = body.is_custom_pricing
+    if body.is_highlighted is not None:
+        plan.is_highlighted = body.is_highlighted
+    if body.marketing_bullets is not None:
+        plan.marketing_bullets = body.marketing_bullets
 
     db.add(AuditLog(
         actor_type="platform_admin",
@@ -444,6 +477,41 @@ async def update_plan(
     await db.commit()
     await db.refresh(plan)
     return _to_plan_out(plan)
+
+
+# ── Cost settings (for estimated gross margin) ────────────────────────────────
+
+@router.get("/settings/cost", response_model=CostSettingsOut)
+async def get_cost_settings(
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    settings_row = await _get_or_create_cost_settings(db)
+    await db.commit()
+    return CostSettingsOut(cost_per_minute_minor=settings_row.cost_per_minute_minor, currency=settings_row.currency)
+
+
+@router.patch("/settings/cost", response_model=CostSettingsOut)
+async def update_cost_settings(
+    body: CostSettingsUpdateRequest,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    settings_row = await _get_or_create_cost_settings(db)
+    settings_row.cost_per_minute_minor = body.cost_per_minute_minor
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=None,
+        action="cost_settings.update",
+        target_type="platform_cost_settings",
+        target_id=None,
+    ))
+
+    await db.commit()
+    await db.refresh(settings_row)
+    return CostSettingsOut(cost_per_minute_minor=settings_row.cost_per_minute_minor, currency=settings_row.currency)
 
 
 @router.get("/metrics", response_model=PlatformMetricsOut)
@@ -480,6 +548,12 @@ async def get_metrics(
 # revenue-over-time trend isn't derivable without fabricating numbers.
 
 async def _daily_usage_series(db: AsyncSession, *, org_id: UUID | None, days: int = 30) -> list[dict]:
+    # func.timezone("UTC", ...) forces the DATE cast to use UTC calendar days
+    # regardless of the DB session's timezone setting (this deployment's
+    # Postgres session defaults to Asia/Calcutta) -- without it, a bare
+    # cast(created_at, Date) buckets by the session's local date, which drifts
+    # from the UTC "today" used below to build the day range for ~5.5 hours
+    # every day and silently drops that window's calls from the series.
     now = datetime.now(timezone.utc)
     window_start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -487,9 +561,15 @@ async def _daily_usage_series(db: AsyncSession, *, org_id: UUID | None, days: in
     if org_id is not None:
         filters.append(Call.org_id == org_id)
 
+    # Built once and reused by reference in SELECT/GROUP BY/ORDER BY -- Postgres
+    # requires the GROUP BY expression to match the SELECT expression exactly,
+    # and three separately-constructed func.timezone(...) calls each get their
+    # own bound parameter, which Postgres doesn't recognize as equivalent.
+    day_expr = cast(func.timezone("UTC", Call.created_at), Date)
+
     rows = (await db.execute(
         select(
-            cast(Call.created_at, Date).label("day"),
+            day_expr.label("day"),
             func.count(Call.id).label("calls"),
             func.coalesce(
                 func.sum(func.ceil(Call.duration_seconds / 60.0)).filter(Call.status == CallStatus.COMPLETED),
@@ -497,8 +577,8 @@ async def _daily_usage_series(db: AsyncSession, *, org_id: UUID | None, days: in
             ).label("credits"),
         )
         .where(*filters)
-        .group_by(cast(Call.created_at, Date))
-        .order_by(cast(Call.created_at, Date))
+        .group_by(day_expr)
+        .order_by(day_expr)
     )).all()
 
     daily_map = {str(r.day): {"calls": r.calls, "credits": int(r.credits)} for r in rows}
@@ -510,9 +590,14 @@ async def _daily_usage_series(db: AsyncSession, *, org_id: UUID | None, days: in
     return series
 
 
+_EFFECTIVE_PRICE = func.coalesce(Plan.discount_price_minor, Plan.price_minor)
+
+
 async def _current_mrr_minor(db: AsyncSession, *, org_id: UUID | None = None) -> int:
+    # Uses the effective (discounted, if set) price -- MRR should reflect what
+    # orgs are actually being charged, not each plan's undiscounted list price.
     query = (
-        select(func.coalesce(func.sum(Plan.price_minor), 0))
+        select(func.coalesce(func.sum(_EFFECTIVE_PRICE), 0))
         .select_from(Subscription)
         .join(Plan, Plan.id == Subscription.plan_id)
         .where(Subscription.status == "active", Subscription.deleted_at.is_(None))
@@ -522,15 +607,48 @@ async def _current_mrr_minor(db: AsyncSession, *, org_id: UUID | None = None) ->
     return (await db.scalar(query)) or 0
 
 
+async def _average_effective_price_minor(db: AsyncSession, *, org_id: UUID | None = None) -> int:
+    query = (
+        select(func.coalesce(func.avg(_EFFECTIVE_PRICE), 0))
+        .select_from(Subscription)
+        .join(Plan, Plan.id == Subscription.plan_id)
+        .where(Subscription.status == "active", Subscription.deleted_at.is_(None))
+    )
+    if org_id is not None:
+        query = query.where(Subscription.org_id == org_id)
+    return int((await db.scalar(query)) or 0)
+
+
+async def _usage_analytics_out(db: AsyncSession, *, org_id: UUID | None) -> UsageAnalyticsOut:
+    series = await _daily_usage_series(db, org_id=org_id)
+    mrr = await _current_mrr_minor(db, org_id=org_id)
+    avg_price = await _average_effective_price_minor(db, org_id=org_id)
+    cost_settings = await _get_or_create_cost_settings(db)
+    await db.commit()
+
+    total_minutes = sum(point["credits"] for point in series)
+    cogs = total_minutes * cost_settings.cost_per_minute_minor
+    margin = mrr - cogs
+    margin_pct = (margin / mrr * 100) if mrr else 0.0
+
+    return UsageAnalyticsOut(
+        series=series,
+        mrr_minor=mrr,
+        average_plan_price_minor=avg_price,
+        cost_per_minute_minor=cost_settings.cost_per_minute_minor,
+        estimated_cogs_minor_30d=cogs,
+        estimated_gross_margin_minor=margin,
+        estimated_margin_percent=round(margin_pct, 2),
+    )
+
+
 @router.get("/analytics/usage", response_model=UsageAnalyticsOut)
 async def platform_usage_analytics(
     admin: PlatformAdmin = Depends(require_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Platform-wide calls/credits per day (last 30 days) + current MRR."""
-    series = await _daily_usage_series(db, org_id=None)
-    mrr = await _current_mrr_minor(db)
-    return UsageAnalyticsOut(series=series, mrr_minor=mrr)
+    """Platform-wide calls/credits per day (last 30 days) + current MRR + estimated margin."""
+    return await _usage_analytics_out(db, org_id=None)
 
 
 @router.get("/orgs/{org_id}/analytics/usage", response_model=UsageAnalyticsOut)
@@ -543,9 +661,7 @@ async def platform_org_usage_analytics(
     org = await db.get(Organization, org_id)
     if not org or org.deleted_at:
         raise NotFoundError("Organization not found")
-    series = await _daily_usage_series(db, org_id=org_id)
-    mrr = await _current_mrr_minor(db, org_id=org_id)
-    return UsageAnalyticsOut(series=series, mrr_minor=mrr)
+    return await _usage_analytics_out(db, org_id=org_id)
 
 
 # ── Infrastructure health ─────────────────────────────────────────────────────

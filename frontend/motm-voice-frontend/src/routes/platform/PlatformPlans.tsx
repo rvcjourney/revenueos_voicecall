@@ -32,6 +32,10 @@ interface PlanFormState {
   credit_price_cents: string;
   features: { key: string; value: string }[];
   is_active: boolean;
+  discount_price_minor: string;
+  is_custom_pricing: boolean;
+  is_highlighted: boolean;
+  marketing_bullets: string[];
 }
 
 function emptyForm(): PlanFormState {
@@ -45,6 +49,10 @@ function emptyForm(): PlanFormState {
     credit_price_cents: "10",
     features: [],
     is_active: true,
+    discount_price_minor: "",
+    is_custom_pricing: false,
+    is_highlighted: false,
+    marketing_bullets: [],
   };
 }
 
@@ -59,6 +67,10 @@ function formFromPlan(plan: PlatformPlan): PlanFormState {
     credit_price_cents: String(plan.credit_price_cents),
     features: Object.entries(plan.features ?? {}).map(([key, value]) => ({ key, value: String(value) })),
     is_active: plan.is_active,
+    discount_price_minor: plan.discount_price_minor != null ? String(plan.discount_price_minor) : "",
+    is_custom_pricing: plan.is_custom_pricing,
+    is_highlighted: plan.is_highlighted,
+    marketing_bullets: plan.marketing_bullets ?? [],
   };
 }
 
@@ -77,6 +89,10 @@ function toPayload(form: PlanFormState): PlatformPlanCreate {
     credit_price_cents: Number(form.credit_price_cents) || 0,
     features,
     is_active: form.is_active,
+    discount_price_minor: form.discount_price_minor.trim() === "" ? null : Number(form.discount_price_minor),
+    is_custom_pricing: form.is_custom_pricing,
+    is_highlighted: form.is_highlighted,
+    marketing_bullets: form.marketing_bullets.filter((b) => b.trim() !== ""),
   };
 }
 
@@ -126,8 +142,29 @@ export default function PlatformPlans() {
             <TableBody>
               {plans.data.map((plan) => (
                 <TableRow key={plan.id}>
-                  <TableCell className="pl-5 text-sm font-medium">{plan.name}</TableCell>
-                  <TableCell className="text-sm">{formatPrice(plan.price_minor, plan.currency)}/mo</TableCell>
+                  <TableCell className="pl-5 text-sm font-medium">
+                    <div className="flex items-center gap-1.5">
+                      {plan.name}
+                      {plan.is_highlighted && (
+                        <Badge variant="info" className="text-[11px]">Highlighted</Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {plan.is_custom_pricing ? (
+                      <span className="text-muted-foreground">Custom</span>
+                    ) : plan.discount_price_minor != null ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground line-through">
+                          {formatPrice(plan.price_minor, plan.currency)}
+                        </span>
+                        {formatPrice(plan.discount_price_minor, plan.currency)}/mo
+                        <Badge variant="warning" className="text-[11px]">Discount</Badge>
+                      </span>
+                    ) : (
+                      `${formatPrice(plan.price_minor, plan.currency)}/mo`
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{plan.monthly_call_quota.toLocaleString()}</TableCell>
                   <TableCell className="text-sm">{plan.max_concurrent_calls}</TableCell>
                   <TableCell className="text-sm">
@@ -194,6 +231,18 @@ function PlanFormDialogContent({ plan, onDone }: { plan?: PlatformPlan; onDone: 
     setForm((f) => ({ ...f, features: f.features.filter((_, i) => i !== index) }));
   }
 
+  function updateBullet(index: number, value: string) {
+    setForm((f) => ({ ...f, marketing_bullets: f.marketing_bullets.map((b, i) => (i === index ? value : b)) }));
+  }
+
+  function addBulletRow() {
+    setForm((f) => ({ ...f, marketing_bullets: [...f.marketing_bullets, ""] }));
+  }
+
+  function removeBulletRow(index: number) {
+    setForm((f) => ({ ...f, marketing_bullets: f.marketing_bullets.filter((_, i) => i !== index) }));
+  }
+
   async function submit() {
     if (!form.name.trim()) {
       toast.error("Plan name is required");
@@ -249,6 +298,17 @@ function PlanFormDialogContent({ plan, onDone }: { plan?: PlatformPlan; onDone: 
               <Label>Currency</Label>
               <Input value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))} />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Discount price (minor units)</Label>
+            <Input
+              type="number"
+              min={0}
+              placeholder="No discount"
+              value={form.discount_price_minor}
+              onChange={(e) => setForm((f) => ({ ...f, discount_price_minor: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground">If set, shown as the sale price with the regular price struck through.</p>
           </div>
           <div className="space-y-1.5">
             <Label>Monthly call quota</Label>
@@ -320,6 +380,57 @@ function PlanFormDialogContent({ plan, onDone }: { plan?: PlatformPlan; onDone: 
               ))}
             </div>
           )}
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-border p-3">
+          <p className="text-sm font-medium">Pricing page</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Custom pricing</p>
+              <p className="text-xs text-muted-foreground">Shows "Custom" / "Custom volume" and a Contact Sales button instead of a price.</p>
+            </div>
+            <Switch
+              checked={form.is_custom_pricing}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, is_custom_pricing: v }))}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Highlighted ("Most Popular")</p>
+              <p className="text-xs text-muted-foreground">Badges this plan and gives it the accent border on the pricing page.</p>
+            </div>
+            <Switch
+              checked={form.is_highlighted}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, is_highlighted: v }))}
+            />
+          </div>
+          <div className="space-y-2 border-t border-border/60 pt-3">
+            <div className="flex items-center justify-between">
+              <Label>Marketing bullets</Label>
+              <Button type="button" variant="outline" size="sm" onClick={addBulletRow}>
+                <Plus className="h-3.5 w-3.5" /> Add
+              </Button>
+            </div>
+            {form.marketing_bullets.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No bullets — the pricing card will show just price and minutes.</p>
+            ) : (
+              <div className="space-y-2">
+                {form.marketing_bullets.map((bullet, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      placeholder="e.g. 24/7 inbound call handling"
+                      value={bullet}
+                      onChange={(e) => updateBullet(i, e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeBulletRow(i)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between rounded-lg border border-border p-3">

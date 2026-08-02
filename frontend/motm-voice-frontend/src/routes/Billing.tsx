@@ -20,22 +20,32 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { useCreditUsage } from "@/lib/hooks";
-
-const CURRENT_PLAN = {
-  name: "Starter Plan",
-  price: "$49",
-  interval: "month",
-  renewsOn: "31 Aug 2026",
-};
+import { useBillingCurrent, useCreditUsage } from "@/lib/hooks";
 
 function notImplemented(action: string) {
   toast.info(`${action} isn't connected yet — this is a UI preview only.`);
 }
 
+function formatPrice(priceMinor: number, currency: string) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(
+    priceMinor / 100
+  );
+}
+
 export default function Billing() {
   const credits = useCreditUsage();
+  const billing = useBillingCurrent();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
+
+  const plan = billing.data?.plan;
+  const effectivePriceMinor = plan ? plan.discount_price_minor ?? plan.price_minor : null;
+  const renewsOn = billing.data?.current_period_end
+    ? new Date(billing.data.current_period_end).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
 
   return (
     <div className="space-y-6">
@@ -44,15 +54,37 @@ export default function Billing() {
       <Card>
         <CardContent className="space-y-5 pt-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-            <div>
-              <p className="font-heading text-xl font-semibold">{CURRENT_PLAN.name}</p>
-              <p className="text-sm text-muted-foreground">
-                {CURRENT_PLAN.price}/{CURRENT_PLAN.interval} · renews {CURRENT_PLAN.renewsOn}
-              </p>
-            </div>
+            {billing.isLoading || !plan ? (
+              <div className="space-y-2">
+                <Skeleton className="h-6 w-40" />
+                <Skeleton className="h-4 w-56" />
+              </div>
+            ) : (
+              <div>
+                <p className="font-heading text-xl font-semibold">
+                  {plan.name}
+                  {plan.is_custom_pricing ? "" : " Plan"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {plan.is_custom_pricing ? (
+                    "Custom pricing"
+                  ) : (
+                    <>
+                      {formatPrice(effectivePriceMinor!, plan.currency)}/month
+                      {plan.discount_price_minor != null && (
+                        <span className="ml-1.5 text-muted-foreground/70 line-through">
+                          {formatPrice(plan.price_minor, plan.currency)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {renewsOn && <> · renews {renewsOn}</>}
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Badge variant="success">
-                <Check className="h-3 w-3" /> Active
+                <Check className="h-3 w-3" /> {billing.data?.subscription_status ?? "Active"}
               </Badge>
               <Button variant="outline" size="sm" onClick={() => notImplemented("Changing plans")}>
                 Change plan

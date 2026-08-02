@@ -4,10 +4,12 @@ import {
   agentsApi,
   analyticsApi,
   authApi,
+  billingApi,
   callsApi,
   campaignsApi,
   foldersApi,
   inboundAgentsApi,
+  plansApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
@@ -38,6 +40,15 @@ export function useConcurrency() {
 
 export function useCreditUsage() {
   return useQuery({ queryKey: ["credit-usage"], queryFn: () => usageApi.credits().then((r) => r.data) });
+}
+
+// ── Pricing & billing ────────────────────────────────────────────────────
+export function usePublicPlans() {
+  return useQuery({ queryKey: ["public-plans"], queryFn: () => plansApi.list().then((r) => r.data) });
+}
+
+export function useBillingCurrent() {
+  return useQuery({ queryKey: ["billing-current"], queryFn: () => billingApi.current().then((r) => r.data) });
 }
 
 // ── Folders ──────────────────────────────────────────────────────────────

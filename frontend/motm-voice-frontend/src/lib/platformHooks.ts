@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   platformAnalyticsApi,
+  platformCostSettingsApi,
   platformHealthApi,
   platformMetricsApi,
   platformOrgsApi,
@@ -106,6 +107,25 @@ export function usePlatformOrgUsageAnalytics(orgId: string | undefined) {
     queryKey: ["platform-org-usage-analytics", orgId],
     queryFn: () => platformAnalyticsApi.orgUsage(orgId!).then((r) => r.data),
     enabled: !!orgId,
+  });
+}
+
+// ── Cost settings (for estimated gross margin) ──────────────────────────────
+export function usePlatformCostSettings() {
+  return useQuery({
+    queryKey: ["platform-cost-settings"],
+    queryFn: () => platformCostSettingsApi.get().then((r) => r.data),
+  });
+}
+
+export function useUpdatePlatformCostSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { cost_per_minute_minor: number }) => platformCostSettingsApi.update(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["platform-cost-settings"] });
+      qc.invalidateQueries({ queryKey: ["platform-usage-analytics"] });
+    },
   });
 }
 

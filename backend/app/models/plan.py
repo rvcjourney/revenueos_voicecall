@@ -39,3 +39,19 @@ class Plan(Base, TimestampMixin):
     #   voice_cloning: bool — can this plan's orgs create ElevenLabs cloned voices
     features: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    # ── Marketing/pricing-card display (superadmin-editable, no deploy needed) ─
+    # When set, the current "sale" price shown to customers; price_minor is
+    # still shown struck through alongside it. Null = no discount.
+    discount_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # When true, the pricing card shows "Custom" / "Custom volume" instead of
+    # price_minor/credits_per_month — those two columns become sort-order
+    # sentinels only, never rendered. Used for a "Contact Sales" tier.
+    is_custom_pricing: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # "Most Popular" badge on the marketing pricing card.
+    is_highlighted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Free-form marketing copy bullets shown on the pricing card — display
+    # only, unrelated to the plan-gating `features` dict above.
+    marketing_bullets: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )

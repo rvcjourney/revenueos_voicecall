@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
+import { PricingSection } from "@/components/marketing/PricingSection";
 import { SoundWave } from "@/components/shared/SoundWave";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -96,31 +97,6 @@ const stepAccents = [
 ];
 
 const stepStagger = ["lg:ml-0", "lg:ml-12", "lg:ml-24", "lg:ml-36"];
-
-const plans = [
-  {
-    name: "Starter",
-    price: "₹9,999",
-    period: "/month",
-    description: "For small teams testing AI outbound.",
-    features: ["1,000 calls / month", "2 concurrent calls", "1 AI voice agent", "CSV export", "Email support"],
-  },
-  {
-    name: "Growth",
-    price: "₹29,999",
-    period: "/month",
-    description: "For sales teams scaling outbound calling.",
-    features: ["10,000 calls / month", "10 concurrent calls", "Unlimited AI agents", "CRM integrations", "Priority support"],
-    highlighted: true,
-  },
-  {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For large orgs with custom compliance needs.",
-    features: ["Custom call volume", "Custom concurrency", "Dedicated SIP numbers", "SSO & audit logs", "Dedicated success manager"],
-  },
-];
 
 const faqs = [
   {
@@ -386,46 +362,7 @@ export default function Landing() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="border-t border-border/60 bg-card/30 py-20">
-        <div className="reveal-on-scroll mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="font-heading text-3xl font-semibold sm:text-4xl">Simple, usage-based pricing</h2>
-            <p className="mt-3 text-muted-foreground">Illustrative plans — talk to us for a quote tailored to your call volume.</p>
-          </div>
-          <div className="mt-12 grid gap-6 lg:grid-cols-3">
-            {plans.map((p) => (
-              <Card
-                key={p.name}
-                className={p.highlighted ? "relative border-primary/60 shadow-[var(--shadow-glow)]" : ""}
-              >
-                {p.highlighted && (
-                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2">Most popular</Badge>
-                )}
-                <CardContent className="space-y-6 pt-8">
-                  <div>
-                    <p className="font-medium">{p.name}</p>
-                    <p className="mt-2 text-sm text-muted-foreground">{p.description}</p>
-                  </div>
-                  <div className="flex items-baseline gap-1">
-                    <span className="font-heading text-3xl font-semibold">{p.price}</span>
-                    <span className="text-sm text-muted-foreground">{p.period}</span>
-                  </div>
-                  <ul className="space-y-2.5">
-                    {p.features.map((f) => (
-                      <li key={f} className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Check className="h-4 w-4 shrink-0 text-success" /> {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <Button variant={p.highlighted ? "gradient" : "outline"} className="w-full" asChild>
-                    <Link to="/signup">Get started</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
+      <PricingSection />
 
       {/* FAQ */}
       <section id="faq" className="border-t border-border/60 py-20">

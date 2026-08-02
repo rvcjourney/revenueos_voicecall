@@ -1,5 +1,6 @@
 import axios from "axios";
 import type {
+  PlatformCostSettings,
   PlatformHealth,
   PlatformListResponse,
   PlatformLoginResponse,
@@ -107,6 +108,13 @@ export const platformAnalyticsApi = {
 // ── Infrastructure health ────────────────────────────────────────────────
 export const platformHealthApi = {
   get: () => platformApi.get<PlatformHealth>("/api/platform/health"),
+};
+
+// ── Cost settings (for estimated gross margin) ─────────────────────────────
+export const platformCostSettingsApi = {
+  get: () => platformApi.get<PlatformCostSettings>("/api/platform/settings/cost"),
+  update: (data: { cost_per_minute_minor: number }) =>
+    platformApi.patch<PlatformCostSettings>("/api/platform/settings/cost", data),
 };
 
 // ── Voice clone requests ─────────────────────────────────────────────────

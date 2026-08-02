@@ -57,6 +57,10 @@ export interface PlatformPlan {
   credit_price_cents: number;
   features: Record<string, string>;
   is_active: boolean;
+  discount_price_minor: number | null;
+  is_custom_pricing: boolean;
+  is_highlighted: boolean;
+  marketing_bullets: string[];
 }
 
 export interface PlatformPlanCreate {
@@ -69,6 +73,15 @@ export interface PlatformPlanCreate {
   credit_price_cents?: number;
   features?: Record<string, string>;
   is_active?: boolean;
+  discount_price_minor?: number | null;
+  is_custom_pricing?: boolean;
+  is_highlighted?: boolean;
+  marketing_bullets?: string[];
+}
+
+export interface PlatformCostSettings {
+  cost_per_minute_minor: number;
+  currency: string;
 }
 
 export interface PlatformListResponse<T> {
@@ -86,6 +99,11 @@ export interface PlatformUsageAnalytics {
   series: PlatformUsagePoint[];
   mrr_minor: number;
   currency: string;
+  average_plan_price_minor: number;
+  cost_per_minute_minor: number;
+  estimated_cogs_minor_30d: number;
+  estimated_gross_margin_minor: number;
+  estimated_margin_percent: number;
 }
 
 export interface PlatformHealth {

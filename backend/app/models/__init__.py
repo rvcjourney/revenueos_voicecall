@@ -12,6 +12,7 @@ from app.models.agent_access import AgentAccessRequest  # noqa: F401
 from app.models.agent_creation_request import AgentCreationRequest  # noqa: F401
 from app.models.platform_admin import PlatformAdmin  # noqa: F401
 from app.models.plan import Plan  # noqa: F401
+from app.models.platform_cost_settings import PlatformCostSettings  # noqa: F401
 from app.models.subscription import Subscription  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.cloned_voice import ClonedVoice  # noqa: F401
