@@ -124,3 +124,30 @@ class VoiceCloneRequestOut(BaseModel):
 
 class VoiceCloneRequestRejectRequest(BaseModel):
     reason: str
+
+
+class UsageSeriesPoint(BaseModel):
+    day: str
+    calls: int
+    credits: int
+
+
+class UsageAnalyticsOut(BaseModel):
+    """
+    Real, derived data only: daily calls/credits come straight from the calls
+    table, and mrr_minor is the sum of active subscriptions' plan price right
+    now. There's no subscription-history/payment-ledger table yet, so a true
+    revenue-over-time trend can't be computed without fabricating numbers —
+    mrr_minor is a current snapshot, not a series.
+    """
+    series: list[UsageSeriesPoint]
+    mrr_minor: int
+    currency: str = "INR"
+
+
+class PlatformHealthOut(BaseModel):
+    api: bool
+    database: bool
+    redis: bool
+    celery_workers_online: int
+    celery_worker_names: list[str]

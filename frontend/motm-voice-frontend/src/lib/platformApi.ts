@@ -1,5 +1,6 @@
 import axios from "axios";
 import type {
+  PlatformHealth,
   PlatformListResponse,
   PlatformLoginResponse,
   PlatformMetrics,
@@ -8,6 +9,7 @@ import type {
   PlatformOrgUpdate,
   PlatformPlan,
   PlatformPlanCreate,
+  PlatformUsageAnalytics,
   PlatformVoiceCloneRequest,
 } from "./platformTypes";
 
@@ -93,6 +95,18 @@ export const platformPlansApi = {
   create: (data: PlatformPlanCreate) => platformApi.post<PlatformPlan>("/api/platform/plans", data),
   update: (id: string, data: Partial<PlatformPlanCreate>) =>
     platformApi.patch<PlatformPlan>(`/api/platform/plans/${id}`, data),
+};
+
+// ── Usage analytics ──────────────────────────────────────────────────────
+export const platformAnalyticsApi = {
+  usage: () => platformApi.get<PlatformUsageAnalytics>("/api/platform/analytics/usage"),
+  orgUsage: (orgId: string) =>
+    platformApi.get<PlatformUsageAnalytics>(`/api/platform/orgs/${orgId}/analytics/usage`),
+};
+
+// ── Infrastructure health ────────────────────────────────────────────────
+export const platformHealthApi = {
+  get: () => platformApi.get<PlatformHealth>("/api/platform/health"),
 };
 
 // ── Voice clone requests ─────────────────────────────────────────────────

@@ -12,11 +12,12 @@ org boundaries on purpose; none of it goes through org-scoped query helpers.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import aiohttp
@@ -34,10 +35,11 @@ from app.core.exceptions import (
 )
 from app.core.plan_features import is_voice_cloning_allowed, is_voice_provider_allowed
 from app.core.security import create_platform_token, verify_password
-from app.database import get_db
+from app.database import check_db_health, get_db
 from app.storage.backend import get_storage
 from app.models.agent import VoiceProvider
 from app.models.audit_log import AuditLog
+from app.models.call import Call, CallStatus
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
@@ -55,9 +57,11 @@ from app.schemas.platform import (
     PlanOut,
     PlanUpdateRequest,
     PlatformAdminOut,
+    PlatformHealthOut,
     PlatformLoginRequest,
     PlatformMetricsOut,
     PlatformTokenResponse,
+    UsageAnalyticsOut,
     VoiceCloneRequestOut,
     VoiceCloneRequestRejectRequest,
 )
@@ -463,6 +467,128 @@ async def get_metrics(
         org_count=org_count or 0,
         active_campaigns=active_campaigns or 0,
         total_calls_used=total_calls_used or 0,
+    )
+
+
+# ── Usage analytics ───────────────────────────────────────────────────────────
+# Daily calls/credits come straight from the calls table (real, not sampled).
+# mrr_minor is a live snapshot (sum of active subscriptions' plan price) --
+# there's no subscription-history/payment-ledger table, so a genuine
+# revenue-over-time trend isn't derivable without fabricating numbers.
+
+async def _daily_usage_series(db: AsyncSession, *, org_id: UUID | None, days: int = 30) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    window_start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    filters = [Call.created_at >= window_start]
+    if org_id is not None:
+        filters.append(Call.org_id == org_id)
+
+    rows = (await db.execute(
+        select(
+            cast(Call.created_at, Date).label("day"),
+            func.count(Call.id).label("calls"),
+            func.coalesce(
+                func.sum(func.ceil(Call.duration_seconds / 60.0)).filter(Call.status == CallStatus.COMPLETED),
+                0,
+            ).label("credits"),
+        )
+        .where(*filters)
+        .group_by(cast(Call.created_at, Date))
+        .order_by(cast(Call.created_at, Date))
+    )).all()
+
+    daily_map = {str(r.day): {"calls": r.calls, "credits": int(r.credits)} for r in rows}
+    series = []
+    for i in range(days - 1, -1, -1):
+        d = (now - timedelta(days=i)).date()
+        entry = daily_map.get(str(d), {"calls": 0, "credits": 0})
+        series.append({"day": d.strftime("%b %d"), "calls": entry["calls"], "credits": entry["credits"]})
+    return series
+
+
+async def _current_mrr_minor(db: AsyncSession, *, org_id: UUID | None = None) -> int:
+    query = (
+        select(func.coalesce(func.sum(Plan.price_minor), 0))
+        .select_from(Subscription)
+        .join(Plan, Plan.id == Subscription.plan_id)
+        .where(Subscription.status == "active", Subscription.deleted_at.is_(None))
+    )
+    if org_id is not None:
+        query = query.where(Subscription.org_id == org_id)
+    return (await db.scalar(query)) or 0
+
+
+@router.get("/analytics/usage", response_model=UsageAnalyticsOut)
+async def platform_usage_analytics(
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Platform-wide calls/credits per day (last 30 days) + current MRR."""
+    series = await _daily_usage_series(db, org_id=None)
+    mrr = await _current_mrr_minor(db)
+    return UsageAnalyticsOut(series=series, mrr_minor=mrr)
+
+
+@router.get("/orgs/{org_id}/analytics/usage", response_model=UsageAnalyticsOut)
+async def platform_org_usage_analytics(
+    org_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Same as /analytics/usage, scoped to a single org — for the org detail page."""
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+    series = await _daily_usage_series(db, org_id=org_id)
+    mrr = await _current_mrr_minor(db, org_id=org_id)
+    return UsageAnalyticsOut(series=series, mrr_minor=mrr)
+
+
+# ── Infrastructure health ─────────────────────────────────────────────────────
+
+@router.get("/health", response_model=PlatformHealthOut)
+async def platform_health(
+    admin: PlatformAdmin = Depends(require_platform_admin),
+):
+    """
+    Live status of the services this request depends on. `api=True` is
+    trivial (this response only exists because the API process is up), but
+    included so the frontend can render one uniform status row per service.
+
+    Celery Beat (the scheduler) isn't included -- it doesn't respond to
+    inspect/ping the way worker processes do, and it writes its schedule
+    state to a volume that isn't mounted into the api container, so there's
+    no way to probe it from here without a fragile workaround.
+    """
+    db_ok = await check_db_health()
+
+    redis_ok = False
+    try:
+        from app.core.redis import get_redis
+
+        redis = await get_redis()
+        await redis.ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+
+    def _ping_workers() -> dict:
+        from app.workers.celery_app import celery_app
+
+        try:
+            return celery_app.control.inspect(timeout=3).ping() or {}
+        except Exception:
+            return {}
+
+    worker_replies = await asyncio.to_thread(_ping_workers)
+
+    return PlatformHealthOut(
+        api=True,
+        database=db_ok,
+        redis=redis_ok,
+        celery_workers_online=len(worker_replies),
+        celery_worker_names=list(worker_replies.keys()),
     )
 
 

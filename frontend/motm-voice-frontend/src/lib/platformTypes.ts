@@ -76,6 +76,26 @@ export interface PlatformListResponse<T> {
   total: number;
 }
 
+export interface PlatformUsagePoint {
+  day: string;
+  calls: number;
+  credits: number;
+}
+
+export interface PlatformUsageAnalytics {
+  series: PlatformUsagePoint[];
+  mrr_minor: number;
+  currency: string;
+}
+
+export interface PlatformHealth {
+  api: boolean;
+  database: boolean;
+  redis: boolean;
+  celery_workers_online: number;
+  celery_worker_names: string[];
+}
+
 export interface PlatformVoiceCloneRequest {
   id: string;
   org_id: string;

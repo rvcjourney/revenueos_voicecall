@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  platformAnalyticsApi,
+  platformHealthApi,
   platformMetricsApi,
   platformOrgsApi,
   platformPlansApi,
@@ -88,6 +90,31 @@ export function useUpdatePlatformPlan() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<PlatformPlanCreate> }) => platformPlansApi.update(id, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["platform-plans"] }),
+  });
+}
+
+// ── Usage analytics ──────────────────────────────────────────────────────
+export function usePlatformUsageAnalytics() {
+  return useQuery({
+    queryKey: ["platform-usage-analytics"],
+    queryFn: () => platformAnalyticsApi.usage().then((r) => r.data),
+  });
+}
+
+export function usePlatformOrgUsageAnalytics(orgId: string | undefined) {
+  return useQuery({
+    queryKey: ["platform-org-usage-analytics", orgId],
+    queryFn: () => platformAnalyticsApi.orgUsage(orgId!).then((r) => r.data),
+    enabled: !!orgId,
+  });
+}
+
+// ── Infrastructure health ─────────────────────────────────────────────────
+export function usePlatformHealth() {
+  return useQuery({
+    queryKey: ["platform-health"],
+    queryFn: () => platformHealthApi.get().then((r) => r.data),
+    refetchInterval: 30_000,
   });
 }
 

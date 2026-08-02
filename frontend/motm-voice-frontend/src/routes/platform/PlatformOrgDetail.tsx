@@ -15,9 +15,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PlatformCallsChart, PlatformCreditsChart } from "@/components/charts/PlatformUsageCharts";
 import {
   useAdjustPlatformOrgCredits,
   usePlatformOrg,
+  usePlatformOrgUsageAnalytics,
   usePlatformPlans,
   useResetPlatformOrgCredits,
   useUpdatePlatformOrg,
@@ -79,6 +81,7 @@ export default function PlatformOrgDetail() {
             elevenlabsEnabled={org.data.elevenlabs_enabled}
           />
           <CreditsCard id={org.data.id} />
+          <UsageCard id={org.data.id} />
         </>
       )}
     </div>
@@ -331,6 +334,37 @@ function CreditsCard({ id }: { id: string }) {
         loading={reset.isPending}
         onConfirm={handleResetConfirm}
       />
+    </Card>
+  );
+}
+
+function UsageCard({ id }: { id: string }) {
+  const usage = usePlatformOrgUsageAnalytics(id);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Usage (last 30 days)</CardTitle>
+        <CardDescription>Calls and credits used by this organization, day by day.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6 pt-0">
+        {usage.isError ? (
+          <ErrorBanner error={usage.error} onRetry={() => usage.refetch()} />
+        ) : usage.isLoading || !usage.data ? (
+          <Skeleton className="h-60 w-full" />
+        ) : (
+          <>
+            <div>
+              <p className="mb-2 text-sm font-medium text-muted-foreground">Calls per day</p>
+              <PlatformCallsChart data={usage.data.series} height={200} />
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-medium text-muted-foreground">Credits used per day</p>
+              <PlatformCreditsChart data={usage.data.series} height={200} />
+            </div>
+          </>
+        )}
+      </CardContent>
     </Card>
   );
 }

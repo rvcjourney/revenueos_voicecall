@@ -1,4 +1,4 @@
-import { Building2, LayoutDashboard, Layers, LogOut, Mic } from "lucide-react";
+import { BarChart3, Building2, LayoutDashboard, Layers, LogOut, Mic } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { usePlatformAuth } from "@/lib/platformAuth";
 import { cn } from "@/lib/utils";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { to: "/ops/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/ops/organizations", label: "Organizations", icon: Building2 },
+  { to: "/ops/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ops/plans", label: "Plans", icon: Layers },
   { to: "/ops/voice-clone-requests", label: "Voice Requests", icon: Mic },
 ];
