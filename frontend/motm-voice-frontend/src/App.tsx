@@ -28,6 +28,7 @@ const Billing = lazy(() => import("@/routes/Billing"));
 const Settings = lazy(() => import("@/routes/Settings"));
 const AdminTeam = lazy(() => import("@/routes/admin/AdminTeam"));
 const AdminPhoneNumbers = lazy(() => import("@/routes/admin/AdminPhoneNumbers"));
+const InboundAgents = lazy(() => import("@/routes/admin/InboundAgents"));
 const AdminDnc = lazy(() => import("@/routes/admin/AdminDnc"));
 const AdminAudit = lazy(() => import("@/routes/admin/AdminAudit"));
 
@@ -81,6 +82,7 @@ export default function App() {
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/admin/team" element={<AdminTeam />} />
                     <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
+                    <Route path="/admin/inbound-agents" element={<InboundAgents />} />
                     <Route path="/admin/dnc" element={<AdminDnc />} />
                     <Route path="/admin/audit" element={<AdminAudit />} />
                   </Route>

@@ -9,6 +9,7 @@ import {
   Mic,
   Users,
   PhoneCall,
+  PhoneIncoming,
   ShieldBan,
   ClipboardList,
   CreditCard,
@@ -35,6 +36,7 @@ const mainNav = [
 const adminNav = [
   { to: "/admin/team", label: "Team", icon: Users },
   { to: "/admin/phone-numbers", label: "Phone Numbers", icon: PhoneCall },
+  { to: "/admin/inbound-agents", label: "Inbound Agents", icon: PhoneIncoming },
   { to: "/voice-cloning", label: "Voice Cloning", icon: Mic },
   { to: "/admin/dnc", label: "DNC List", icon: ShieldBan },
   { to: "/admin/audit", label: "Audit Log", icon: ClipboardList },

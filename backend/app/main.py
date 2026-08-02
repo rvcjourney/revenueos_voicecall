@@ -300,6 +300,8 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.platform import router as platform_router
     from app.api.usage import router as usage_router
     from app.api.voice_cloning import router as voice_cloning_router
+    from app.api.inbound_agents import router as inbound_agents_router
+    from app.api.agent_internal import router as agent_internal_router
 
     app.include_router(auth_router,        prefix="/api/auth",        tags=["auth"])
     app.include_router(admin_router,       prefix="/api/admin",       tags=["admin"])
@@ -307,12 +309,14 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(usage_router,       prefix="/api/usage",       tags=["usage"])
     app.include_router(voice_cloning_router, prefix="/api/voice-cloning", tags=["voice-cloning"])
     app.include_router(agents_router,      prefix="/api/agents",      tags=["agents"])
+    app.include_router(inbound_agents_router, prefix="/api/inbound-agents", tags=["inbound-agents"])
     app.include_router(campaigns_router,   prefix="/api/campaigns",   tags=["campaigns"])
     app.include_router(folders_router,     prefix="/api/folders",     tags=["folders"])
     app.include_router(calls_router,       prefix="/api/calls",       tags=["calls"])
     app.include_router(analytics_router,   prefix="/api/analytics",   tags=["analytics"])
     app.include_router(webhooks_router,    prefix="/webhooks",        tags=["webhooks"])
     app.include_router(sip_trunks_router,  prefix="/api/sip-trunks",  tags=["sip-trunks"])
+    app.include_router(agent_internal_router, prefix="/api/internal", tags=["internal"], include_in_schema=False)
 
 
 app = create_app()

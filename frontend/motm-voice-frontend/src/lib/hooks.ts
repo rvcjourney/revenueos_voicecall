@@ -7,12 +7,13 @@ import {
   callsApi,
   campaignsApi,
   foldersApi,
+  inboundAgentsApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, CampaignCreate } from "./types";
+import type { AgentCreate, CampaignCreate, InboundAgentCreate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -231,6 +232,38 @@ export function useMyCreationRequests() {
   });
 }
 
+// ── Inbound agents ─────────────────────────────────────────────────────────
+export function useInboundAgents() {
+  return useQuery({
+    queryKey: ["inbound-agents"],
+    queryFn: () => inboundAgentsApi.list().then((r) => unwrapList(r.data)),
+  });
+}
+
+export function useCreateInboundAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: InboundAgentCreate) => inboundAgentsApi.create(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
+  });
+}
+
+export function useUpdateInboundAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<InboundAgentCreate> }) => inboundAgentsApi.update(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
+  });
+}
+
+export function useDeleteInboundAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => inboundAgentsApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
+  });
+}
+
 // ── Voice cloning ────────────────────────────────────────────────────────
 export function useClonedVoices() {
   return useQuery({
@@ -283,6 +316,32 @@ export function useTrunkAssignments(id: string | undefined) {
     queryKey: ["trunk-assignments", id],
     queryFn: () => sipTrunksApi.assignments(id!).then((r) => r.data),
     enabled: !!id,
+  });
+}
+
+export function useSetupInboundCalling() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ trunkId, agentId }: { trunkId: string; agentId: string }) =>
+      sipTrunksApi.setupInbound(trunkId, agentId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sip-trunks"] }),
+  });
+}
+
+export function useUpdateInboundCallingAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ trunkId, agentId }: { trunkId: string; agentId: string }) =>
+      sipTrunksApi.updateInboundAgent(trunkId, agentId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sip-trunks"] }),
+  });
+}
+
+export function useDisableInboundCalling() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (trunkId: string) => sipTrunksApi.disableInbound(trunkId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sip-trunks"] }),
   });
 }
 

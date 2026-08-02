@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import NotFoundError
 from app.database import get_db
-from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
+from app.models.call import Call, CallDirection, CallOutcome, CallStatus, CallTranscript
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
 router = APIRouter()
@@ -141,6 +141,15 @@ async def agent_report(
             existing.full_text = full_text
         else:
             db.add(CallTranscript(call_id=call_id, segments=segments, full_text=full_text))
+
+    # Inbound calls have no wrapping campaign/test-call Celery task to trigger
+    # a recording fetch the way outbound does -- this report is the only
+    # signal that the call has ended, so fetch the recording from here.
+    if call_row and call_row.direction == CallDirection.INBOUND and call_row.sip_trunk_id:
+        from app.workers.tasks.campaign import fetch_recording_for_inbound_call
+        fetch_recording_for_inbound_call.apply_async(
+            args=[str(call_id), str(call_row.sip_trunk_id)], queue="calls",
+        )
 
     await db.commit()
 

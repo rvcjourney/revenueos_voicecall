@@ -5,6 +5,8 @@ Pipeline: Sarvam STT → Groq LLM → ElevenLabs/Sarvam/Cartesia/Chatterbox TTS 
 
 import os
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -75,6 +77,75 @@ def _safe_task(coro, name: str = "") -> asyncio.Task:
             logger.debug("background task %s raised: %s", name or repr(coro), exc)
     task.add_done_callback(_on_done)
     return task
+
+
+def _sign_webhook_body(body: bytes) -> str:
+    """Mirrors app/core/security.py:sign_webhook_payload() on the backend --
+    a separate implementation (this is a different Python process/codebase)
+    of the exact same HMAC-SHA256 scheme, so app/api/agent_internal.py's
+    verify_webhook_signature() can check it."""
+    ts = int(time.time())
+    signed = f"{ts}.".encode() + body
+    mac = hmac.new(AGENT_WEBHOOK_SECRET.encode(), signed, hashlib.sha256).hexdigest()
+    return f"t={ts},v1={mac}"
+
+
+async def _resolve_inbound_call(meta: dict, participant, room_name: str) -> dict | None:
+    """
+    Called once for every inbound call, right after the SIP participant joins.
+    Reads which number was dialed off the participant's SIP attributes, asks
+    the backend which InboundAgentTemplate answers it (and has it create the
+    Call row -- inbound calls have no campaign/test-call flow to do that
+    ahead of time the way outbound does), and returns a dict shaped exactly
+    like the fields entrypoint() already reads from outbound room metadata.
+
+    Returns None if the call can't be resolved (backend down, number not
+    configured for inbound, etc.) -- entrypoint() hangs up in that case.
+    """
+    import httpx
+
+    sip_trunk_id = meta.get("sip_trunk_id", "")
+    attrs = dict(getattr(participant, "attributes", None) or {})
+    # NOTE: standard LiveKit SIP attribute keys -- log the full set below so a
+    # live inbound test call can confirm/correct these if this project's
+    # LiveKit Cloud version names them differently.
+    from_number = attrs.get("sip.phoneNumber", "")
+    to_number = attrs.get("sip.trunkPhoneNumber", "")
+    logger.info(
+        "inbound_participant_attributes | sip_trunk_id=%s from=%s to=%s all=%s",
+        sip_trunk_id, from_number, to_number, attrs,
+    )
+
+    if not sip_trunk_id:
+        logger.error("inbound_call_missing_sip_trunk_id | room metadata=%s", meta)
+        return None
+
+    payload = {
+        "sip_trunk_id": sip_trunk_id,
+        "room_name": room_name,
+        "from_number": from_number,
+        "to_number": to_number,
+    }
+    body = json.dumps(payload).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Webhook-Signature": _sign_webhook_body(body),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.post(
+                f"{BACKEND_INTERNAL_URL}/api/internal/inbound/start",
+                content=body,
+                headers=headers,
+            )
+        if resp.status_code != 200:
+            logger.error("inbound_resolve_failed | status=%s body=%s", resp.status_code, resp.text[:500])
+            return None
+        return resp.json()
+    except Exception as exc:
+        logger.error("inbound_resolve_error | %s", exc)
+        return None
 
 
 # =============================================================================
@@ -829,6 +900,29 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception:
             pass
 
+    # Inbound calls (LiveKit SIP dispatch rule, see app/api/sip_trunks.py
+    # setup_inbound()) carry only {"call_type":"inbound","sip_trunk_id":...} --
+    # nothing to build a prompt from yet. Resolve the real config from the
+    # backend first, merging it into `meta` so every line below reads exactly
+    # like it does for outbound. This means the participant wait happens here
+    # (before warmup) instead of after, since we need the participant's SIP
+    # attributes before we know which agent answers -- warmup can't overlap
+    # with the participant wait the way it does for outbound.
+    inbound_participant = None
+    if meta.get("call_type") == "inbound":
+        try:
+            inbound_participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
+            logger.info("Inbound participant joined: %s", getattr(inbound_participant, "identity", "unknown"))
+        except asyncio.TimeoutError:
+            logger.error("No inbound participant joined in 30s — exiting")
+            return
+
+        inbound_config = await _resolve_inbound_call(meta, inbound_participant, ctx.room.name)
+        if inbound_config is None:
+            logger.error("Could not resolve inbound call — hanging up")
+            return
+        meta = {**meta, **inbound_config}
+
     tz_name         = meta.get("timezone") or "Asia/Kolkata"
     # Correct greeting/honorific wording wherever it lives — either the dedicated
     # welcome_message field, or baked into the system_prompt's own OPENING section
@@ -870,13 +964,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
     warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
 
-    try:
-        participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
-        logger.info("Participant joined: %s", getattr(participant, "identity", "unknown"))
-    except asyncio.TimeoutError:
-        logger.error("No participant joined in 30s — exiting")
-        warmup_task.cancel()
-        return
+    if inbound_participant is not None:
+        participant = inbound_participant  # already awaited above, before this config was known
+    else:
+        try:
+            participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
+            logger.info("Participant joined: %s", getattr(participant, "identity", "unknown"))
+        except asyncio.TimeoutError:
+            logger.error("No participant joined in 30s — exiting")
+            warmup_task.cancel()
+            return
 
     # Ensure warmup is complete before the first turn so the first response is fast.
     # Participant just connected — we have a few seconds while TTS/session setup happens.

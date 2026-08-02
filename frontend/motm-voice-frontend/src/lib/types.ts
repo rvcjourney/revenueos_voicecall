@@ -104,6 +104,36 @@ export interface AgentCreate {
   max_call_duration_seconds?: number;
 }
 
+// ── Inbound agents (answer calls arriving on a number, kept separate from
+// outbound campaign/test-call AgentTemplate) ────────────────────────────────
+export interface InboundAgent {
+  id: string;
+  name: string;
+  description: string | null;
+  language: string;
+  welcome_message: string;
+  system_prompt: string;
+  voice_id: string;
+  voice_provider: VoiceProvider | string;
+  llm_model: string;
+  llm_temperature: number;
+  max_call_duration_seconds: number;
+  created_at: string;
+}
+
+export interface InboundAgentCreate {
+  name: string;
+  description?: string;
+  language?: string;
+  welcome_message?: string;
+  system_prompt?: string;
+  voice_id?: string;
+  voice_provider?: string;
+  llm_model?: string;
+  llm_temperature?: number;
+  max_call_duration_seconds?: number;
+}
+
 export interface CampaignFolder {
   id: string;
   name: string;
@@ -213,6 +243,8 @@ export interface SipTrunk {
   is_default: boolean;
   is_active: boolean;
   created_at: string;
+  inbound_enabled: boolean;
+  inbound_agent_template_id: string | null;
 }
 
 export interface SipTrunkAssignment {

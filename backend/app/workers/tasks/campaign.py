@@ -1190,6 +1190,51 @@ def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id
     asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id))
 
 
+@celery_app.task(
+    name="app.workers.tasks.campaign.fetch_recording_for_inbound_call",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+)
+def fetch_recording_for_inbound_call(self, call_id: str, trunk_id: str) -> None:
+    """
+    Inbound calls have no wrapping campaign/test-call task the way outbound
+    ones do (the whole call is handled standalone by the agent process), so
+    /agent-report (app/api/calls.py) enqueues this directly once an inbound
+    call ends, reusing the same _save_recording_async()/resolve_vobiz_credentials()
+    helpers outbound already uses.
+    """
+    asyncio.run(_fetch_recording_for_inbound_call_async(call_id, trunk_id))
+
+
+async def _fetch_recording_for_inbound_call_async(call_id: str, trunk_id: str) -> None:
+    from uuid import UUID as _UUID
+
+    async with AsyncSessionLocal() as session:
+        trunk = await session.get(SipTrunk, _UUID(trunk_id))
+        if not trunk:
+            log.error("inbound_recording_fetch_missing_trunk", call_id=call_id, trunk_id=trunk_id)
+            return
+        org_id = trunk.org_id
+        to_number = trunk.caller_id
+        vobiz_creds = await resolve_vobiz_credentials(session, org_id=org_id, trunk_id=trunk.id)
+
+    if not vobiz_creds:
+        log.warning("inbound_recording_fetch_no_creds", call_id=call_id, trunk_id=trunk_id)
+        return
+    vobiz_auth_id, vobiz_auth_token = vobiz_creds
+
+    await _save_recording_async(
+        call_id=_UUID(call_id),
+        # Vobiz's Recording API labels the DID that was DIALED as "to_number" --
+        # for an inbound call that's the org's own number, not the caller's.
+        to_number=to_number,
+        called_after=datetime.now(timezone.utc) - timedelta(minutes=30),
+        auth_id=vobiz_auth_id,
+        auth_token=vobiz_auth_token,
+    )
+
+
 @celery_app.task(name="app.workers.tasks.campaign.launch_scheduled_campaigns", bind=True)
 def launch_scheduled_campaigns(self) -> None:
     """Beat task (every 60 s): auto-launch SCHEDULED campaigns whose start_time has passed."""

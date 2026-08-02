@@ -111,6 +111,18 @@ class Call(Base, TimestampMixin):
         nullable=True,
         index=True,
     )
+    # Which SipTrunk answered this call. Outbound calls resolve their Vobiz
+    # credentials via campaign_id/livekit_trunk_id (see resolve_vobiz_credentials
+    # in app/core/vobiz.py) so this is left unset for them; inbound calls have
+    # no campaign to resolve through, so app/api/agent_internal.py sets this
+    # when it creates the Call row, and it's the only way agent_report's
+    # recording-fetch trigger (app/api/calls.py) can find the right trunk.
+    sip_trunk_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sip_trunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     livekit_room_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     sip_call_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False, index=True)

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import aiohttp
 import structlog
@@ -151,6 +152,111 @@ async def create_vobiz_outbound_trunk(
     if not trunk_domain:
         raise VobizTrunkCreateError("Vobiz did not return a trunk domain")
     return trunk_domain
+
+
+async def create_vobiz_inbound_trunk(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+    inbound_destination: str,
+) -> str:
+    """
+    Create an inbound SIP trunk on the org's own Vobiz account, routing calls
+    to `inbound_destination` (this platform's LiveKit SIP hostname — the same
+    value for every org; LiveKit itself disambiguates by number via each
+    SIPInboundTrunkInfo.numbers list).
+
+    Returns the trunk's id (used by assign_vobiz_number_to_trunk() below).
+    Raises VobizTrunkCreateError on failure.
+    """
+    hdrs = _headers(auth_id, auth_token)
+    try:
+        async with http.post(
+            f"{_BASE}/Account/{auth_id}/trunks",
+            headers=hdrs,
+            json={
+                "name": f"motmvoice-inbound-{did.lstrip('+')}",
+                "trunk_direction": "inbound",
+                "transport": "tcp",
+                "inbound_destination": inbound_destination,
+            },
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body_text = await resp.text()
+            if resp.status not in (200, 201):
+                log.warning("vobiz_inbound_trunk_create_error", status=resp.status, body=body_text[:500])
+                raise VobizTrunkCreateError(f"Vobiz rejected inbound trunk creation (status {resp.status})")
+            data = await resp.json(content_type=None)
+    except VobizValidationError:
+        raise
+    except Exception as exc:
+        log.warning("vobiz_inbound_trunk_create_failed", error=str(exc))
+        raise VobizTrunkCreateError("Could not reach Vobiz to create the inbound trunk") from exc
+
+    trunk_id = data.get("trunk_id")
+    if not trunk_id:
+        raise VobizTrunkCreateError("Vobiz did not return a trunk id")
+    return trunk_id
+
+
+async def assign_vobiz_number_to_trunk(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+    trunk_id: str,
+) -> None:
+    """Link `did` to `trunk_id` so inbound calls to that DID route through it."""
+    hdrs = _headers(auth_id, auth_token)
+    try:
+        async with http.post(
+            f"{_BASE}/Account/{auth_id}/numbers/{quote(did, safe='')}/assign",
+            headers=hdrs,
+            json={"trunk_group_id": trunk_id},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status not in (200, 204):
+                body_text = await resp.text()
+                log.warning("vobiz_assign_number_error", status=resp.status, body=body_text[:500])
+                raise VobizTrunkCreateError(f"Vobiz rejected assigning {did} to the inbound trunk (status {resp.status})")
+    except VobizValidationError:
+        raise
+    except Exception as exc:
+        log.warning("vobiz_assign_number_failed", error=str(exc))
+        raise VobizTrunkCreateError("Could not reach Vobiz to assign the number") from exc
+
+
+async def unassign_vobiz_number(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+) -> None:
+    """Best-effort unassign on Vobiz — failures are logged, never raised, so tearing
+    down inbound calling always succeeds locally even if Vobiz is unreachable.
+
+    NOTE: the exact path/response shape here is inferred from the sibling
+    /assign endpoint's naming convention (Vobiz's docs list an "unassign-number"
+    page but the exact request shape wasn't fetched) — verify against a real
+    account before relying on it, same as the other inbound-calling unknowns
+    flagged in the implementation plan.
+    """
+    hdrs = _headers(auth_id, auth_token)
+    try:
+        async with http.post(
+            f"{_BASE}/Account/{auth_id}/numbers/{quote(did, safe='')}/unassign",
+            headers=hdrs,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status not in (200, 204, 404):
+                body_text = await resp.text()
+                log.warning("vobiz_unassign_number_error", status=resp.status, body=body_text[:500])
+    except Exception as exc:
+        log.warning("vobiz_unassign_number_failed", error=str(exc))
 
 
 async def resolve_vobiz_credentials(

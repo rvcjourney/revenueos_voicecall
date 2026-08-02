@@ -67,6 +67,22 @@ class SipTrunk(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     vobiz_auth_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     vobiz_auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # ── Inbound calling (app/api/sip_trunks.py POST/PATCH/DELETE /{id}/inbound) ──
+    # Which InboundAgentTemplate answers calls arriving on this number, and the
+    # Vobiz/LiveKit resource ids created to route them here. inbound_agent_template_id
+    # is looked up fresh per call (see app/api/agent_internal.py) rather than baked
+    # into the LiveKit dispatch rule, so switching agents is a plain DB update with
+    # no Vobiz/LiveKit calls needed.
+    inbound_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    inbound_agent_template_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("inbound_agent_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    vobiz_inbound_trunk_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    livekit_inbound_trunk_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    livekit_inbound_dispatch_rule_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     @property
     def sip_password(self) -> str:
         from app.core.crypto import decrypt_value

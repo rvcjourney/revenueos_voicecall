@@ -19,6 +19,8 @@ import type {
   CreditUsage,
   DashboardStats,
   DncEntry,
+  InboundAgent,
+  InboundAgentCreate,
   ListResponse,
   LoginResponse,
   OrgInfo,
@@ -122,6 +124,16 @@ export const agentsApi = {
   myCreationRequests: () => api.get<AgentCreationRequest[]>("/api/agents/my-creation-requests"),
 };
 
+// ── Inbound Agents (answer calls arriving on a number) ────────────────────
+export const inboundAgentsApi = {
+  list: () => api.get<ListResponse<InboundAgent> | InboundAgent[]>("/api/inbound-agents"),
+  get: (id: string) => api.get<InboundAgent>(`/api/inbound-agents/${id}`),
+  create: (data: InboundAgentCreate) => api.post<InboundAgent>("/api/inbound-agents", data),
+  update: (id: string, data: Partial<InboundAgentCreate>) =>
+    api.patch<InboundAgent>(`/api/inbound-agents/${id}`, data),
+  remove: (id: string) => api.delete(`/api/inbound-agents/${id}`),
+};
+
 // ── Campaigns ────────────────────────────────────────────────────────────
 export const campaignsApi = {
   list: (params?: { status?: string; folder_id?: string }) =>
@@ -211,6 +223,20 @@ export const sipTrunksApi = {
   test: (id: string) => api.post<{ is_active: boolean }>(`/api/sip-trunks/${id}/test`),
   capacity: () => api.get<TrunkCapacity[]>("/api/sip-trunks/capacity"),
   my: () => api.get<ListResponse<SipTrunk> | SipTrunk[]>("/api/sip-trunks/my"),
+  setupInbound: (trunkId: string, inbound_agent_template_id: string) =>
+    api.post<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
+      `/api/sip-trunks/${trunkId}/inbound`,
+      { inbound_agent_template_id }
+    ),
+  updateInboundAgent: (trunkId: string, inbound_agent_template_id: string) =>
+    api.patch<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
+      `/api/sip-trunks/${trunkId}/inbound`,
+      { inbound_agent_template_id }
+    ),
+  disableInbound: (trunkId: string) =>
+    api.delete<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
+      `/api/sip-trunks/${trunkId}/inbound`
+    ),
 };
 
 // ── Admin ────────────────────────────────────────────────────────────────

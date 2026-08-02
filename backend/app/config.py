@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     LIVEKIT_URL: str = Field(...)
     LIVEKIT_API_KEY: str = Field(...)
     LIVEKIT_API_SECRET: str = Field(...)
+    # This LiveKit Cloud project's SIP hostname (Settings -> SIP in the LiveKit
+    # dashboard) -- same for every org, used as the destination Vobiz routes
+    # inbound calls to. LiveKit itself disambiguates which org/number a call
+    # belongs to via each SIPInboundTrunkInfo's own `numbers` list.
+    LIVEKIT_SIP_HOSTNAME: str = ""
 
     # ── SIP / Vobiz ───────────────────────────────────────────────────────────
     DEFAULT_SIP_TRUNK_ID: str = ""
