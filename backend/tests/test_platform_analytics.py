@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
 
+from app.core.elevenlabs_voice import ElevenLabsVoiceError
 from app.core.security import create_platform_token, hash_password
 from app.models.call import Call, CallDirection, CallStatus
 from app.models.platform_admin import PlatformAdmin
@@ -52,7 +54,17 @@ def _make_call(org_id, *, duration_seconds: int, status=CallStatus.COMPLETED) ->
 async def test_platform_health_returns_live_status(client, db):
     _admin, token = await _make_platform_admin(db)
 
-    resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+    with patch(
+        "app.api.platform.get_account_usage",
+        new=AsyncMock(return_value={
+            "tier": "creator",
+            "character_count": 12_000,
+            "character_limit": 100_000,
+            "next_reset_unix": 1_800_000_000,
+            "status": "active",
+        }),
+    ):
+        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
 
@@ -65,6 +77,26 @@ async def test_platform_health_returns_live_status(client, db):
     assert isinstance(body["redis"], bool)
     assert isinstance(body["celery_workers_online"], int)
     assert isinstance(body["celery_worker_names"], list)
+
+    assert body["elevenlabs_ok"] is True
+    assert body["elevenlabs_tier"] == "creator"
+    assert body["elevenlabs_characters_used"] == 12_000
+    assert body["elevenlabs_characters_limit"] == 100_000
+
+
+async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db):
+    _admin, token = await _make_platform_admin(db)
+
+    with patch(
+        "app.api.platform.get_account_usage",
+        new=AsyncMock(side_effect=ElevenLabsVoiceError("Invalid ElevenLabs API key")),
+    ):
+        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["elevenlabs_ok"] is False
+    assert body["elevenlabs_characters_used"] is None
 
 
 async def test_platform_usage_analytics_counts_real_calls(client, db):

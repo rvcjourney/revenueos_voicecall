@@ -94,6 +94,11 @@ export interface PlatformHealth {
   redis: boolean;
   celery_workers_online: number;
   celery_worker_names: string[];
+  elevenlabs_ok: boolean;
+  elevenlabs_tier: string | null;
+  elevenlabs_characters_used: number | null;
+  elevenlabs_characters_limit: number | null;
+  elevenlabs_next_reset_unix: number | null;
 }
 
 export interface PlatformVoiceCloneRequest {

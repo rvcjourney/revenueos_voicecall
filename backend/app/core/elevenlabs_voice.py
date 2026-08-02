@@ -78,6 +78,41 @@ async def clone_voice(
     return voice_id
 
 
+async def get_account_usage(http: aiohttp.ClientSession, *, api_key: str) -> dict:
+    """
+    GET /v1/user/subscription — the platform's own character quota for the
+    current billing period (one shared ElevenLabs account for the whole
+    platform, not per-org). Raises ElevenLabsVoiceError on failure so the
+    caller can decide how to degrade (e.g. a health-check tile going red).
+    """
+    try:
+        async with http.get(
+            f"{_BASE}/user/subscription",
+            headers={"xi-api-key": api_key},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 401:
+                raise ElevenLabsVoiceError("Invalid ElevenLabs API key")
+            if resp.status != 200:
+                body = await resp.text()
+                log.warning("elevenlabs_usage_error", status=resp.status, body=body[:500])
+                raise ElevenLabsVoiceError(f"ElevenLabs returned {resp.status}")
+            data = await resp.json(content_type=None)
+    except ElevenLabsVoiceError:
+        raise
+    except Exception as exc:
+        log.warning("elevenlabs_usage_failed", error=str(exc))
+        raise ElevenLabsVoiceError("Could not reach ElevenLabs") from exc
+
+    return {
+        "tier": data.get("tier"),
+        "character_count": data.get("character_count", 0),
+        "character_limit": data.get("character_limit", 0),
+        "next_reset_unix": data.get("next_character_count_reset_unix"),
+        "status": data.get("status"),
+    }
+
+
 async def delete_voice(http: aiohttp.ClientSession, *, api_key: str, voice_id: str) -> None:
     """Best-effort delete on ElevenLabs — failures are logged, never raised."""
     try:

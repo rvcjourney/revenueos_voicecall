@@ -151,3 +151,8 @@ class PlatformHealthOut(BaseModel):
     redis: bool
     celery_workers_online: int
     celery_worker_names: list[str]
+    elevenlabs_ok: bool
+    elevenlabs_tier: str | None = None
+    elevenlabs_characters_used: int | None = None
+    elevenlabs_characters_limit: int | None = None
+    elevenlabs_next_reset_unix: int | None = None

@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { StatCard } from "@/components/shared/StatCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePlatformHealth, usePlatformMetrics } from "@/lib/platformHooks";
 
@@ -64,8 +65,18 @@ function SystemHealthCard() {
               ? `${health.data.celery_workers_online} online`
               : "No workers responding",
         },
+        {
+          label: "ElevenLabs",
+          ok: health.data.elevenlabs_ok,
+          detail: health.data.elevenlabs_ok ? "Reachable" : "Unreachable",
+        },
       ]
     : [];
+
+  const elevenlabsPct =
+    health.data?.elevenlabs_characters_used != null && health.data?.elevenlabs_characters_limit
+      ? Math.min((health.data.elevenlabs_characters_used / health.data.elevenlabs_characters_limit) * 100, 100)
+      : null;
 
   return (
     <Card>
@@ -76,32 +87,57 @@ function SystemHealthCard() {
           pings the way worker processes do.
         </CardDescription>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="space-y-5 pt-0">
         {health.isError ? (
           <ErrorBanner error={health.error} onRetry={() => health.refetch()} />
         ) : health.isLoading || !health.data ? (
           <Skeleton className="h-24 w-full" />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {rows.map((row) => (
-              <div
-                key={row.label}
-                className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5"
-              >
-                <div className="flex items-center gap-2">
-                  {row.ok ? (
-                    <CheckCircle2 className="h-4 w-4 text-success" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-destructive" />
-                  )}
-                  <span className="text-sm font-medium">{row.label}</span>
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              {rows.map((row) => (
+                <div
+                  key={row.label}
+                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5"
+                >
+                  <div className="flex items-center gap-2">
+                    {row.ok ? (
+                      <CheckCircle2 className="h-4 w-4 text-success" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-destructive" />
+                    )}
+                    <span className="text-sm font-medium">{row.label}</span>
+                  </div>
+                  <Badge variant={row.ok ? "success" : "destructive"}>
+                    {row.detail ?? (row.ok ? "Operational" : "Down")}
+                  </Badge>
                 </div>
-                <Badge variant={row.ok ? "success" : "destructive"}>
-                  {row.detail ?? (row.ok ? "Operational" : "Down")}
-                </Badge>
+              ))}
+            </div>
+
+            {elevenlabsPct !== null && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between text-sm">
+                  <p className="font-medium">
+                    ElevenLabs character quota
+                    {health.data.elevenlabs_tier && (
+                      <span className="ml-2 text-xs capitalize text-muted-foreground">
+                        · {health.data.elevenlabs_tier} plan
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {health.data.elevenlabs_characters_used!.toLocaleString()} /{" "}
+                    {health.data.elevenlabs_characters_limit!.toLocaleString()} characters
+                  </p>
+                </div>
+                <Progress value={elevenlabsPct} />
+                {elevenlabsPct >= 85 && (
+                  <p className="text-xs text-warning">Approaching character limit — {Math.round(elevenlabsPct)}% used</p>
+                )}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

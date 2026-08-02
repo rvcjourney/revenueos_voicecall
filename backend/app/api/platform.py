@@ -21,12 +21,13 @@ from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import aiohttp
+import structlog
 
 from app.config import settings
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
-from app.core.elevenlabs_voice import ElevenLabsVoiceError, clone_voice
+from app.core.elevenlabs_voice import ElevenLabsVoiceError, clone_voice, get_account_usage
 from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
@@ -65,6 +66,8 @@ from app.schemas.platform import (
     VoiceCloneRequestOut,
     VoiceCloneRequestRejectRequest,
 )
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -583,12 +586,25 @@ async def platform_health(
 
     worker_replies = await asyncio.to_thread(_ping_workers)
 
+    elevenlabs_usage: dict | None = None
+    if settings.ELEVENLABS_API_KEY:
+        try:
+            async with aiohttp.ClientSession() as http:
+                elevenlabs_usage = await get_account_usage(http, api_key=settings.ELEVENLABS_API_KEY)
+        except ElevenLabsVoiceError as exc:
+            log.warning("platform_health_elevenlabs_check_failed", error=str(exc))
+
     return PlatformHealthOut(
         api=True,
         database=db_ok,
         redis=redis_ok,
         celery_workers_online=len(worker_replies),
         celery_worker_names=list(worker_replies.keys()),
+        elevenlabs_ok=elevenlabs_usage is not None,
+        elevenlabs_tier=elevenlabs_usage["tier"] if elevenlabs_usage else None,
+        elevenlabs_characters_used=elevenlabs_usage["character_count"] if elevenlabs_usage else None,
+        elevenlabs_characters_limit=elevenlabs_usage["character_limit"] if elevenlabs_usage else None,
+        elevenlabs_next_reset_unix=elevenlabs_usage["next_reset_unix"] if elevenlabs_usage else None,
     )
 
 
