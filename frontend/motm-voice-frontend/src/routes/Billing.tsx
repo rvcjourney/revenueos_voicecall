@@ -2,13 +2,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   Building2,
-  Check,
+  CalendarClock,
   CheckCircle2,
   Circle,
   CreditCard,
   ListChecks,
   Loader2,
   Receipt,
+  ShieldCheck,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +23,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/platform/ConfirmDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { StatCard } from "@/components/shared/StatCard";
 import { PlanPicker } from "@/components/billing/PlanPicker";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
 import { useBillingCurrent, useCancelSubscription, useCheckout, useCreditUsage, useVerifyPayment } from "@/lib/hooks";
@@ -52,58 +57,72 @@ export default function Billing() {
         year: "numeric",
       })
     : null;
-  const isActiveSubscription = billing.data?.subscription_status === "active";
+  const orgActive = billing.data?.org_active ?? false;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Billing" description="Manage your plan, payment method, and invoices" />
 
-      <Card>
-        <CardContent className="space-y-5 pt-6">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+      {/* ── Hero plan card ─────────────────────────────────────────────── */}
+      <Card className="card-top-accent overflow-hidden">
+        <CardContent className="space-y-6 pt-8">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
             {billing.isLoading || !plan ? (
-              <div className="space-y-2">
-                <Skeleton className="h-6 w-40" />
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-10 w-48" />
                 <Skeleton className="h-4 w-56" />
               </div>
             ) : (
               <div>
-                <p className="font-heading text-xl font-semibold">
-                  {plan.name}
-                  {plan.is_custom_pricing ? "" : " Plan"}
+                <p className="eyebrow flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3 text-primary" /> Current plan
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <div className="mt-1.5 flex flex-wrap items-baseline gap-3">
+                  <h2 className="font-heading text-3xl font-semibold">
+                    {plan.name}
+                    {plan.is_custom_pricing ? "" : " Plan"}
+                  </h2>
+                  <Badge variant={orgActive ? "success" : "warning"}>
+                    {orgActive ? "Active" : (billing.data?.subscription_status ?? "No subscription")}
+                  </Badge>
+                </div>
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                   {plan.is_custom_pricing ? (
                     "Custom pricing"
                   ) : (
-                    <>
-                      {formatPrice(effectivePriceMinor!, plan.currency)}/month
-                      {plan.discount_price_minor != null && (
-                        <span className="ml-1.5 text-muted-foreground/70 line-through">
-                          {formatPrice(plan.price_minor, plan.currency)}
-                        </span>
-                      )}
-                    </>
+                    <span className="text-gradient font-heading text-lg font-semibold">
+                      {formatPrice(effectivePriceMinor!, plan.currency)}
+                      <span className="text-sm font-normal text-muted-foreground">/month</span>
+                    </span>
                   )}
-                  {renewsOn && <> · renews {renewsOn}</>}
+                  {plan.discount_price_minor != null && (
+                    <span className="text-muted-foreground/70 line-through">
+                      {formatPrice(plan.price_minor, plan.currency)}
+                    </span>
+                  )}
+                  {renewsOn && (
+                    <span className="flex items-center gap-1">
+                      <CalendarClock className="h-3.5 w-3.5" /> renews {renewsOn}
+                    </span>
+                  )}
                 </p>
               </div>
             )}
             <div className="flex items-center gap-2">
-              <Badge variant={isActiveSubscription ? "success" : "warning"}>
-                <Check className="h-3 w-3" /> {billing.data?.subscription_status ?? "No subscription"}
-              </Badge>
               <ChangePlanDialog currentPlanId={plan?.id} userName={user?.full_name} userEmail={user?.email} />
-              {isActiveSubscription && <CancelSubscriptionButton />}
+              {orgActive && <CancelSubscriptionButton />}
             </div>
           </div>
 
-          <div className="space-y-2 border-t border-border/60 pt-4">
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/30 p-4">
             <div className="flex items-center justify-between text-sm">
-              <p className="font-medium">Credits used this period</p>
+              <p className="flex items-center gap-1.5 font-medium">
+                <Zap className="h-3.5 w-3.5 text-warning" /> Credits used this period
+              </p>
               {credits.data && (
-                <p className="text-muted-foreground">
-                  {credits.data.used.toLocaleString()} / {credits.data.allotted.toLocaleString()}
+                <p className="tabular-figure text-muted-foreground">
+                  {credits.data.used.toLocaleString()} / {credits.data.allotted.toLocaleString()} min
                 </p>
               )}
             </div>
@@ -118,14 +137,42 @@ export default function Billing() {
         </CardContent>
       </Card>
 
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          icon={ShieldCheck}
+          label="Subscription status"
+          value={billing.isLoading ? undefined : orgActive ? "Active" : "Needs attention"}
+          tone={orgActive ? "success" : "warning"}
+        />
+        <StatCard
+          icon={CalendarClock}
+          label="Next renewal"
+          value={billing.isLoading ? undefined : (renewsOn ?? "—")}
+          tone="info"
+        />
+        <StatCard
+          icon={Zap}
+          label="Minutes included"
+          value={plan ? plan.credits_per_month.toLocaleString() : undefined}
+          loading={billing.isLoading}
+          tone="default"
+        />
+      </div>
+
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="flex items-center gap-2 text-sm font-medium">
             <CreditCard className="h-4 w-4 text-muted-foreground" /> Payment method
           </p>
-          <div className="flex items-center justify-between rounded-lg border border-dashed border-border px-3 py-3">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-lg border px-4 py-3",
+              orgActive ? "border-success/30 bg-success/5" : "border-dashed border-border"
+            )}
+          >
+            {orgActive ? <ShieldCheck className="h-4 w-4 shrink-0 text-success" /> : null}
             <p className="text-sm text-muted-foreground">
-              {isActiveSubscription
+              {orgActive
                 ? "Managed securely by Razorpay — your card/UPI details are never stored on our servers."
                 : "No payment method on file yet — set one up via Change plan above."}
             </p>
@@ -183,7 +230,7 @@ export default function Billing() {
             <ListChecks className="h-4 w-4 text-muted-foreground" /> What's needed to enable payments
           </p>
           <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            <ChecklistItem done={isActiveSubscription} label="Payment method on file" />
+            <ChecklistItem done={orgActive} label="Payment method on file" />
             <ChecklistItem done={false} label="Billing email confirmed" />
             <ChecklistItem done={false} label="Billing address" />
             <ChecklistItem done label="Organization verified" />
@@ -264,7 +311,7 @@ function ChangePlanDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
+        <Button variant="gradient" size="sm">
           Change plan
         </Button>
       </DialogTrigger>
@@ -301,7 +348,7 @@ function CancelSubscriptionButton() {
 
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setConfirmOpen(true)}>
+      <Button variant="outline" size="sm" onClick={() => setConfirmOpen(true)}>
         Cancel subscription
       </Button>
       <ConfirmDialog

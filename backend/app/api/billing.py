@@ -34,6 +34,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.plan import Plan
 from app.models.subscription import Subscription
+from app.models.user import Organization
 from app.schemas.billing import (
     CancelSubscriptionResponse,
     CheckoutRequest,
@@ -69,6 +70,8 @@ async def get_current_billing(
     if not plan:
         raise NotFoundError("Plan not found")
 
+    org = await db.get(Organization, token.org_id)
+
     return BillingCurrentOut(
         plan=PublicPlanOut(
             id=str(plan.id),
@@ -83,6 +86,7 @@ async def get_current_billing(
         ),
         subscription_status=sub.status,
         current_period_end=sub.current_period_end.isoformat() if sub.current_period_end else None,
+        org_active=org.is_active if org else False,
     )
 
 

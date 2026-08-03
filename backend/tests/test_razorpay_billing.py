@@ -239,6 +239,32 @@ async def test_webhook_rejects_bad_signature(client, db):
     assert resp.status_code == 401
 
 
+async def test_webhook_subscription_authenticated_activates_org(client, db):
+    plan = await _make_plan(db)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_auth_me", "status": "created"}
+    )
+    org.is_active = False
+    await db.commit()
+
+    payload = _webhook_payload("subscription.authenticated", "sub_auth_me")
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    await db.refresh(org)
+    assert org.is_active is True
+
+    from sqlalchemy import select as _select
+    sub = await db.scalar(_select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.status == "authenticated"
+
+
 async def test_webhook_subscription_charged_activates_org_and_resets_credits(client, db):
     plan = await _make_plan(db, credits_per_month=500)
     org, _user, _token = await _make_org_with_subscription(

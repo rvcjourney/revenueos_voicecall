@@ -89,6 +89,11 @@ class BillingCurrentOut(BaseModel):
     plan: PublicPlanOut
     subscription_status: str | None
     current_period_end: str | None
+    # The real enforcement flag (Organization.is_active) -- checked at campaign
+    # launch/dispatch. Prefer this over guessing from subscription_status,
+    # since more than one status value counts as "not suspended" (e.g. a
+    # freshly authenticated Razorpay mandate, before activated/charged land).
+    org_active: bool
 
 
 class CostSettingsOut(BaseModel):

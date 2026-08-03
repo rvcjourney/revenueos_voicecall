@@ -10,7 +10,7 @@ export function SubscriptionBanner() {
   const billing = useBillingCurrent();
   const location = useLocation();
 
-  const needsAttention = billing.isError || (billing.data && billing.data.subscription_status !== "active");
+  const needsAttention = billing.isError || (billing.data && !billing.data.org_active);
   if (!needsAttention || location.pathname === "/billing") return null;
 
   return (

@@ -176,7 +176,16 @@ async def razorpay_webhook(
         if sub_entity.get("customer_id"):
             sub.provider_customer_id = sub_entity["customer_id"]
 
-        if event == "subscription.activated":
+        if event == "subscription.authenticated":
+            # Mandate/authorization payment confirmed -- there can be a short
+            # delay before Razorpay follows up with activated/charged, so this
+            # unblocks the org immediately rather than leaving it suspended
+            # while waiting on those.
+            sub.status = "authenticated"
+            if org:
+                org.is_active = True
+
+        elif event == "subscription.activated":
             sub.status = "active"
             if org:
                 org.is_active = True

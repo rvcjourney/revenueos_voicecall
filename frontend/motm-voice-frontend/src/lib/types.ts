@@ -326,6 +326,7 @@ export interface BillingCurrent {
   plan: PublicPlan;
   subscription_status: string | null;
   current_period_end: string | null;
+  org_active: boolean;
 }
 
 export interface CheckoutResponse {
