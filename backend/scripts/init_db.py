@@ -29,9 +29,6 @@ async def _create_initial_records(
     """
     # Deferred import: models don't exist yet in Phase 1
     try:
-        from app.database import get_db_context
-        from app.core.security import hash_password
-
         # Phase 2 will add:
         # from app.models.user import Organization, User
         # async with get_db_context() as db:

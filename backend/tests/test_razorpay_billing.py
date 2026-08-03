@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 from app.core.razorpay_client import RazorpayError
@@ -336,7 +335,6 @@ async def test_register_creates_inactive_org(client, db):
     assert resp.status_code == 201
     assert resp.json()["access_token"]
 
-    from sqlalchemy import select as _select
     org_id = resp.json()["user"]["org_id"]
     org = await db.get(Organization, uuid.UUID(org_id))
     assert org.is_active is False

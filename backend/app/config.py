@@ -151,11 +151,6 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
-    # ── Rate limiting (slowapi format: "N/period") ─────────────────────────────
-    RATE_LIMIT_LOGIN: str = "5/minute"
-    RATE_LIMIT_CAMPAIGN_LAUNCH: str = "10/hour"
-    RATE_LIMIT_GLOBAL: str = "100/minute"
-
     # ── Monitoring ────────────────────────────────────────────────────────────
     SENTRY_DSN: str = ""
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1

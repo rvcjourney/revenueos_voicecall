@@ -16,7 +16,6 @@ from typing import Any
 
 import bcrypt
 import jwt as pyjwt
-from jwt.exceptions import InvalidTokenError
 
 from app.config import settings
 

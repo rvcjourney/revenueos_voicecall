@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,7 +70,6 @@ async def vobiz_recording_webhook(
     try:
         form = await request.form()
         record_url = str(form.get("RecordUrl") or form.get("record_url") or "")
-        call_uuid  = str(form.get("CallUUID")  or form.get("call_uuid")  or "")
         to_number  = str(form.get("To")        or form.get("to")         or "")
 
         if not record_url:

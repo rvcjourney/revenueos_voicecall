@@ -3,9 +3,7 @@ app/main.py — FastAPI application factory, middleware stack, and exception han
 """
 from __future__ import annotations
 
-import uuid
 from contextlib import asynccontextmanager
-from typing import Any
 
 import sentry_sdk
 import structlog
@@ -27,7 +25,6 @@ from app.core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     QuotaExceededError,
-    RateLimitError,
     StorageError,
     ValidationError as AppValidationError,
     WebhookAuthError,
@@ -215,14 +212,6 @@ def _register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             content={"detail": exc.message, "code": exc.code},
-        )
-
-    @app.exception_handler(RateLimitError)
-    async def rate_limit_handler(request: Request, exc: RateLimitError) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"detail": exc.message, "code": exc.code},
-            headers={"Retry-After": str(exc.retry_after)},
         )
 
     @app.exception_handler(StorageError)
