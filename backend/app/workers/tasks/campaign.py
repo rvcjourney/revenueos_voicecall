@@ -323,23 +323,28 @@ async def _place_call(
     url, key, secret = settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET
     lk = LiveKitAPI(url, key, secret)
     try:
+        # Single source dict, reused for both room metadata and dispatch metadata below --
+        # see the dispatch call for why the agent reads it from the dispatch copy, not this one.
+        call_meta = {
+            "call_id": call_id,
+            "campaign_id": campaign_id,
+            "org_id": org_id,
+            "agent_template_id": agent_template_id,
+            "contact_name": contact_name,
+            "system_prompt": system_prompt,
+            "welcome_message": welcome_message,
+            "voice_id": voice_id,
+            "voice_provider": voice_provider,
+            "language": language,
+            "llm_model": llm_model,
+            "llm_temperature": llm_temperature,
+        }
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
                 name=room_name,
-                metadata=json.dumps({
-                    "call_id": call_id,
-                    "campaign_id": campaign_id,
-                    "org_id": org_id,
-                    "agent_template_id": agent_template_id,
-                    "contact_name": contact_name,
-                    "system_prompt": system_prompt,
-                    "welcome_message": welcome_message,
-                    "voice_id": voice_id,
-                    "voice_provider": voice_provider,
-                    "language": language,
-                    "llm_model": llm_model,
-                    "llm_temperature": llm_temperature,
-                }),
+                # Kept for parity / anyone inspecting the room via the LiveKit dashboard or
+                # API -- the agent itself no longer relies on this copy (see dispatch below).
+                metadata=json.dumps(call_meta),
             )
         )
 
@@ -347,9 +352,16 @@ async def _place_call(
             await asyncio.gather(
                 lk.agent_dispatch.create_dispatch(
                     lk_api.CreateAgentDispatchRequest(
-                        agent_name="voice-call-agent",
+                        agent_name=settings.LIVEKIT_AGENT_NAME,
                         room=room_name,
-                        metadata=json.dumps({"agent_template_id": agent_template_id}),
+                        # Full metadata (not just agent_template_id) -- this is delivered to
+                        # the worker as part of the job assignment itself (JobContext.job.metadata),
+                        # available the instant the job starts, with no dependency on room state
+                        # sync. Room metadata above races the agent's ctx.connect(): observed in
+                        # practice as ctx.room.metadata reading back empty on some jobs even
+                        # though create_room() above had already completed, causing the agent to
+                        # silently fall back to config.py defaults (wrong call_id, wrong voice).
+                        metadata=json.dumps(call_meta),
                     )
                 ),
                 lk.sip.create_sip_participant(
@@ -1323,3 +1335,44 @@ async def _resume_stalled_async() -> None:
             log.info("stalled_campaign_requeued", campaign_id=cid, name=cname)
         else:
             log.info("stalled_campaign_outside_window", campaign_id=cid, name=cname)
+
+
+# ── Stale-pending-call detector ─────────────────────────────────────────────
+# The agent POSTs the real outcome/summary/transcript to /api/calls/{id}/agent-report
+# right after each call ends. If that POST never arrives (agent crash, network
+# blip, backend misconfiguration), the Call row is silently left at its DB
+# default (outcome=PENDING) forever — the transcript/summary data itself only
+# ever existed in the agent process's memory and can't be recovered after the
+# fact. This task can't get that data back; it exists purely so a stuck call
+# shows up in logs instead of going unnoticed indefinitely.
+_STALE_PENDING_AGE = timedelta(minutes=10)
+
+
+@celery_app.task(name="app.workers.tasks.campaign.flag_stale_pending_calls", bind=True)
+def flag_stale_pending_calls(self) -> None:
+    """Beat task (every 60 s): log any COMPLETED call still stuck at outcome=PENDING."""
+    asyncio.run(_flag_stale_pending_async())
+
+
+async def _flag_stale_pending_async() -> None:
+    cutoff = datetime.now(timezone.utc) - _STALE_PENDING_AGE
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(Call.id, Call.phone_number, Call.campaign_id, Call.ended_at).where(
+                Call.status == CallStatus.COMPLETED,
+                Call.outcome == CallOutcome.PENDING,
+                Call.ended_at.is_not(None),
+                Call.ended_at <= cutoff,
+            )
+        )
+        stale = rows.all()
+
+    for call_id, phone_number, campaign_id, ended_at in stale:
+        log.warning(
+            "stale_pending_call",
+            call_id=str(call_id),
+            phone_number=phone_number,
+            campaign_id=str(campaign_id) if campaign_id else None,
+            ended_at=ended_at.isoformat() if ended_at else None,
+            note="agent-report likely never arrived — check agent logs for this call_id",
+        )

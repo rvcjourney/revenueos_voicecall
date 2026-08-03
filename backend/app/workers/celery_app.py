@@ -45,5 +45,11 @@ celery_app.conf.update(
             "task": "app.workers.tasks.campaign.launch_scheduled_campaigns",
             "schedule": 60.0,
         },
+        # Every 5 min: log any COMPLETED call still stuck at outcome=PENDING
+        # (agent-report never arrived) so it doesn't go unnoticed indefinitely.
+        "flag-stale-pending-calls": {
+            "task": "app.workers.tasks.campaign.flag_stale_pending_calls",
+            "schedule": 300.0,
+        },
     },
 )

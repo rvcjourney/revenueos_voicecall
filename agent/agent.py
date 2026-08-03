@@ -28,6 +28,7 @@ import chatterbox_tts
 from config import (
     AGENT_SYSTEM_PROMPT,
     AGENT_WELCOME_MESSAGE,
+    LIVEKIT_AGENT_NAME,
     GROQ_MODEL,
     GROQ_LLM_TEMPERATURE,
     ELEVENLABS_API_KEY,
@@ -51,6 +52,7 @@ from config import (
     LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
+    FAILED_REPORTS_PATH,
     validate_config,
 )
 
@@ -74,9 +76,34 @@ def _safe_task(coro, name: str = "") -> asyncio.Task:
     task = asyncio.create_task(coro)
     def _on_done(t: asyncio.Task) -> None:
         if not t.cancelled() and (exc := t.exception()) is not None:
-            logger.debug("background task %s raised: %s", name or repr(coro), exc)
+            # Was logger.debug — background tasks include the report-posting paths
+            # (voicemail/bot/keyword hangups, disconnect handler), so a debug-level
+            # log here meant a lost call report never showed up anywhere anyone
+            # would actually look.
+            logger.error("background task %s raised: %s", name or repr(coro), exc)
     task.add_done_callback(_on_done)
     return task
+
+
+def _persist_failed_report(call_id: str | None, payload: dict, error: Exception) -> None:
+    """Last-resort durable fallback when agent-report POSTs exhaust all retries.
+
+    The transcript/summary/extracted_data only ever exist in this process's memory —
+    once it exits, an undelivered report is gone for good unless it's written
+    somewhere first. Appends one JSON line per failure; replay with
+    replay_failed_reports.py once the backend is reachable again.
+    """
+    try:
+        entry = {
+            "call_id": call_id,
+            "failed_at": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "error": str(error),
+            "payload": payload,
+        }
+        with open(FAILED_REPORTS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.error("failed_report_persist_error | call=%s error=%s", call_id, exc)
 
 
 def _sign_webhook_body(body: bytes) -> str:
@@ -284,6 +311,67 @@ def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
 
     return _filter
 
+
+_DIGIT_RUN_RE = re.compile(r"\b\d(?:[ \-]?\d){6,}\b")
+# A digit run still being dictated, touching the end of the buffered text so far —
+# either mid-digit or on a dangling separator waiting for the next digit. Used to
+# hold back output rather than flush a short prefix (e.g. "788") before the rest
+# of the number ("7881708") arrives in a later chunk.
+_TRAILING_DIGIT_RUN_RE = re.compile(r"\d(?:[ \-]?\d)*[ \-]?$")
+_DIGIT_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+
+
+def _digit_spellout_transform():
+    """Backstop for phone numbers / OTPs read back to the customer.
+
+    Guardrail 14 asks the LLM to speak digit sequences as English words (never
+    Hindi 'ek/do/teen...'), but that's a soft instruction — the LLM can still
+    emit a bare numeral string or Hindi words. Rewrite any run of 7+ digits
+    deterministically into spelled-out English digit words before it reaches
+    TTS, so a hi-IN-configured voice (Sarvam Bulbul, Chatterbox) can't localize
+    a bare numeral into Hindi number words.
+
+    Same "confirmed match" buffering as _honorific_greeting_filter_transform,
+    plus an extra guard: a short digit run (fewer than 7 digits so far) touching
+    the tail of the buffer doesn't match _DIGIT_RUN_RE at all yet, so without
+    this it would get flushed as bare digits before the rest of the number
+    arrives in the next chunk. _TRAILING_DIGIT_RUN_RE catches that in-progress
+    run (of any length) and holds it back too.
+    """
+    tail = 2
+
+    def _spell(m: re.Match) -> str:
+        digits = re.sub(r"\D", "", m.group(0))
+        return " ".join(_DIGIT_WORDS[int(d)] for d in digits)
+
+    async def _filter(text_stream):
+        buf = ""
+        async for chunk in text_stream:
+            buf += chunk
+            confirmed_end = len(buf) - tail
+            if confirmed_end > 0:
+                out_end = confirmed_end
+                parts, last = [], 0
+                for m in _DIGIT_RUN_RE.finditer(buf):
+                    if m.end() > confirmed_end:
+                        out_end = min(out_end, m.start())
+                        break
+                    parts.append(buf[last:m.start()])
+                    parts.append(_spell(m))
+                    last = m.end()
+                trailing = _TRAILING_DIGIT_RUN_RE.search(buf, last)
+                if trailing:
+                    out_end = min(out_end, trailing.start())
+                if out_end > last:
+                    parts.append(buf[last:out_end])
+                if out_end > 0:
+                    yield "".join(parts)
+                    buf = buf[out_end:]
+        if buf:
+            yield _DIGIT_RUN_RE.sub(_spell, buf)
+
+    return _filter
+
 _VOICEMAIL_RE = re.compile(
     r"\b("
     r"please leave (a |your )?message"
@@ -420,7 +508,12 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "sahi se nahi aaya, ek baar phir se, dheere dheere digit by digit bata dijiye' and ask "
         "again. Once you have a number that looks like a real 10-digit mobile number, always "
         "read it back to the customer digit-by-digit to confirm before moving on or ending the "
-        "call. Do the same for an email address — if it sounds incomplete or malformed (no '@', "
+        "call. IMPORTANT — when reading digits back (phone numbers, OTPs, any numeric sequence), "
+        "always say them as ENGLISH digit words: 'one', 'two', 'three', 'four', 'five', 'six', "
+        "'seven', 'eight', 'nine', 'zero' — never as Hindi digit words ('ek', 'do', 'teen', 'saat', "
+        "'aath'...). This is the one exception to rule 9's 'speak only in that language' rule — "
+        "digits are always English words even mid-Hinglish-sentence. "
+        "Do the same for an email address — if it sounds incomplete or malformed (no '@', "
         "no domain), ask them to repeat or spell it. This check still applies even if the customer "
         "says the number in the very same breath as 'bye' or hangs up right after — a goodbye "
         "never excuses skipping the number check. If a customer says goodbye while leaving you an "
@@ -460,7 +553,9 @@ def prewarm(proc: JobProcess) -> None:
         min_speech_duration     = 0.20,  # require ~200ms of sustained speech-like audio before
                                           # VAD confirms onset — rejects short noise transients
                                           # (clicks/coughs/horns) without missing real words
-        min_silence_duration    = 0.35,
+        min_silence_duration    = 0.5,   # was 0.35 — too short for the natural pauses between
+                                          # digit groups when a customer dictates a phone number,
+                                          # causing premature end-of-turn mid-number
         activation_threshold    = 0.88,
         deactivation_threshold  = 0.40,
         sample_rate             = 8000,
@@ -649,24 +744,70 @@ class VoiceAgent(Agent):
         (CallStatus.FAILED + error_message) instead of leaving it to be silently
         misclassified as a normal (but quiet) conversation outcome."""
         if not self._call_id or not self._backend_url:
+            logger.warning(
+                "report_system_failure_skipped | call_id=%r backend_url=%r — nothing to report to",
+                self._call_id, self._backend_url,
+            )
             return
         if self._reported:
             return
         self._reported = True
-        import httpx
         try:
-            async with httpx.AsyncClient(timeout=10.0) as http:
-                await http.post(
-                    f"{self._backend_url}/api/calls/{self._call_id}/agent-report",
-                    json={"outcome": "pending", "summary": "", "transcript": [], "error_message": error_text},
-                )
+            await self._post_agent_report(
+                {"outcome": "pending", "summary": "", "transcript": [], "error_message": error_text}
+            )
             logger.info("post_call_report_sent | call=%s status=failed error=%s", self._call_id, error_text)
         except Exception as exc:
             logger.error("report_system_failure failed to reach backend: %s", exc)
 
+    async def _post_agent_report(self, payload: dict, *, attempts: int = 3) -> None:
+        """POST the call report to the backend, retrying transient failures.
+
+        A single dropped connection or momentary backend restart used to lose
+        the whole report permanently (one-shot POST, no retry) — the call would
+        then sit at outcome=pending forever with no way to recover the data,
+        since the transcript/summary only ever exist in this in-memory report.
+        """
+        import httpx
+
+        url = f"{self._backend_url}/api/calls/{self._call_id}/agent-report"
+        delay = 1.0
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as http:
+                    resp = await http.post(url, json=payload)
+                    # A 4xx/5xx from the backend was previously indistinguishable from
+                    # success here (no status check) — the loop would return on the
+                    # first attempt and silently drop the report on e.g. a 500 during
+                    # a backend restart, with no retry and no error anywhere.
+                    resp.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < attempts:
+                    logger.warning(
+                        "agent_report_post_retry | call=%s attempt=%d/%d error=%s",
+                        self._call_id, attempt, attempts, exc,
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+        assert last_exc is not None
+        logger.error(
+            "agent_report_post_failed | call=%s attempts=%d error=%s — persisting to %s for replay",
+            self._call_id, attempts, last_exc, FAILED_REPORTS_PATH,
+        )
+        _persist_failed_report(self._call_id, payload, last_exc)
+        raise last_exc
+
     async def _post_call_report(self) -> None:
         """Classify outcome with Groq and POST to backend. Called once after every call."""
         if not self._call_id or not self._backend_url:
+            logger.warning(
+                "post_call_report_skipped | call_id=%r backend_url=%r — nothing to report to "
+                "(check BACKEND_INTERNAL_URL / room metadata)",
+                self._call_id, self._backend_url,
+            )
             return
         if self._reported:
             return
@@ -680,7 +821,6 @@ class VoiceAgent(Agent):
 
     async def _send_report(self) -> None:
         import json as _json
-        import httpx
 
         # Try to get full conversation (user + agent) from session history
         full_transcript: list[dict] = []
@@ -743,22 +883,20 @@ class VoiceAgent(Agent):
             )
             outcome = "not_interested"
             summary = "Customer did not engage meaningfully in the conversation."
-            async with httpx.AsyncClient(timeout=10.0) as http:
-                await http.post(
-                    f"{self._backend_url}/api/calls/{self._call_id}/agent-report",
-                    json={"outcome": outcome, "summary": summary, "transcript": full_transcript},
-                )
+            await self._post_agent_report({"outcome": outcome, "summary": summary, "transcript": full_transcript})
             logger.info("post_call_report_sent | call=%s outcome=%s words=%d", self._call_id, outcome, customer_word_count)
             return
 
         # ── LLM classification (customer said enough to judge) ─────────────────
         outcome, summary = "not_interested", ""
+        raw = None          # stays None if the Groq call itself never returned a response
+        finish_reason = None
         try:
             import groq as _groq
             client = _groq.AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
             resp = await client.chat.completions.create(
                 model="llama-3.1-8b-instant",
-                max_tokens=200,
+                max_tokens=350,
                 temperature=0.0,
                 messages=[
                     {
@@ -766,7 +904,21 @@ class VoiceAgent(Agent):
                         "content": (
                             "You classify sales call outcomes strictly from the CUSTOMER's words in the transcript. "
                             "Ignore STT errors — judge intent, not exact wording. "
-                            "Reply ONLY with valid JSON: {\"outcome\": \"...\", \"summary\": \"...\"}\n\n"
+                            "Reply ONLY with valid JSON: {\"outcome\": \"...\", \"summary\": \"...\", "
+                            "\"extracted_data\": {\"caller_name\": ..., \"caller_email\": ..., "
+                            "\"caller_phone\": ..., \"requirements\": ..., \"budget\": ..., "
+                            "\"decision_maker\": ...}}\n\n"
+                            "extracted_data fields — fill in ONLY what the CUSTOMER actually said in the "
+                            "transcript; use null for anything not explicitly mentioned. Never guess or "
+                            "invent a value:\n"
+                            "  caller_name     — the customer's name, if they gave one\n"
+                            "  caller_email    — an email address, if they gave one\n"
+                            "  caller_phone    — a callback/contact number, if they gave one\n"
+                            "  requirements    — 1 short sentence on what they want/need (product, design, "
+                            "service, etc.), if they described anything\n"
+                            "  budget          — budget they mentioned, if any\n"
+                            "  decision_maker  — true/false only if the transcript makes it clear whether "
+                            "they can make the purchase decision themselves, else null\n\n"
                             "OUTCOME RULES — read carefully:\n\n"
                             "  interested         — Customer showed CLEAR, ACTIVE interest. Requires at least ONE of:\n"
                             "                       • Asked a specific question about price, availability, delivery, or specs\n"
@@ -801,33 +953,57 @@ class VoiceAgent(Agent):
                     {"role": "user", "content": f"Transcript:\n{transcript_text}"},
                 ],
             )
+            finish_reason = resp.choices[0].finish_reason
             raw = resp.choices[0].message.content.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
-            result = _json.loads(raw.strip())
+            raw = raw.strip()
+            result = _json.loads(raw)
             outcome = result.get("outcome", "not_interested")
             summary = result.get("summary", "")
+            raw_extracted = result.get("extracted_data") or {}
+            extracted_data = {k: v for k, v in raw_extracted.items() if v is not None}
             valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
             if outcome not in valid:
                 outcome = "not_interested"
+            # finish_reason == "length" means Groq hit max_tokens and cut the response off —
+            # if this ever shows up on a *successful* parse it means we got lucky (the JSON
+            # happened to close before the cut), and it's a warning sign max_tokens=350 is
+            # running too close to the edge for calls with a lot to extract.
             logger.info(
-                "classify_llm: call=%s outcome=%s words=%d",
-                self._call_id, outcome, customer_word_count,
+                "classify_llm: call=%s outcome=%s words=%d finish_reason=%s completion_tokens=%s",
+                self._call_id, outcome, customer_word_count, finish_reason,
+                getattr(getattr(resp, "usage", None), "completion_tokens", None),
             )
         except Exception as exc:
-            logger.warning("groq_classify_error: %s", exc)
-
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            await http.post(
-                f"{self._backend_url}/api/calls/{self._call_id}/agent-report",
-                json={
-                    "outcome": outcome,
-                    "summary": summary,
-                    "transcript": full_transcript,
-                },
+            # outcome/summary keep their "not_interested"/"" defaults from above, so
+            # the report still posts — only extracted_data is lost here.
+            # raw is None  -> failed before/during the Groq API call itself (network,
+            #                 auth, rate limit) -- never got a response to parse.
+            # raw is set   -> Groq responded but json.loads/field access failed; raw_preview
+            #                 + finish_reason show whether max_tokens=350 truncated it
+            #                 mid-JSON (finish_reason="length" is the smoking gun).
+            logger.warning(
+                "groq_classify_error | call=%s error_type=%s error=%s stage=%s finish_reason=%s "
+                "raw_len=%s raw_preview=%r",
+                self._call_id,
+                type(exc).__name__,
+                exc,
+                "groq_api_call" if raw is None else "parse_or_extract",
+                finish_reason,
+                len(raw) if raw is not None else None,
+                raw[:500] if raw else None,
             )
+            extracted_data = {}
+
+        await self._post_agent_report({
+            "outcome": outcome,
+            "summary": summary,
+            "transcript": full_transcript,
+            "extracted_data": extracted_data,
+        })
         logger.info("post_call_report_sent | call=%s outcome=%s", self._call_id, outcome)
 
     async def _do_hangup(self) -> None:
@@ -891,14 +1067,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info("Job received | room=%s", ctx.room.name)
     await ctx.connect()
 
-    # Load template fields from room metadata (injected by campaign dispatcher).
-    # Fall back to config.py values when running outside a campaign (e.g. test calls).
+    # Primary source: dispatch metadata (JobContext.job.metadata) -- delivered as part of
+    # the job assignment itself (see _place_call() in campaign.py, which now puts the full
+    # payload on CreateAgentDispatchRequest), available the instant the job starts with no
+    # dependency on room state sync. ctx.room.metadata is set by the same backend call but
+    # over a separate path (room state, synced to this process after ctx.connect()) that can
+    # race it -- confirmed in practice: ctx.room.metadata read back empty on some jobs even
+    # though create_room() had already completed and returned before dispatch was requested.
+    # Falls back to room metadata for inbound calls, which carry only
+    # {"call_type":"inbound","sip_trunk_id":...} via a static SIP dispatch rule
+    # (app/api/sip_trunks.py setup_inbound()), not per-job dispatch metadata.
+    raw_meta = ctx.job.metadata or ctx.room.metadata
+    # Logged unconditionally (length/preview only, never the raw system_prompt in full)
+    # so an empty-vs-malformed metadata gap is visible instead of silently defaulting
+    # every field (voice_provider, call_id, etc.) with no trace of why.
+    logger.info(
+        "job_metadata_raw | room=%s job_present=%s room_present=%s len=%s preview=%r",
+        ctx.room.name,
+        bool(ctx.job.metadata),
+        bool(ctx.room.metadata),
+        len(raw_meta) if raw_meta else 0,
+        raw_meta[:300] if raw_meta else None,
+    )
     meta: dict = {}
-    if ctx.room.metadata:
+    if raw_meta:
         try:
-            meta = json.loads(ctx.room.metadata)
-        except Exception:
-            pass
+            meta = json.loads(raw_meta)
+        except Exception as exc:
+            logger.error(
+                "job_metadata_parse_failed | room=%s error_type=%s error=%s raw_preview=%r",
+                ctx.room.name, type(exc).__name__, exc, raw_meta[:300],
+            )
 
     # Inbound calls (LiveKit SIP dispatch rule, see app/api/sip_trunks.py
     # setup_inbound()) carry only {"call_type":"inbound","sip_trunk_id":...} --
@@ -1084,6 +1283,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     )
     end_call_transform = _end_call_filter_transform(voice_agent._trigger_hangup)
     honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name)
+    digit_spellout_transform = _digit_spellout_transform()
 
     session = AgentSession(
         stt=sarvam.STT(
@@ -1096,12 +1296,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts=tts,
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
+            endpointing={
+                "min_delay": 0.9,  # was implicit SDK default 0.5s — too short for a customer
+                                   # pausing between spoken digit-groups while dictating a phone
+                                   # number; the turn was being finalized mid-number
+                "max_delay": 3.0,  # unchanged (SDK default)
+            },
             interruption={
                 "min_duration": 0.6,  # caller must sustain speech for 600ms to count as an interruption
                 "min_words":    12,   # customer must say ~12 words to interrupt agent — prevents "haan/achha" and noise-triggered blips from breaking sentences
             },
         ),
-        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, end_call_transform],
+        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
     )
 
     @ctx.room.on("participant_disconnected")
@@ -1147,7 +1353,7 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             entrypoint_fnc    = entrypoint,
             prewarm_fnc       = prewarm,
-            agent_name        = "voice-call-agent",
+            agent_name        = LIVEKIT_AGENT_NAME,
             worker_type       = agents.WorkerType.ROOM,
             num_idle_processes = 3,   # keep 3 processes warm for fast dispatch
             load_threshold    = 0.9,  # allow up to 90% CPU before refusing new jobs
