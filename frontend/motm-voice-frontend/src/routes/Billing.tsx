@@ -2,14 +2,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   Building2,
-  Check,
+  CalendarClock,
   CheckCircle2,
   Circle,
   CreditCard,
   ListChecks,
   Loader2,
-  Plus,
   Receipt,
+  ShieldCheck,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +21,16 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/platform/ConfirmDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { useBillingCurrent, useCreditUsage } from "@/lib/hooks";
+import { StatCard } from "@/components/shared/StatCard";
+import { PlanPicker } from "@/components/billing/PlanPicker";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
+import { apiErrorMessage } from "@/lib/api";
+import { useBillingCurrent, useCancelSubscription, useCheckout, useCreditUsage, useVerifyPayment } from "@/lib/hooks";
+import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
+import type { PublicPlan } from "@/lib/types";
 
 function notImplemented(action: string) {
   toast.info(`${action} isn't connected yet — this is a UI preview only.`);
@@ -33,6 +43,7 @@ function formatPrice(priceMinor: number, currency: string) {
 }
 
 export default function Billing() {
+  const { user } = useAuth();
   const credits = useCreditUsage();
   const billing = useBillingCurrent();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
@@ -46,58 +57,72 @@ export default function Billing() {
         year: "numeric",
       })
     : null;
+  const orgActive = billing.data?.org_active ?? false;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Billing" description="Manage your plan, payment method, and invoices" />
 
-      <Card>
-        <CardContent className="space-y-5 pt-6">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+      {/* ── Hero plan card ─────────────────────────────────────────────── */}
+      <Card className="card-top-accent overflow-hidden">
+        <CardContent className="space-y-6 pt-8">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
             {billing.isLoading || !plan ? (
-              <div className="space-y-2">
-                <Skeleton className="h-6 w-40" />
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-10 w-48" />
                 <Skeleton className="h-4 w-56" />
               </div>
             ) : (
               <div>
-                <p className="font-heading text-xl font-semibold">
-                  {plan.name}
-                  {plan.is_custom_pricing ? "" : " Plan"}
+                <p className="eyebrow flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3 text-primary" /> Current plan
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <div className="mt-1.5 flex flex-wrap items-baseline gap-3">
+                  <h2 className="font-heading text-3xl font-semibold">
+                    {plan.name}
+                    {plan.is_custom_pricing ? "" : " Plan"}
+                  </h2>
+                  <Badge variant={orgActive ? "success" : "warning"}>
+                    {orgActive ? "Active" : (billing.data?.subscription_status ?? "No subscription")}
+                  </Badge>
+                </div>
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                   {plan.is_custom_pricing ? (
                     "Custom pricing"
                   ) : (
-                    <>
-                      {formatPrice(effectivePriceMinor!, plan.currency)}/month
-                      {plan.discount_price_minor != null && (
-                        <span className="ml-1.5 text-muted-foreground/70 line-through">
-                          {formatPrice(plan.price_minor, plan.currency)}
-                        </span>
-                      )}
-                    </>
+                    <span className="text-gradient font-heading text-lg font-semibold">
+                      {formatPrice(effectivePriceMinor!, plan.currency)}
+                      <span className="text-sm font-normal text-muted-foreground">/month</span>
+                    </span>
                   )}
-                  {renewsOn && <> · renews {renewsOn}</>}
+                  {plan.discount_price_minor != null && (
+                    <span className="text-muted-foreground/70 line-through">
+                      {formatPrice(plan.price_minor, plan.currency)}
+                    </span>
+                  )}
+                  {renewsOn && (
+                    <span className="flex items-center gap-1">
+                      <CalendarClock className="h-3.5 w-3.5" /> renews {renewsOn}
+                    </span>
+                  )}
                 </p>
               </div>
             )}
             <div className="flex items-center gap-2">
-              <Badge variant="success">
-                <Check className="h-3 w-3" /> {billing.data?.subscription_status ?? "Active"}
-              </Badge>
-              <Button variant="outline" size="sm" onClick={() => notImplemented("Changing plans")}>
-                Change plan
-              </Button>
+              <ChangePlanDialog currentPlanId={plan?.id} userName={user?.full_name} userEmail={user?.email} />
+              {orgActive && <CancelSubscriptionButton />}
             </div>
           </div>
 
-          <div className="space-y-2 border-t border-border/60 pt-4">
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/30 p-4">
             <div className="flex items-center justify-between text-sm">
-              <p className="font-medium">Credits used this period</p>
+              <p className="flex items-center gap-1.5 font-medium">
+                <Zap className="h-3.5 w-3.5 text-warning" /> Credits used this period
+              </p>
               {credits.data && (
-                <p className="text-muted-foreground">
-                  {credits.data.used.toLocaleString()} / {credits.data.allotted.toLocaleString()}
+                <p className="tabular-figure text-muted-foreground">
+                  {credits.data.used.toLocaleString()} / {credits.data.allotted.toLocaleString()} min
                 </p>
               )}
             </div>
@@ -112,16 +137,45 @@ export default function Billing() {
         </CardContent>
       </Card>
 
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          icon={ShieldCheck}
+          label="Subscription status"
+          value={billing.isLoading ? undefined : orgActive ? "Active" : "Needs attention"}
+          tone={orgActive ? "success" : "warning"}
+        />
+        <StatCard
+          icon={CalendarClock}
+          label="Next renewal"
+          value={billing.isLoading ? undefined : (renewsOn ?? "—")}
+          tone="info"
+        />
+        <StatCard
+          icon={Zap}
+          label="Minutes included"
+          value={plan ? plan.credits_per_month.toLocaleString() : undefined}
+          loading={billing.isLoading}
+          tone="default"
+        />
+      </div>
+
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="flex items-center justify-between gap-3">
-            <p className="flex items-center gap-2 text-sm font-medium">
-              <CreditCard className="h-4 w-4 text-muted-foreground" /> Payment method
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <CreditCard className="h-4 w-4 text-muted-foreground" /> Payment method
+          </p>
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-lg border px-4 py-3",
+              orgActive ? "border-success/30 bg-success/5" : "border-dashed border-border"
+            )}
+          >
+            {orgActive ? <ShieldCheck className="h-4 w-4 shrink-0 text-success" /> : null}
+            <p className="text-sm text-muted-foreground">
+              {orgActive
+                ? "Managed securely by Razorpay — your card/UPI details are never stored on our servers."
+                : "No payment method on file yet — set one up via Change plan above."}
             </p>
-            <AddPaymentMethodDialog />
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-dashed border-border px-3 py-3">
-            <p className="text-sm text-muted-foreground">No payment method on file</p>
           </div>
         </CardContent>
       </Card>
@@ -165,7 +219,7 @@ export default function Billing() {
             <Receipt className="h-4 w-4 text-muted-foreground" /> Invoice history
           </p>
           <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-            No invoices yet — they'll appear here after your first billing cycle.
+            Razorpay emails you a receipt after every successful charge. In-app invoice history isn't built yet.
           </div>
         </CardContent>
       </Card>
@@ -176,15 +230,15 @@ export default function Billing() {
             <ListChecks className="h-4 w-4 text-muted-foreground" /> What's needed to enable payments
           </p>
           <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            <ChecklistItem done={false} label="Payment method on file" />
+            <ChecklistItem done={orgActive} label="Payment method on file" />
             <ChecklistItem done={false} label="Billing email confirmed" />
             <ChecklistItem done={false} label="Billing address" />
             <ChecklistItem done label="Organization verified" />
             <ChecklistItem done={false} label="Tax ID (if applicable)" />
           </div>
           <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            These are the details typically required before charges can be processed. Payment processing itself isn't
-            connected yet — this page is a UI preview only.
+            These are the details typically required before charges can be processed. Billing email/address/Tax ID
+            aren't collected yet — this section is a UI preview only for those.
           </p>
         </CardContent>
       </Card>
@@ -205,57 +259,108 @@ function ChecklistItem({ done, label }: { done: boolean; label: string }) {
   );
 }
 
-function AddPaymentMethodDialog() {
+function ChangePlanDialog({
+  currentPlanId,
+  userName,
+  userEmail,
+}: {
+  currentPlanId?: string;
+  userName?: string;
+  userEmail?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
+  const [paying, setPaying] = useState(false);
+  const checkout = useCheckout();
+  const verifyPayment = useVerifyPayment();
 
-  function handleSave() {
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
-      setOpen(false);
-      notImplemented("Adding a payment method");
-    }, 400);
+  async function confirm() {
+    if (!selectedPlan) return;
+    setPaying(true);
+    try {
+      const result = await checkout.mutateAsync(selectedPlan.id);
+      if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        await openRazorpayCheckout({
+          key: result.razorpay_key_id,
+          subscription_id: result.subscription_id,
+          name: "Talkryn",
+          description: `${result.plan_name} plan`,
+          prefill: { name: userName, email: userEmail },
+          theme: { color: "#6366f1" },
+          handler: async (response) => {
+            try {
+              await verifyPayment.mutateAsync(response);
+            } finally {
+              toast.success("Payment received — your plan is updating");
+              setOpen(false);
+            }
+          },
+          modal: { ondismiss: () => setPaying(false) },
+        });
+      } else {
+        toast.success("Plan updated");
+        setOpen(false);
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't start checkout"));
+    } finally {
+      setPaying(false);
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Plus className="h-3.5 w-3.5" /> Add payment method
+        <Button variant="gradient" size="sm">
+          Change plan
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Add payment method</DialogTitle>
+          <DialogTitle>Choose a plan</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Cardholder name</Label>
-            <Input placeholder="Full name on card" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Card number</Label>
-            <Input placeholder="1234 1234 1234 1234" inputMode="numeric" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Expiry</Label>
-              <Input placeholder="MM/YY" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>CVV</Label>
-              <Input placeholder="123" inputMode="numeric" />
-            </div>
-          </div>
-        </div>
+        <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} excludePlanId={currentPlanId} />
         <DialogFooter>
-          <Button variant="gradient" onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save card
+          <Button variant="gradient" onClick={confirm} disabled={!selectedPlan || paying}>
+            {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+            Continue to payment
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CancelSubscriptionButton() {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const cancel = useCancelSubscription();
+
+  async function handleConfirm() {
+    try {
+      await cancel.mutateAsync();
+      toast.success("Subscription will end at the close of the current billing cycle");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't cancel subscription"));
+    } finally {
+      setConfirmOpen(false);
+    }
+  }
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setConfirmOpen(true)}>
+        Cancel subscription
+      </Button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Cancel your subscription?"
+        description="You'll keep access until the end of the current billing cycle, then your organization will be suspended."
+        confirmLabel="Cancel subscription"
+        variant="destructive"
+        loading={cancel.isPending}
+        onConfirm={handleConfirm}
+      />
+    </>
   );
 }

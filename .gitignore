@@ -33,6 +33,9 @@ postgres_data/
 redis_data/
 minio_data/
 
+# ── Celery Beat runtime state (regenerated wherever beat runs) ────────────────
+celerybeat-schedule*
+
 # ── Logs & OS ─────────────────────────────────────────────────────────────────
 *.log
 .DS_Store

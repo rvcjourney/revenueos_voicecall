@@ -21,8 +21,7 @@ from app.models.agent import AgentTemplate
 from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
-from app.models.user import User
-from app.schemas.agent import AgentAccessRequestOut, AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
+from app.schemas.agent import AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
 

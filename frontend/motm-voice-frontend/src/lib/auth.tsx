@@ -8,6 +8,7 @@ interface AuthContextValue {
   isAdmin: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<User>;
+  registerOrg: (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) => Promise<User>;
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) => Promise<User>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -65,6 +66,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistSession]
   );
 
+  const registerOrg = useCallback(
+    async (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) => {
+      const res = await authApi.register(data);
+      return persistSession(res.data);
+    },
+    [persistSession]
+  );
+
   const registerMember = useCallback(
     async (data: { full_name: string; email: string; password: string; org_code: string }) => {
       const res = await authApi.registerMember(data);
@@ -94,11 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: user?.role === "admin",
       isLoading,
       login,
+      registerOrg,
       registerMember,
       logout,
       refreshUser,
     }),
-    [user, isLoading, login, registerMember, logout, refreshUser]
+    [user, isLoading, login, registerOrg, registerMember, logout, refreshUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

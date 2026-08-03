@@ -12,7 +12,7 @@ celery_app = Celery(
     "motmvoice",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.tasks.campaign"],
+    include=["app.workers.tasks.campaign", "app.workers.tasks.billing"],
 )
 
 celery_app.conf.update(
@@ -44,6 +44,12 @@ celery_app.conf.update(
         "launch-scheduled-campaigns": {
             "task": "app.workers.tasks.campaign.launch_scheduled_campaigns",
             "schedule": 60.0,
+        },
+        # Daily: correct any Subscription/org state that drifted from a missed
+        # Razorpay webhook (see app/workers/tasks/billing.py).
+        "reconcile-razorpay-subscriptions": {
+            "task": "app.workers.tasks.billing.reconcile_razorpay_subscriptions",
+            "schedule": 86400.0,
         },
         # Every 5 min: log any COMPLETED call still stuck at outcome=PENDING
         # (agent-report never arrived) so it doesn't go unnoticed indefinitely.

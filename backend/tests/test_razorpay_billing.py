@@ -1,0 +1,410 @@
+"""
+tests/test_razorpay_billing.py — Razorpay Subscriptions billing
+(app/api/billing.py, app/api/webhooks.py: POST /razorpay), reopened
+self-serve registration (app/api/auth.py), and org.is_active enforcement
+(app/api/campaigns.py). Razorpay's SDK is always mocked -- these tests never
+touch the network.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from unittest.mock import AsyncMock, patch
+
+from app.core.razorpay_client import RazorpayError
+from app.core.security import create_access_token, create_platform_token, hash_password
+from app.models.agent import AgentTemplate, VoiceProvider
+from app.models.campaign import Campaign
+from app.models.plan import Plan
+from app.models.platform_admin import PlatformAdmin
+from app.models.subscription import Subscription
+from app.models.user import Organization, User, UserRole
+
+
+async def _make_plan(db, **overrides) -> Plan:
+    defaults = dict(
+        name=f"Plan-{uuid.uuid4().hex[:6]}",
+        price_minor=499_900,
+        monthly_call_quota=500,
+        max_concurrent_calls=3,
+        credits_per_month=500,
+        is_active=True,
+    )
+    defaults.update(overrides)
+    plan = Plan(**defaults)
+    db.add(plan)
+    await db.flush()
+    return plan
+
+
+async def _make_org_with_subscription(db, plan: Plan, *, sub_overrides: dict | None = None) -> tuple[Organization, User, str]:
+    org = Organization(name=f"Org {uuid.uuid4().hex[:6]}", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db.add(org)
+    await db.flush()
+
+    sub_kwargs = dict(org_id=org.id, plan_id=plan.id, status="active")
+    if sub_overrides:
+        sub_kwargs.update(sub_overrides)
+    db.add(Subscription(**sub_kwargs))
+
+    user = User(
+        org_id=org.id, email=f"admin-{uuid.uuid4().hex[:8]}@acme.test",
+        hashed_password=hash_password("admin-pw-123"),
+        full_name="Acme Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(org)
+    await db.refresh(user)
+
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+    return org, user, token
+
+
+async def _make_platform_admin(db) -> tuple[PlatformAdmin, str]:
+    admin = PlatformAdmin(
+        email=f"super-{uuid.uuid4().hex[:8]}@motmvoice.test",
+        hashed_password=hash_password("super-pw-123"),
+        full_name="Super Admin",
+        is_active=True,
+    )
+    db.add(admin)
+    await db.commit()
+    await db.refresh(admin)
+    return admin, create_platform_token(str(admin.id))
+
+
+def _webhook_payload(event: str, subscription_id: str, **entity_overrides) -> dict:
+    entity = {"id": subscription_id, "status": "active"}
+    entity.update(entity_overrides)
+    return {
+        "entity": "event",
+        "event": event,
+        "contains": ["subscription"],
+        "payload": {"subscription": {"entity": entity}},
+        "created_at": 1700000000,
+    }
+
+
+# ── Checkout ─────────────────────────────────────────────────────────────
+
+async def test_checkout_creates_new_subscription(client, db):
+    plan = await _make_plan(db, name="Starter")
+    org = Organization(name="New Org", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db.add(org)
+    await db.flush()
+    user = User(
+        org_id=org.id, email=f"admin-{uuid.uuid4().hex[:8]}@acme.test",
+        hashed_password=hash_password("admin-pw-123"),
+        full_name="Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_abc123")), \
+         patch("app.api.billing.razorpay_create_subscription", new=AsyncMock(
+             return_value={"id": "sub_abc123", "status": "created"}
+         )) as mock_create:
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["action"] == "new"
+    assert body["subscription_id"] == "sub_abc123"
+    assert body["razorpay_key_id"] is not None
+    mock_create.assert_awaited_once()
+
+    from sqlalchemy import select as _select
+    sub = await db.scalar(_select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.provider == "razorpay"
+    assert sub.provider_subscription_id == "sub_abc123"
+    assert sub.status == "created"
+
+
+async def test_checkout_existing_active_subscription_changes_plan(client, db):
+    old_plan = await _make_plan(db, name="Starter")
+    new_plan = await _make_plan(db, name="Professional", price_minor=1_499_900)
+    org, _user, token = await _make_org_with_subscription(
+        db, old_plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_existing", "status": "active"}
+    )
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new123")), \
+         patch("app.api.billing.razorpay_update_subscription_plan", new=AsyncMock(
+             return_value={"id": "sub_existing", "status": "active"}
+         )) as mock_edit:
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(new_plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["action"] == "change"
+    mock_edit.assert_awaited_once_with("sub_existing", "plan_new123")
+
+
+async def test_checkout_rejects_custom_pricing_plan(client, db):
+    plan = await _make_plan(db, name="Business", is_custom_pricing=True)
+    org = Organization(name="Org", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db.add(org)
+    await db.flush()
+    user = User(
+        org_id=org.id, email=f"admin-{uuid.uuid4().hex[:8]}@acme.test",
+        hashed_password=hash_password("admin-pw-123"), full_name="Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+
+    resp = await client.post(
+        "/api/billing/checkout",
+        json={"plan_id": str(plan.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 409
+
+
+# ── Payment verification ────────────────────────────────────────────────────
+
+async def test_verify_payment_returns_verified_true_on_valid_signature(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(db, plan)
+
+    with patch("app.api.billing.verify_subscription_payment_signature", return_value=True):
+        resp = await client.post(
+            "/api/billing/verify-payment",
+            json={
+                "razorpay_payment_id": "pay_123",
+                "razorpay_subscription_id": "sub_123",
+                "razorpay_signature": "deadbeef",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["verified"] is True
+
+
+async def test_verify_payment_returns_verified_false_on_invalid_signature(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(db, plan)
+
+    with patch(
+        "app.api.billing.verify_subscription_payment_signature",
+        side_effect=RazorpayError("Invalid payment signature"),
+    ):
+        resp = await client.post(
+            "/api/billing/verify-payment",
+            json={
+                "razorpay_payment_id": "pay_123",
+                "razorpay_subscription_id": "sub_123",
+                "razorpay_signature": "bad",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["verified"] is False
+
+
+# ── Cancel ───────────────────────────────────────────────────────────────
+
+async def test_cancel_subscription(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_cancel_me", "status": "active"}
+    )
+
+    with patch("app.api.billing.razorpay_cancel_subscription", new=AsyncMock(
+        return_value={"id": "sub_cancel_me", "status": "active"}
+    )):
+        resp = await client.post("/api/billing/cancel", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+
+
+# ── Webhook ──────────────────────────────────────────────────────────────
+
+async def test_webhook_rejects_bad_signature(client, db):
+    with patch("app.api.webhooks.verify_webhook_signature", side_effect=RazorpayError("Invalid webhook signature")):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps({"event": "subscription.charged"}),
+            headers={"X-Razorpay-Signature": "bad", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 401
+
+
+async def test_webhook_subscription_authenticated_activates_org(client, db):
+    plan = await _make_plan(db)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_auth_me", "status": "created"}
+    )
+    org.is_active = False
+    await db.commit()
+
+    payload = _webhook_payload("subscription.authenticated", "sub_auth_me")
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    await db.refresh(org)
+    assert org.is_active is True
+
+    from sqlalchemy import select as _select
+    sub = await db.scalar(_select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.status == "authenticated"
+
+
+async def test_webhook_subscription_charged_activates_org_and_resets_credits(client, db):
+    plan = await _make_plan(db, credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_charge_me", "status": "created"}
+    )
+    org.is_active = False
+    org.credits_used_this_period = 250
+    await db.commit()
+
+    payload = _webhook_payload(
+        "subscription.charged", "sub_charge_me",
+        current_start=1700000000, current_end=1702592000, customer_id="cust_xyz",
+    )
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    await db.refresh(org)
+    assert org.is_active is True
+    assert org.credits_used_this_period == 0
+
+    from sqlalchemy import select as _select
+    sub = await db.scalar(_select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.status == "active"
+    assert sub.provider_customer_id == "cust_xyz"
+    assert sub.current_period_start is not None
+    assert sub.current_period_end is not None
+
+
+async def test_webhook_subscription_halted_suspends_org(client, db):
+    plan = await _make_plan(db)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_halt_me", "status": "active"}
+    )
+    org.is_active = True
+    await db.commit()
+
+    payload = _webhook_payload("subscription.halted", "sub_halt_me")
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    await db.refresh(org)
+    assert org.is_active is False
+
+
+# ── Reopened registration ────────────────────────────────────────────────
+
+async def test_register_creates_inactive_org(client, db):
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "New Founder",
+            "company_name": f"NewCo {uuid.uuid4().hex[:6]}",
+            "email": f"founder-{uuid.uuid4().hex[:8]}@newcotest.com",
+            "password": "password123",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["access_token"]
+
+    org_id = resp.json()["user"]["org_id"]
+    org = await db.get(Organization, uuid.UUID(org_id))
+    assert org.is_active is False
+
+
+# ── org.is_active enforcement ────────────────────────────────────────────
+
+async def test_launch_campaign_rejected_when_org_inactive(client, db):
+    org = Organization(name="Suspended Org", slug=f"org-{uuid.uuid4().hex[:8]}", is_active=False)
+    db.add(org)
+    await db.flush()
+    user = User(
+        org_id=org.id, email=f"admin-{uuid.uuid4().hex[:8]}@acme.test",
+        hashed_password=hash_password("admin-pw-123"), full_name="Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    db.add(user)
+    agent = AgentTemplate(org_id=org.id, created_by_id=user.id, name="Bot", voice_provider=VoiceProvider.SARVAM)
+    db.add(agent)
+    await db.flush()
+    campaign = Campaign(org_id=org.id, agent_template_id=agent.id, name="Test Campaign")
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+
+    resp = await client.post(
+        f"/api/campaigns/{campaign.id}/launch",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+# ── SuperAdmin plan auto-sync ────────────────────────────────────────────
+
+async def test_create_plan_auto_syncs_razorpay_plan(client, db):
+    _admin, token = await _make_platform_admin(db)
+
+    with patch("app.api.platform.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_synced_123")):
+        resp = await client.post(
+            "/api/platform/plans",
+            json={
+                "name": "Starter",
+                "price_minor": 499_900,
+                "monthly_call_quota": 500,
+                "max_concurrent_calls": 3,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 201
+
+    from sqlalchemy import select as _select
+    plan = await db.scalar(_select(Plan).where(Plan.name == "Starter"))
+    assert plan.razorpay_plan_id == "plan_synced_123"
+
+
+async def test_update_plan_price_change_resyncs_razorpay_plan(client, db):
+    _admin, token = await _make_platform_admin(db)
+    plan = await _make_plan(db, name="Starter", price_minor=499_900, razorpay_plan_id="plan_old_123")
+    await db.commit()
+
+    with patch("app.api.platform.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new_456")) as mock_sync:
+        resp = await client.patch(
+            f"/api/platform/plans/{plan.id}",
+            json={"price_minor": 599_900},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["price_minor"] == 599_900
+    mock_sync.assert_awaited_once()
+
+    await db.refresh(plan)
+    assert plan.razorpay_plan_id == "plan_new_456"

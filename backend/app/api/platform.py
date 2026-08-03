@@ -35,6 +35,7 @@ from app.core.exceptions import (
     ValidationError as AppValidationError,
 )
 from app.core.plan_features import is_voice_cloning_allowed, is_voice_provider_allowed
+from app.core.razorpay_client import RazorpayError, sync_plan_to_razorpay
 from app.core.security import create_platform_token, verify_password
 from app.database import check_db_health, get_db
 from app.storage.backend import get_storage
@@ -92,6 +93,28 @@ def _to_plan_out(p: Plan) -> PlanOut:
         is_highlighted=p.is_highlighted,
         marketing_bullets=p.marketing_bullets,
     )
+
+
+def _plan_price_signature(plan: Plan) -> tuple[int, str]:
+    effective = plan.discount_price_minor if plan.discount_price_minor is not None else plan.price_minor
+    return (effective, plan.currency)
+
+
+async def _sync_razorpay_plan_best_effort(plan: Plan) -> None:
+    """
+    Fully automated Razorpay Plan sync, mirroring this project's established
+    "superadmin never touches the provider's own console" philosophy (same
+    as the Vobiz/LiveKit inbound-calling automation). Best-effort: a Razorpay
+    failure (e.g. keys not configured yet) must never block saving the plan
+    itself -- billing/checkout also calls sync_plan_to_razorpay lazily, so an
+    unsynced plan self-heals on first real checkout attempt.
+    """
+    if plan.is_custom_pricing:
+        return
+    try:
+        plan.razorpay_plan_id = await sync_plan_to_razorpay(plan)
+    except RazorpayError as exc:
+        log.warning("razorpay_plan_sync_failed", plan_id=str(plan.id), error=str(exc))
 
 
 async def _get_or_create_cost_settings(db: AsyncSession) -> PlatformCostSettings:
@@ -417,6 +440,7 @@ async def create_plan(
         target_type="plan",
         target_id=plan.id,
     ))
+    await _sync_razorpay_plan_best_effort(plan)
     await db.commit()
     await db.refresh(plan)
     return _to_plan_out(plan)
@@ -432,6 +456,8 @@ async def update_plan(
     plan = await db.get(Plan, plan_id)
     if not plan:
         raise NotFoundError("Plan not found")
+
+    old_signature = _plan_price_signature(plan)
 
     if body.name is not None:
         plan.name = body.name
@@ -465,6 +491,12 @@ async def update_plan(
     if body.marketing_bullets is not None:
         plan.marketing_bullets = body.marketing_bullets
 
+    # Razorpay Plans are immutable -- a price/currency change (or switching to
+    # custom pricing) invalidates the mirrored id so the next sync creates a
+    # fresh Razorpay Plan rather than silently keeping the old rate.
+    if plan.is_custom_pricing or _plan_price_signature(plan) != old_signature:
+        plan.razorpay_plan_id = None
+
     db.add(AuditLog(
         actor_type="platform_admin",
         actor_id=admin.id,
@@ -473,6 +505,7 @@ async def update_plan(
         target_type="plan",
         target_id=plan.id,
     ))
+    await _sync_razorpay_plan_best_effort(plan)
 
     await db.commit()
     await db.refresh(plan)

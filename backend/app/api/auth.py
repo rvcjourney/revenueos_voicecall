@@ -37,7 +37,6 @@ _bearer_optional = HTTPBearer(auto_error=False)
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    raise ConflictError("Registration is currently closed. Contact the administrator.")
     existing = await db.scalar(select(User.id).where(User.email == body.email))
     if existing:
         raise ConflictError("Email already registered")
@@ -51,6 +50,12 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         slug=slug,
         phone=body.phone,
         sip_caller_id=settings.DEFAULT_SIP_CALLER_ID,
+        # Self-serve orgs start suspended until a Razorpay subscription
+        # payment succeeds — the webhook (POST /webhooks/razorpay:
+        # subscription.activated/charged) flips this true. Orgs a superadmin
+        # creates directly (app/api/platform.py) are unaffected by this and
+        # keep the column's normal default of active.
+        is_active=False,
     )
     db.add(org)
     await db.flush()

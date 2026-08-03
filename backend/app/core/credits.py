@@ -71,19 +71,19 @@ async def resolve_org_credit_price_cents(db: AsyncSession, org_id: UUID) -> int:
     return plan.credit_price_cents if plan else 0
 
 
-async def reset_credit_period_if_stale(
-    db: AsyncSession, org: Organization, *, now: datetime | None = None
-) -> bool:
+async def reset_credit_period(db: AsyncSession, org: Organization, *, now: datetime | None = None) -> None:
     """
-    Reset credits_used_this_period to 0 once last_credit_reset_at is more than
-    CREDIT_PERIOD_DAYS old. A fresh period also clears any mid-period proration
-    blend, since the new period runs at the (possibly new) plan's full rate.
-    Returns True if a reset happened. Caller is responsible for committing.
+    Unconditionally reset credits_used_this_period to 0 and clear any
+    mid-period proration blend, since the new period runs at the (possibly
+    new) plan's full rate. Caller is responsible for committing.
+
+    Called two ways: lazily via reset_credit_period_if_stale() below (the
+    time-based fallback for orgs with no payment provider), and directly by
+    the Razorpay webhook handler (app/api/webhooks.py) on subscription.charged,
+    since a real charge succeeding is a more precise trigger than a rolling
+    30-day timer.
     """
     now = now or datetime.now(timezone.utc)
-    if now - org.last_credit_reset_at < timedelta(days=CREDIT_PERIOD_DAYS):
-        return False
-
     org.credits_used_this_period = 0
     org.last_credit_reset_at = now
 
@@ -91,6 +91,20 @@ async def reset_credit_period_if_stale(
     if sub is not None and sub.prorated_credits_override is not None:
         sub.prorated_credits_override = None
 
+
+async def reset_credit_period_if_stale(
+    db: AsyncSession, org: Organization, *, now: datetime | None = None
+) -> bool:
+    """
+    Reset credits_used_this_period to 0 once last_credit_reset_at is more than
+    CREDIT_PERIOD_DAYS old. Returns True if a reset happened. Caller is
+    responsible for committing.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now - org.last_credit_reset_at < timedelta(days=CREDIT_PERIOD_DAYS):
+        return False
+
+    await reset_credit_period(db, org, now=now)
     return True
 
 

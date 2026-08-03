@@ -51,6 +51,31 @@ export function useBillingCurrent() {
   return useQuery({ queryKey: ["billing-current"], queryFn: () => billingApi.current().then((r) => r.data) });
 }
 
+export function useCheckout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (planId: string) => billingApi.checkout(planId).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
+export function useVerifyPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) =>
+      billingApi.verifyPayment(data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
+export function useCancelSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => billingApi.cancel().then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
 // ── Folders ──────────────────────────────────────────────────────────────
 export function useFolders() {
   return useQuery({
@@ -63,14 +88,6 @@ export function useCreateFolder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { name: string; color?: string }) => foldersApi.create(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["folders"] }),
-  });
-}
-
-export function useDeleteFolder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => foldersApi.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["folders"] }),
   });
 }
@@ -196,14 +213,6 @@ export function useAgents() {
   });
 }
 
-export function useAgent(id: string | undefined) {
-  return useQuery({
-    queryKey: ["agent", id],
-    queryFn: () => agentsApi.get(id!).then((r) => r.data),
-    enabled: !!id,
-  });
-}
-
 export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
@@ -233,13 +242,6 @@ export function useRequestAgentAccess() {
   return useMutation({
     mutationFn: (id: string) => agentsApi.requestAccess(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
-  });
-}
-
-export function useMyCreationRequests() {
-  return useQuery({
-    queryKey: ["my-creation-requests"],
-    queryFn: () => agentsApi.myCreationRequests().then((r) => r.data),
   });
 }
 
@@ -311,14 +313,6 @@ export function useMyTrunks() {
   return useQuery({
     queryKey: ["my-trunks"],
     queryFn: () => sipTrunksApi.my().then((r) => unwrapList(r.data)),
-  });
-}
-
-export function useTrunkCapacity() {
-  return useQuery({
-    queryKey: ["trunk-capacity"],
-    queryFn: () => sipTrunksApi.capacity().then((r) => r.data),
-    refetchInterval: 15_000,
   });
 }
 

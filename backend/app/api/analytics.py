@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import Integer, cast, Date, func, select
+from sqlalchemy import cast, Date, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user

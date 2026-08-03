@@ -57,16 +57,6 @@ class ValidationError(AppError):
         self.errors: list[dict[str, Any]] = errors or []
 
 
-class RateLimitError(AppError):
-    """HTTP 429."""
-    code = "RATE_LIMITED"
-    message = "Too many requests. Please slow down."
-
-    def __init__(self, message: str | None = None, retry_after: int = 60) -> None:
-        super().__init__(message)
-        self.retry_after = retry_after
-
-
 class QuotaExceededError(AppError):
     """HTTP 402 — org has exceeded its monthly call quota."""
     code = "QUOTA_EXCEEDED"

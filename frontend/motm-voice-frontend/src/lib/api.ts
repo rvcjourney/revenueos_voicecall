@@ -15,6 +15,7 @@ import type {
   CampaignContact,
   CampaignCreate,
   CampaignFolder,
+  CheckoutResponse,
   ClonedVoice,
   ConcurrencyUsage,
   CreditUsage,
@@ -29,6 +30,7 @@ import type {
   OrgStats,
   PublicPlan,
   SipTrunk,
+  VerifyPaymentRequest,
   SipTrunkAssignment,
   TrunkCapacity,
   User,
@@ -203,6 +205,10 @@ export const plansApi = {
 
 export const billingApi = {
   current: () => api.get<BillingCurrent>("/api/billing/current"),
+  checkout: (planId: string) => api.post<CheckoutResponse>("/api/billing/checkout", { plan_id: planId }),
+  verifyPayment: (data: VerifyPaymentRequest) =>
+    api.post<{ verified: boolean }>("/api/billing/verify-payment", data),
+  cancel: () => api.post<{ status: string }>("/api/billing/cancel"),
 };
 
 // ── Voice cloning ────────────────────────────────────────────────────────

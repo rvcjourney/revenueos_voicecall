@@ -55,3 +55,11 @@ class Plan(Base, TimestampMixin):
     marketing_bullets: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+
+    # Mirrors this plan's current price as a Razorpay Plan object (see
+    # app/core/razorpay_client.py). Razorpay Plans are immutable, so this id
+    # stays pinned to whatever price was active when it was created — a later
+    # price/discount change creates a NEW Razorpay Plan (existing subscribers
+    # keep their original rate until they explicitly change plans). Null for
+    # is_custom_pricing plans, which have no fixed price to subscribe to.
+    razorpay_plan_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
