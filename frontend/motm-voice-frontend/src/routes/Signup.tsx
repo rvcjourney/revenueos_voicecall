@@ -11,9 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PlanPicker } from "@/components/billing/PlanPicker";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
-import { authApi } from "@/lib/api";
+import { useCheckout, useVerifyPayment } from "@/lib/hooks";
+import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
+import type { PublicPlan } from "@/lib/types";
 
 const memberSchema = z.object({
   full_name: z.string().min(2, "Enter your full name"),
@@ -134,8 +137,18 @@ function JoinTeamForm({ onSuccess }: { onSuccess: (values: MemberValues) => Prom
 }
 
 function CreateOrgForm() {
+  const { registerOrg } = useAuth();
+  const navigate = useNavigate();
+  const checkout = useCheckout();
+  const verifyPayment = useVerifyPayment();
+
   const [serverError, setServerError] = useState<string | null>(null);
   const [registrationClosed, setRegistrationClosed] = useState(false);
+  const [step, setStep] = useState<"form" | "plan">("form");
+  const [orgValues, setOrgValues] = useState<OrgValues | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
+  const [paying, setPaying] = useState(false);
+
   const {
     register,
     handleSubmit,
@@ -146,14 +159,54 @@ function CreateOrgForm() {
     setServerError(null);
     setRegistrationClosed(false);
     try {
-      await authApi.register(values);
-      toast.success("Organization created — check your email to log in.");
+      const user = await registerOrg(values);
+      setOrgValues(values);
+      setStep("plan");
+      toast.success(`Welcome, ${user.full_name}! Pick a plan to activate ${user.org_name}.`);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 409) {
         setRegistrationClosed(true);
         return;
       }
       setServerError(apiErrorMessage(err, "Couldn't create your organization."));
+    }
+  }
+
+  async function startPayment() {
+    if (!selectedPlan) {
+      toast.error("Pick a plan first");
+      return;
+    }
+    setPaying(true);
+    try {
+      const result = await checkout.mutateAsync(selectedPlan.id);
+      if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        await openRazorpayCheckout({
+          key: result.razorpay_key_id,
+          subscription_id: result.subscription_id,
+          name: "Talkryn",
+          description: `${result.plan_name} plan`,
+          prefill: { name: orgValues?.full_name, email: orgValues?.email, contact: orgValues?.phone },
+          theme: { color: "#6366f1" },
+          handler: async (response) => {
+            try {
+              await verifyPayment.mutateAsync(response);
+            } finally {
+              toast.success("Payment received — activating your account...");
+              navigate("/dashboard");
+            }
+          },
+          modal: {
+            ondismiss: () => setPaying(false),
+          },
+        });
+      } else {
+        toast.success("Plan updated");
+        navigate("/dashboard");
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't start checkout"));
+      setPaying(false);
     }
   }
 
@@ -170,6 +223,31 @@ function CreateOrgForm() {
         </div>
         <Button variant="outline" onClick={() => setRegistrationClosed(false)}>
           Back to form
+        </Button>
+      </div>
+    );
+  }
+
+  if (step === "plan") {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Pick a plan to activate your organization. You're signed in already — you can also do this later from
+          Billing.
+        </p>
+        <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} />
+        <Button
+          variant="gradient"
+          className="w-full"
+          size="lg"
+          onClick={startPayment}
+          disabled={!selectedPlan || paying}
+        >
+          {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+          Continue to payment
+        </Button>
+        <Button variant="ghost" className="w-full" onClick={() => navigate("/dashboard")}>
+          Skip for now
         </Button>
       </div>
     );

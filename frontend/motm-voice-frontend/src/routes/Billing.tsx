@@ -8,7 +8,6 @@ import {
   CreditCard,
   ListChecks,
   Loader2,
-  Plus,
   Receipt,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,8 +18,14 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/platform/ConfirmDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { useBillingCurrent, useCreditUsage } from "@/lib/hooks";
+import { PlanPicker } from "@/components/billing/PlanPicker";
+import { useAuth } from "@/lib/auth";
+import { apiErrorMessage } from "@/lib/api";
+import { useBillingCurrent, useCancelSubscription, useCheckout, useCreditUsage, useVerifyPayment } from "@/lib/hooks";
+import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
+import type { PublicPlan } from "@/lib/types";
 
 function notImplemented(action: string) {
   toast.info(`${action} isn't connected yet — this is a UI preview only.`);
@@ -33,6 +38,7 @@ function formatPrice(priceMinor: number, currency: string) {
 }
 
 export default function Billing() {
+  const { user } = useAuth();
   const credits = useCreditUsage();
   const billing = useBillingCurrent();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
@@ -46,6 +52,7 @@ export default function Billing() {
         year: "numeric",
       })
     : null;
+  const isActiveSubscription = billing.data?.subscription_status === "active";
 
   return (
     <div className="space-y-6">
@@ -83,12 +90,11 @@ export default function Billing() {
               </div>
             )}
             <div className="flex items-center gap-2">
-              <Badge variant="success">
-                <Check className="h-3 w-3" /> {billing.data?.subscription_status ?? "Active"}
+              <Badge variant={isActiveSubscription ? "success" : "warning"}>
+                <Check className="h-3 w-3" /> {billing.data?.subscription_status ?? "No subscription"}
               </Badge>
-              <Button variant="outline" size="sm" onClick={() => notImplemented("Changing plans")}>
-                Change plan
-              </Button>
+              <ChangePlanDialog currentPlanId={plan?.id} userName={user?.full_name} userEmail={user?.email} />
+              {isActiveSubscription && <CancelSubscriptionButton />}
             </div>
           </div>
 
@@ -114,14 +120,15 @@ export default function Billing() {
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="flex items-center justify-between gap-3">
-            <p className="flex items-center gap-2 text-sm font-medium">
-              <CreditCard className="h-4 w-4 text-muted-foreground" /> Payment method
-            </p>
-            <AddPaymentMethodDialog />
-          </div>
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <CreditCard className="h-4 w-4 text-muted-foreground" /> Payment method
+          </p>
           <div className="flex items-center justify-between rounded-lg border border-dashed border-border px-3 py-3">
-            <p className="text-sm text-muted-foreground">No payment method on file</p>
+            <p className="text-sm text-muted-foreground">
+              {isActiveSubscription
+                ? "Managed securely by Razorpay — your card/UPI details are never stored on our servers."
+                : "No payment method on file yet — set one up via Change plan above."}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -165,7 +172,7 @@ export default function Billing() {
             <Receipt className="h-4 w-4 text-muted-foreground" /> Invoice history
           </p>
           <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-            No invoices yet — they'll appear here after your first billing cycle.
+            Razorpay emails you a receipt after every successful charge. In-app invoice history isn't built yet.
           </div>
         </CardContent>
       </Card>
@@ -176,15 +183,15 @@ export default function Billing() {
             <ListChecks className="h-4 w-4 text-muted-foreground" /> What's needed to enable payments
           </p>
           <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            <ChecklistItem done={false} label="Payment method on file" />
+            <ChecklistItem done={isActiveSubscription} label="Payment method on file" />
             <ChecklistItem done={false} label="Billing email confirmed" />
             <ChecklistItem done={false} label="Billing address" />
             <ChecklistItem done label="Organization verified" />
             <ChecklistItem done={false} label="Tax ID (if applicable)" />
           </div>
           <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            These are the details typically required before charges can be processed. Payment processing itself isn't
-            connected yet — this page is a UI preview only.
+            These are the details typically required before charges can be processed. Billing email/address/Tax ID
+            aren't collected yet — this section is a UI preview only for those.
           </p>
         </CardContent>
       </Card>
@@ -205,57 +212,108 @@ function ChecklistItem({ done, label }: { done: boolean; label: string }) {
   );
 }
 
-function AddPaymentMethodDialog() {
+function ChangePlanDialog({
+  currentPlanId,
+  userName,
+  userEmail,
+}: {
+  currentPlanId?: string;
+  userName?: string;
+  userEmail?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
+  const [paying, setPaying] = useState(false);
+  const checkout = useCheckout();
+  const verifyPayment = useVerifyPayment();
 
-  function handleSave() {
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
-      setOpen(false);
-      notImplemented("Adding a payment method");
-    }, 400);
+  async function confirm() {
+    if (!selectedPlan) return;
+    setPaying(true);
+    try {
+      const result = await checkout.mutateAsync(selectedPlan.id);
+      if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        await openRazorpayCheckout({
+          key: result.razorpay_key_id,
+          subscription_id: result.subscription_id,
+          name: "Talkryn",
+          description: `${result.plan_name} plan`,
+          prefill: { name: userName, email: userEmail },
+          theme: { color: "#6366f1" },
+          handler: async (response) => {
+            try {
+              await verifyPayment.mutateAsync(response);
+            } finally {
+              toast.success("Payment received — your plan is updating");
+              setOpen(false);
+            }
+          },
+          modal: { ondismiss: () => setPaying(false) },
+        });
+      } else {
+        toast.success("Plan updated");
+        setOpen(false);
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't start checkout"));
+    } finally {
+      setPaying(false);
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
-          <Plus className="h-3.5 w-3.5" /> Add payment method
+          Change plan
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Add payment method</DialogTitle>
+          <DialogTitle>Choose a plan</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Cardholder name</Label>
-            <Input placeholder="Full name on card" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Card number</Label>
-            <Input placeholder="1234 1234 1234 1234" inputMode="numeric" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Expiry</Label>
-              <Input placeholder="MM/YY" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>CVV</Label>
-              <Input placeholder="123" inputMode="numeric" />
-            </div>
-          </div>
-        </div>
+        <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} excludePlanId={currentPlanId} />
         <DialogFooter>
-          <Button variant="gradient" onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save card
+          <Button variant="gradient" onClick={confirm} disabled={!selectedPlan || paying}>
+            {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+            Continue to payment
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CancelSubscriptionButton() {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const cancel = useCancelSubscription();
+
+  async function handleConfirm() {
+    try {
+      await cancel.mutateAsync();
+      toast.success("Subscription will end at the close of the current billing cycle");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't cancel subscription"));
+    } finally {
+      setConfirmOpen(false);
+    }
+  }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setConfirmOpen(true)}>
+        Cancel subscription
+      </Button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Cancel your subscription?"
+        description="You'll keep access until the end of the current billing cycle, then your organization will be suspended."
+        confirmLabel="Cancel subscription"
+        variant="destructive"
+        loading={cancel.isPending}
+        onConfirm={handleConfirm}
+      />
+    </>
   );
 }

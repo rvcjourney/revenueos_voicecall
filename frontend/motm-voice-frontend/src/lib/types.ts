@@ -328,6 +328,21 @@ export interface BillingCurrent {
   current_period_end: string | null;
 }
 
+export interface CheckoutResponse {
+  action: "new" | "change";
+  subscription_id: string | null;
+  razorpay_key_id: string | null;
+  plan_name: string;
+  amount_minor: number;
+  currency: string;
+}
+
+export interface VerifyPaymentRequest {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+}
+
 export interface AdminUser {
   id: string;
   email: string;

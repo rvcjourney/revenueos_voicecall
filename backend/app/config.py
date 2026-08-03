@@ -21,6 +21,7 @@ _SECRET_FIELDS = frozenset({
     "MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "VOBIZ_PASSWORD",
     "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
+    "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
 })
 
 
@@ -119,6 +120,13 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = Field(...)
     GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROQ_SUMMARY_MODEL: str = "llama-3.1-70b-versatile"
+
+    # ── Payments (Razorpay) ───────────────────────────────────────────────────
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    # Secret configured on the Razorpay Dashboard webhook (Settings -> Webhooks),
+    # used to verify X-Razorpay-Signature on incoming webhook requests.
+    RAZORPAY_WEBHOOK_SECRET: str = ""
 
     # ── Storage ───────────────────────────────────────────────────────────────
     STORAGE_BACKEND: Literal["minio", "s3"] = "minio"

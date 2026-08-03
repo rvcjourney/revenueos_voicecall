@@ -56,6 +56,7 @@ from app.models.campaign import Campaign, CampaignContact, CampaignStatus, Conta
 from app.models.call import Call, CallDirection, CallEvent, CallOutcome, CallStatus
 from app.models.dnc import DoNotCallEntry, SystemDncEntry
 from app.models.sip import SipTrunk
+from app.models.user import Organization
 from app.workers.celery_app import celery_app
 
 log = structlog.get_logger(__name__)
@@ -828,6 +829,21 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
         if campaign.status != CampaignStatus.RUNNING:
             log.info("campaign_not_running", campaign_id=campaign_id, status=campaign.status)
             return
+
+        # Defensive re-check: the launch endpoint already blocks starting a
+        # campaign for a suspended org, but a subscription can lapse mid-run
+        # (Razorpay webhook: subscription.halted/cancelled). Pause rather than
+        # silently stop so it resumes on its own once the org reactivates.
+        async with AsyncSessionLocal() as session:
+            org = await session.get(Organization, campaign.org_id)
+            if org and not org.is_active:
+                async with session.begin():
+                    await session.execute(
+                        update(Campaign).where(Campaign.id == campaign.id).values(status=CampaignStatus.PAUSED)
+                    )
+                log.warning("campaign_paused_org_inactive", campaign_id=campaign_id, org_id=str(campaign.org_id))
+                return
+
         if not _in_calling_window(campaign):
             log.info("outside_calling_window_waiting", campaign_id=campaign_id)
             await _refresh_lock(campaign_id)  # prevent lock expiry while waiting for window

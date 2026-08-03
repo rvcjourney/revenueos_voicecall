@@ -51,6 +51,31 @@ export function useBillingCurrent() {
   return useQuery({ queryKey: ["billing-current"], queryFn: () => billingApi.current().then((r) => r.data) });
 }
 
+export function useCheckout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (planId: string) => billingApi.checkout(planId).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
+export function useVerifyPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) =>
+      billingApi.verifyPayment(data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
+export function useCancelSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => billingApi.cancel().then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
+  });
+}
+
 // ── Folders ──────────────────────────────────────────────────────────────
 export function useFolders() {
   return useQuery({

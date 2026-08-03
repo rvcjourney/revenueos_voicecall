@@ -12,12 +12,17 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user
-from app.core.exceptions import NotFoundError, ValidationError as AppValidationError, CampaignStateError
+from app.core.exceptions import (
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError as AppValidationError,
+    CampaignStateError,
+)
 from app.database import get_db
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
 from app.models.call import Call, CallOutcome
 from app.models.sip import SipTrunk, UserSipTrunk
-from app.models.user import User
+from app.models.user import Organization, User
 from app.schemas.campaign import (
     CampaignCreate,
     CampaignListResponse,
@@ -336,6 +341,12 @@ async def launch_campaign(
 ):
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
+
+    org = await db.get(Organization, token.org_id)
+    if org and not org.is_active:
+        raise PermissionDeniedError(
+            "Your organization's subscription is inactive — visit Billing to reactivate before launching campaigns."
+        )
 
     if campaign.status == CampaignStatus.RUNNING:
         # Campaign is already RUNNING but dispatcher may have died — clear stale

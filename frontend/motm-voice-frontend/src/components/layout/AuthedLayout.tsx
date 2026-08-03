@@ -3,6 +3,7 @@ import { useAuth } from "@/lib/auth";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { PageLoader } from "@/components/shared/PageLoader";
+import { SubscriptionBanner } from "@/components/billing/SubscriptionBanner";
 
 export function AuthedLayout() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -24,6 +25,7 @@ export function AuthedLayout() {
           <TopBar />
           <main className="min-w-0 flex-1 overflow-y-auto rounded-2xl border border-border bg-card/70 px-4 py-6 shadow-[var(--shadow-card)] backdrop-blur-sm sm:px-6 lg:px-8 lg:py-8">
             <div className="mx-auto max-w-7xl">
+              <SubscriptionBanner />
               <Outlet />
             </div>
           </main>

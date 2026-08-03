@@ -48,6 +48,9 @@ aiohttp==3.11.11
 # ── LiveKit SDK (client library for LiveKit Cloud API) ────────────────────────
 livekit-api>=0.8.0
 
+# ── Payments (Razorpay) ────────────────────────────────────────────────────────
+razorpay==2.0.1
+
 # ── Utilities ──────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1
 certifi==2024.12.14
