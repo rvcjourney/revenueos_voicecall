@@ -23,6 +23,7 @@ import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
 import { PricingSection } from "@/components/marketing/PricingSection";
 import { SoundWave } from "@/components/shared/SoundWave";
+import { AIAvatar } from "@/components/shared/AIAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -182,9 +183,7 @@ export default function Landing() {
           <div className="animate-fade-up glass relative rounded-2xl p-6" style={{ animationDelay: "0.15s" }}>
             <div className="flex items-center justify-between border-b border-border/60 pb-4">
               <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[image:var(--gradient-primary)]">
-                  <PhoneForwarded className="h-4 w-4 text-primary-foreground" />
-                </span>
+                <AIAvatar size="sm" />
                 <div>
                   <p className="text-sm font-medium">Aniket — AI Agent</p>
                   <p className="text-xs text-muted-foreground">Speaking with Rajesh Sharma</p>
