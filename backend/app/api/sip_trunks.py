@@ -448,7 +448,14 @@ async def setup_inbound(
                 lk_api.CreateSIPInboundTrunkRequest(
                     trunk=lk_api.SIPInboundTrunkInfo(
                         name=f"vobiz-inbound-{did}",
-                        numbers=[did],
+                        # LiveKit matches this list against the exact digit string
+                        # Vobiz sends in the INVITE's destination number, and Vobiz
+                        # doesn't guarantee which of "+91XXXXXXXXXX" / "91XXXXXXXXXX"
+                        # it uses -- registering both formats is the documented way
+                        # to cover that ambiguity (confirmed with Vobiz support after
+                        # a real inbound call 404'd on a trunk that only had the "+"
+                        # form registered).
+                        numbers=[did, did.lstrip("+")],
                     )
                 )
             )
