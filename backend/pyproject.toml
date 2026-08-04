@@ -23,7 +23,7 @@ env = [
     "ENVIRONMENT=development",
     "SECRET_KEY=test-secret-key-that-is-at-least-32-chars-long",
     "AGENT_WEBHOOK_SECRET=test-webhook-secret-also-at-least-32-chars",
-    "FERNET_KEY=zJ8vN2vQ8h1t5r3xW0yK6bC4dF7gH9jL2mP5sT8uV1w=",
+    "FERNET_KEY=fNWjYSh9RDQMZEx6xQ8g0QIWVHGAz8bEUI72mJLGmIo=",
     "DATABASE_URL=postgresql://motm:test@localhost:5432/motmvoice_test",
     "DB_SSL_REQUIRED=false",
     "LIVEKIT_URL=wss://test.livekit.cloud",

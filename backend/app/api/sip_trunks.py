@@ -463,7 +463,7 @@ async def setup_inbound(
                     ),
                     room_config=lk_api.RoomConfiguration(
                         metadata=json.dumps({"call_type": "inbound", "sip_trunk_id": str(trunk.id)}),
-                        agents=[lk_api.RoomAgentDispatch(agent_name="voice-call-agent")],
+                        agents=[lk_api.RoomAgentDispatch(agent_name=settings.LIVEKIT_AGENT_NAME)],
                     ),
                 )
             )

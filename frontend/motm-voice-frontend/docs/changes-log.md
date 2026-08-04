@@ -72,6 +72,31 @@ The Phone Numbers page (under Admin) didn't look attractive — you asked for a 
 
 ---
 
+## 6. Calls — filling in the "Extracted data" tab
+
+**What you asked for:**
+On a call's detail page, the "Extracted data" tab always said "No structured data." You asked for it to actually show useful information pulled from the call — the caller's email, phone number, and what they want (their requirements) — without changing any existing screen, API, or feature.
+
+**What was done:**
+- Found the reason the tab was always empty: nothing in the whole app ever filled it in. The spot for this data existed in the database and the screen already knew how to display it — there was just no code writing anything into it.
+- After each call ends, the voice agent already sends the call's outcome (interested / not interested / etc.) and a short summary to the backend using AI (Groq). We extended that same step to also ask the AI to pull out, only if the caller actually said it:
+  - Caller's name
+  - Caller's email
+  - Caller's phone/callback number
+  - What they want (their requirements — product, design, service, etc.)
+  - Budget, if mentioned
+  - Whether they're the decision-maker, if that was clear
+- The AI is told to leave a field blank rather than guess — so a short call with no useful info just shows fewer fields, never made-up ones.
+- Added a small backend field so this new information can travel from the agent to the database, and made the database save it. Nothing about how outcomes, summaries, or transcripts are saved was changed — this was only added on top.
+- The screen itself needed zero changes — it already knew how to display whatever fields show up in this data, so the new fields just appear automatically once a call produces them.
+- Per your instruction, the wording never names which AI voice/speech provider is used anywhere.
+
+**How to see it working:** place or wait for a new call where the caller actually says their email/number/requirements out loud — very short calls (under ~8 words from the caller) are skipped by design, same as before this change.
+
+---
+
 ## Summary
 
-Across all of the above, the rule you set was the same every time: **change how things look, not how they work.** No API calls, data logic, or existing features were altered — only layout, spacing, icons, and visual structure.
+Across entries 1–5, the rule you set was the same every time: **change how things look, not how they work.** No API calls, data logic, or existing features were altered — only layout, spacing, icons, and visual structure.
+
+Entry 6 is different — it's a real logic addition (the AI now extracts and saves new information after each call), but it was still built to leave every existing feature, screen, and API response untouched.

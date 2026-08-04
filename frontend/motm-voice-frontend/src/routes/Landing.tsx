@@ -147,8 +147,8 @@ export default function Landing() {
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="dot-grid absolute inset-0" />
-        <div className="relative mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-8 lg:py-28">
-          <div className="animate-fade-up min-w-0 space-y-7">
+        <div className="relative mx-auto grid max-w-7xl grid-cols-1 gap-10 px-4 py-10 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-8 lg:py-14">
+          <div className="animate-fade-up min-w-0 space-y-5">
             <Badge variant="success" className="max-w-full">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current animate-pulse-glow" />
               <span className="min-w-0 whitespace-normal">Live now — 1,200+ AI sales calls running across timezones</span>
@@ -180,8 +180,8 @@ export default function Landing() {
             </div>
           </div>
 
-          <div className="animate-fade-up glass relative rounded-2xl p-6" style={{ animationDelay: "0.15s" }}>
-            <div className="flex items-center justify-between border-b border-border/60 pb-4">
+          <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.15s" }}>
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-3">
                 <AIAvatar size="sm" />
                 <div>
@@ -213,7 +213,7 @@ export default function Landing() {
                 <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-glow" /> Live 02:14
               </Badge>
             </div>
-            <div className="flex justify-center py-6">
+            <div className="flex justify-center py-4">
               <SoundWave />
             </div>
             <div className="space-y-3">

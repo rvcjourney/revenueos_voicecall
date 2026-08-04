@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     LIVEKIT_URL: str = Field(...)
     LIVEKIT_API_KEY: str = Field(...)
     LIVEKIT_API_SECRET: str = Field(...)
+    # Worker identity dispatches are routed to (must match agent/config.py's own
+    # LIVEKIT_AGENT_NAME on whichever process actually runs agent.py). Overridden to
+    # a distinct value (e.g. "voice-call-agent-dev") in local/dev .env files so a
+    # developer's local agent process and the production VPS agent -- both able to
+    # register against the same LiveKit Cloud project -- never receive each other's
+    # dispatches; LiveKit round-robins across every worker sharing one agent_name.
+    LIVEKIT_AGENT_NAME: str = "voice-call-agent"
     # This LiveKit Cloud project's SIP hostname (Settings -> SIP in the LiveKit
     # dashboard) -- same for every org, used as the destination Vobiz routes
     # inbound calls to. LiveKit itself disambiguates which org/number a call

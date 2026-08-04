@@ -10,6 +10,13 @@ load_dotenv()
 LIVEKIT_URL        = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY    = os.getenv("LIVEKIT_API_KEY", "")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
+# Must match the backend's own LIVEKIT_AGENT_NAME (app/config.py) -- set to a distinct
+# value (e.g. "voice-call-agent-dev") in a local .env so this process only ever
+# receives dispatches meant for it, never ones meant for another worker (e.g. the
+# production VPS agent) registered against the same LiveKit Cloud project under the
+# default name. Both would otherwise register as "voice-call-agent" and LiveKit would
+# round-robin dispatches across them unpredictably.
+LIVEKIT_AGENT_NAME = os.getenv("LIVEKIT_AGENT_NAME", "voice-call-agent")
 
 # ── ElevenLabs TTS ────────────────────────────────────────────────────────────
 ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
@@ -60,6 +67,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # ── Internal reporting ────────────────────────────────────────────────────────
 BACKEND_INTERNAL_URL = os.getenv("BACKEND_INTERNAL_URL", "http://localhost:8000")
 AGENT_WEBHOOK_SECRET = os.getenv("AGENT_WEBHOOK_SECRET", "")
+# Durable fallback for agent-report POSTs that fail after all retries are exhausted —
+# without this, a call's outcome/summary/transcript/extracted_data is lost forever
+# the moment the process exits (it only ever existed in memory). See
+# replay_failed_reports.py to resend everything logged here.
+FAILED_REPORTS_PATH = os.getenv("FAILED_REPORTS_PATH", "failed_reports.jsonl")
 
 # ── Startup validation ────────────────────────────────────────────────────────
 _REQUIRED = {

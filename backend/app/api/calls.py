@@ -5,6 +5,7 @@ from uuid import UUID
 
 import aiohttp
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ from app.database import get_db
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus, CallTranscript
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
+log = structlog.get_logger(__name__)
 router = APIRouter()
 
 
@@ -95,6 +97,7 @@ class AgentReportIn(BaseModel):
     # spoke. Distinguishes a genuine silent-system-failure from a normal conversation
     # outcome so it isn't misreported as e.g. "not_interested".
     error_message: str | None = None
+    extracted_data: dict = {}
 
 
 @router.post("/{call_id}/agent-report", status_code=status.HTTP_204_NO_CONTENT)
@@ -109,15 +112,52 @@ async def agent_report(
     valid_outcomes = {e.value for e in CallOutcome}
     outcome = body.outcome if body.outcome in valid_outcomes else "not_interested"
 
+    # Log field names only (never values) for extracted_data -- caller_email/caller_phone
+    # are PII and must not land in logs, but knowing *which* fields the agent sent lets us
+    # tell "Groq/agent sent nothing" apart from "backend dropped it" without a DB query.
+    log.info(
+        "agent_report_received",
+        call_id=str(call_id),
+        outcome_in=body.outcome,
+        outcome_used=outcome,
+        has_summary=bool(body.summary),
+        has_error_message=bool(body.error_message),
+        transcript_turns=len(body.transcript),
+        extracted_data_fields=sorted(body.extracted_data.keys()) if body.extracted_data else [],
+    )
+
     # Fetch the call to get campaign_id before updating
     call_row = (await db.execute(select(Call).where(Call.id == call_id))).scalar_one_or_none()
+    if call_row is None:
+        log.warning("agent_report_call_not_found", call_id=str(call_id))
 
     values: dict = {"outcome": outcome, "summary": body.summary or None}
     if body.error_message:
         values["status"] = CallStatus.FAILED
         values["error_message"] = body.error_message[:2000]
+    if body.extracted_data:
+        values["extracted_data"] = body.extracted_data
 
-    await db.execute(update(Call).where(Call.id == call_id).values(**values))
+    try:
+        await db.execute(update(Call).where(Call.id == call_id).values(**values))
+    except Exception as exc:
+        # get_db() rolls back and re-raises on any exception out of this function, so this
+        # log is purely to make the failure visible with call_id context -- it must not
+        # swallow the error, otherwise the agent would see a fake 204 success and never
+        # retry / persist to failed_reports.jsonl.
+        log.error(
+            "agent_report_db_write_failed",
+            call_id=str(call_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+    log.info(
+        "agent_report_saved",
+        call_id=str(call_id),
+        outcome=outcome,
+        extracted_data_written="extracted_data" in values,
+    )
 
     # Atomically increment campaign interested_count when outcome is interested
     if outcome == "interested" and call_row and call_row.campaign_id:
