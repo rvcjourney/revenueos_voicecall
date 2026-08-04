@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Check, Mic, X } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -15,7 +15,7 @@ import {
   usePlatformVoiceCloneRequests,
   useRejectPlatformVoiceCloneRequest,
 } from "@/lib/platformHooks";
-import { platformApiErrorMessage } from "@/lib/platformApi";
+import { platformApi, platformApiErrorMessage } from "@/lib/platformApi";
 import { formatDate } from "@/lib/utils";
 import { VOICE_CLONING_CONSENT_SCRIPT } from "@/lib/consentScript";
 import type { PlatformVoiceCloneRequest } from "@/lib/platformTypes";
@@ -68,6 +68,32 @@ export default function PlatformVoiceCloneRequests() {
   );
 }
 
+// <video>/<audio> src loads can't carry an Authorization header, and these
+// files live behind an authenticated proxy endpoint (MinIO itself is
+// internal-only — see backend/app/api/platform.py's voice-clone-requests
+// audio/video routes) — so fetch the bytes ourselves and hand the player
+// a blob: URL instead of the API path directly.
+function useAuthedMediaUrl(path: string): string | undefined {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    let objectUrl: string | undefined;
+    let cancelled = false;
+    platformApi
+      .get(path, { responseType: "blob" })
+      .then((res) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(res.data);
+        setUrl(objectUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path]);
+  return url;
+}
+
 const STATUS_VARIANT: Record<string, "warning" | "success" | "destructive"> = {
   pending: "warning",
   approved: "success",
@@ -82,6 +108,8 @@ function RequestCard({ request }: { request: PlatformVoiceCloneRequest }) {
   const [reason, setReason] = useState("");
 
   const isPending = request.status === "pending";
+  const videoBlobUrl = useAuthedMediaUrl(request.video_url);
+  const audioBlobUrl = useAuthedMediaUrl(request.audio_url);
 
   async function handleApprove() {
     try {
@@ -124,14 +152,14 @@ function RequestCard({ request }: { request: PlatformVoiceCloneRequest }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Consent video</p>
-            <video src={request.video_url} controls className="w-full rounded-lg border border-border" />
+            <video src={videoBlobUrl} controls className="w-full rounded-lg border border-border" />
             <p className="text-xs italic text-muted-foreground">
               Script: &ldquo;{VOICE_CLONING_CONSENT_SCRIPT}&rdquo;
             </p>
           </div>
           <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice sample</p>
-            <audio src={request.audio_url} controls className="w-full" />
+            <audio src={audioBlobUrl} controls className="w-full" />
           </div>
         </div>
 

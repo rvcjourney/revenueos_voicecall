@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from app.models.dnc import DoNotCallEntry, DNCReason
 from app.models.user import Organization, User, UserRole
 from app.schemas.agent import AgentAccessRequestOut, AgentCreationRequestAdminOut
 from app.schemas.auth import AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserOut
+from app.storage.backend import get_storage
 
 router = APIRouter()
 
@@ -531,16 +532,10 @@ async def list_agent_creation_requests(
     for r in rows:
         user = await db.get(User, r.user_id)
 
-        # Generate a presigned download URL if there's a file
-        file_url: str | None = None
-        if r.file_key:
-            try:
-                from app.storage.backend import get_storage
-                file_url = await get_storage().presigned_url(
-                    settings.BUCKET_EXPORTS, r.file_key, expiry=3600
-                )
-            except Exception:
-                pass
+        # Not a presigned MinIO URL: MinIO is internal-only (see docker-compose.yml),
+        # unreachable directly from a browser. This is this router's own proxy
+        # endpoint below, authenticated the same way as every other admin request.
+        file_url = f"/api/admin/agent-creation-requests/{r.id}/file" if r.file_key else None
 
         result.append(AgentCreationRequestAdminOut(
             id=str(r.id),
@@ -560,6 +555,23 @@ async def list_agent_creation_requests(
             key_points=r.key_points,
         ))
     return result
+
+
+@router.get("/agent-creation-requests/{request_id}/file")
+async def download_agent_creation_request_file(
+    request_id: UUID,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(AgentCreationRequest, request_id)
+    if not req or req.org_id != token.org_id or not req.file_key:
+        raise NotFoundError("File not found")
+    data = await get_storage().download(settings.BUCKET_EXPORTS, req.file_key)
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{req.file_name or "attachment"}"'},
+    )
 
 
 @router.patch("/agent-creation-requests/{request_id}/review", status_code=200)

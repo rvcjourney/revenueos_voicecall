@@ -79,7 +79,7 @@ export function apiErrorMessage(error: unknown, fallback = "Something went wrong
   return fallback;
 }
 
-async function downloadBlob(path: string, filename: string) {
+export async function downloadBlob(path: string, filename: string) {
   const token = localStorage.getItem(TOKEN_KEY);
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -282,6 +282,8 @@ export const adminApi = {
     api.get<AgentCreationRequestAdmin[]>("/api/admin/agent-creation-requests", { params: { status } }),
   reviewAgentCreationRequest: (id: string, admin_notes?: string) =>
     api.patch(`/api/admin/agent-creation-requests/${id}/review`, { admin_notes }),
+  downloadCreationRequestFile: (id: string, filename: string) =>
+    downloadBlob(`/api/admin/agent-creation-requests/${id}/file`, filename),
 };
 
 /** Normalizes list endpoints that may return either a bare array or { items, total }. */

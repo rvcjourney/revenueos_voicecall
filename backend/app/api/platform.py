@@ -16,7 +16,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -767,9 +767,12 @@ async def platform_health(
 async def _to_voice_clone_request_out(db: AsyncSession, req: VoiceCloneRequest) -> VoiceCloneRequestOut:
     org = await db.get(Organization, req.org_id)
     user = await db.get(User, req.created_by_id) if req.created_by_id else None
-    storage = get_storage()
-    audio_url = await storage.presigned_url(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key, expiry=3600)
-    video_url = await storage.presigned_url(settings.BUCKET_VOICE_CONSENT, req.consent_video_key, expiry=3600)
+    # Not a presigned MinIO URL: MinIO is internal-only (see docker-compose.yml),
+    # so a browser can never reach `http://minio:9000` directly. These paths are
+    # this router's own proxy endpoints below, authenticated the same way as
+    # every other platform-admin request.
+    audio_url = f"/api/platform/voice-clone-requests/{req.id}/audio"
+    video_url = f"/api/platform/voice-clone-requests/{req.id}/video"
 
     return VoiceCloneRequestOut(
         id=str(req.id),
@@ -807,6 +810,32 @@ async def list_voice_clone_requests(
         query.order_by(VoiceCloneRequest.created_at.desc()).limit(limit).offset(offset)
     )).scalars().all()
     return [await _to_voice_clone_request_out(db, r) for r in rows]
+
+
+@router.get("/voice-clone-requests/{request_id}/audio")
+async def get_voice_clone_request_audio(
+    request_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(VoiceCloneRequest, request_id)
+    if not req:
+        raise NotFoundError("Voice clone request not found")
+    data = await get_storage().download(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
+    return Response(content=data, media_type=req.audio_sample_content_type or "audio/mpeg")
+
+
+@router.get("/voice-clone-requests/{request_id}/video")
+async def get_voice_clone_request_video(
+    request_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await db.get(VoiceCloneRequest, request_id)
+    if not req:
+        raise NotFoundError("Voice clone request not found")
+    data = await get_storage().download(settings.BUCKET_VOICE_CONSENT, req.consent_video_key)
+    return Response(content=data, media_type=req.consent_video_content_type or "video/webm")
 
 
 @router.post("/voice-clone-requests/{request_id}/approve", response_model=VoiceCloneRequestOut)

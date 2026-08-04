@@ -484,9 +484,13 @@ function AgentCreationRequestsTab() {
 
               <div className="mt-auto flex items-center justify-between border-t border-border pt-3">
                 {r.file_url ? (
-                  <a href={r.file_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary hover:underline">
-                    View attached file
-                  </a>
+                  <button
+                    type="button"
+                    onClick={() => adminApi.downloadCreationRequestFile(r.id, r.file_name ?? "attachment")}
+                    className="text-xs font-medium text-primary hover:underline"
+                  >
+                    Download attached file
+                  </button>
                 ) : <span />}
                 {isPending && (
                   <Button size="sm" variant="outline" onClick={() => markReviewed(r.id)}>Mark reviewed</Button>
