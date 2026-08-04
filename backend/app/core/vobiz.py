@@ -259,6 +259,39 @@ async def unassign_vobiz_number(
         log.warning("vobiz_unassign_number_failed", error=str(exc))
 
 
+async def delete_vobiz_trunk(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    trunk_id: str,
+) -> None:
+    """
+    Delete an inbound (or outbound) trunk outright -- verified against Vobiz's
+    real API docs (DELETE /Account/{auth_id}/trunks/{trunk_id} -> 204), unlike
+    unassign_vobiz_number()'s guessed endpoint above. Used by inbound teardown
+    so re-running setup doesn't leave an orphaned trunk still holding the DID
+    (previously: unassign silently no-op'd, the old trunk lingered enabled
+    with the number still attached, and the freshly-created replacement trunk
+    got no number at all).
+
+    Best-effort: failures are logged, never raised, so teardown always
+    succeeds locally even if Vobiz is unreachable or the trunk is already gone.
+    """
+    hdrs = _headers(auth_id, auth_token)
+    try:
+        async with http.delete(
+            f"{_BASE}/Account/{auth_id}/trunks/{trunk_id}",
+            headers=hdrs,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status not in (200, 204, 404):
+                body_text = await resp.text()
+                log.warning("vobiz_delete_trunk_error", status=resp.status, body=body_text[:500])
+    except Exception as exc:
+        log.warning("vobiz_delete_trunk_failed", error=str(exc))
+
+
 async def resolve_vobiz_credentials(
     session,
     *,

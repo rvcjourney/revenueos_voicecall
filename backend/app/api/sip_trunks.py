@@ -52,6 +52,7 @@ from app.core.vobiz import (
     assign_vobiz_number_to_trunk,
     create_vobiz_inbound_trunk,
     create_vobiz_outbound_trunk,
+    delete_vobiz_trunk,
     unassign_vobiz_number,
     validate_vobiz_account_and_did,
 )
@@ -543,6 +544,20 @@ async def teardown_inbound(
                 )
         except Exception as exc:
             log.warning("inbound_teardown_vobiz_failed", trunk_id=str(trunk.id), error=str(exc))
+
+        # Actually delete the Vobiz-side inbound trunk (verified endpoint --
+        # see delete_vobiz_trunk's docstring). unassign_vobiz_number alone
+        # was leaving this trunk enabled with the DID still attached, so a
+        # later re-setup created a second trunk that never got the number.
+        if trunk.vobiz_inbound_trunk_id:
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+                    await delete_vobiz_trunk(
+                        http, auth_id=trunk.vobiz_auth_id, auth_token=trunk.vobiz_auth_token,
+                        trunk_id=trunk.vobiz_inbound_trunk_id,
+                    )
+            except Exception as exc:
+                log.warning("inbound_teardown_vobiz_trunk_delete_failed", trunk_id=str(trunk.id), error=str(exc))
 
     if trunk.livekit_inbound_dispatch_rule_id or trunk.livekit_inbound_trunk_id:
         lk = LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
