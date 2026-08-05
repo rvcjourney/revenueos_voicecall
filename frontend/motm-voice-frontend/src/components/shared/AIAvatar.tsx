@@ -1,4 +1,3 @@
-import { Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
@@ -9,14 +8,16 @@ const SIZES = {
 
 interface AIAvatarProps {
   size?: keyof typeof SIZES;
-  /** Whether the "sonar" rings animate — set false for a static/idle avatar. */
+  /** Whether the sonar rings + inner equalizer animate — set false for a static/idle avatar. */
   speaking?: boolean;
   className?: string;
 }
 
 // Decorative avatar used wherever we want to visually represent "the AI agent
 // is on a call" — e.g. the Landing page hero mock. Purely a looping CSS
-// animation (expanding rings + a gentle bob), not driven by real audio.
+// animation (expanding rings + a gentle bob + an equalizer glyph), not driven
+// by real audio. Deliberately abstract, not a human photo/face — this stands
+// in for an AI agent in marketing copy, not a real person.
 export function AIAvatar({ size = "md", speaking = true, className }: AIAvatarProps) {
   const s = SIZES[size];
   return (
@@ -41,7 +42,19 @@ export function AIAvatar({ size = "md", speaking = true, className }: AIAvatarPr
           speaking && "animate-avatar-bob"
         )}
       >
-        <Mic className={cn(s.icon, "text-primary-foreground")} />
+        {/* Abstract equalizer glyph, not a mic icon — visibly "talks" instead of sitting static */}
+        <span className={cn(s.icon, "flex items-end justify-center gap-[2.5px]")}>
+          {[65, 100, 65].map((h, i) => (
+            <span
+              key={i}
+              className={cn(
+                "w-[2.5px] origin-bottom rounded-full bg-primary-foreground",
+                speaking && "animate-wave"
+              )}
+              style={{ height: `${h}%`, animationDelay: `${i * 0.15}s` }}
+            />
+          ))}
+        </span>
       </span>
     </div>
   );

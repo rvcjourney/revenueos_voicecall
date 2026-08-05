@@ -180,6 +180,7 @@
   --animate-gradient-pan: gradient-pan 6s ease infinite;
   --animate-avatar-ring: avatar-ring 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
   --animate-avatar-bob: avatar-bob 3.2s ease-in-out infinite;
+  --animate-bubble-in: bubble-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 
   @keyframes fade-up {
     from {
@@ -236,6 +237,34 @@
     50% {
       transform: translateY(-2px) scale(1.03);
     }
+  }
+  @keyframes bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Respect the user's OS-level motion preference: every looping/entrance
+   animation used across the app collapses to its resting state instead of
+   animating. Kept as a plain global media query (not scoped per-component)
+   so new animate-* utilities added later are covered automatically as long
+   as they're added to this list. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-pulse-glow,
+  .animate-wave,
+  .animate-gradient-pan,
+  .animate-avatar-ring,
+  .animate-avatar-bob,
+  .animate-bubble-in,
+  .animate-ping {
+    animation: none !important;
   }
 }
 

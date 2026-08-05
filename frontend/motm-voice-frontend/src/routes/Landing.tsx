@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Languages,
@@ -140,6 +140,15 @@ export default function Landing() {
     }
   };
 
+  // Purely cosmetic — ticks the demo card's "Live" badge forward from 02:14
+  // so the hero mock reads as an in-progress call, not a screenshot.
+  const [demoElapsedSeconds, setDemoElapsedSeconds] = useState(134);
+  useEffect(() => {
+    const id = window.setInterval(() => setDemoElapsedSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const demoTimeLabel = `${Math.floor(demoElapsedSeconds / 60)}:${String(demoElapsedSeconds % 60).padStart(2, "0")}`;
+
   return (
     <div className="min-h-screen overflow-x-hidden bg-background">
       <PublicNav />
@@ -192,7 +201,7 @@ export default function Landing() {
                   type="button"
                   onClick={toggleDemoAudio}
                   aria-label={isDemoPlaying ? "Pause call recording" : "Play call recording"}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-colors hover:bg-accent"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-all hover:scale-110 hover:bg-accent active:scale-90"
                 >
                   {isDemoPlaying ? (
                     <Pause className="h-3.5 w-3.5" />
@@ -210,25 +219,35 @@ export default function Landing() {
                 />
               </div>
               <Badge variant="success">
-                <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse-glow" /> Live 02:14
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                </span>
+                Live {demoTimeLabel}
               </Badge>
             </div>
             <div className="flex justify-center py-4">
               <SoundWave />
             </div>
             <div className="space-y-3">
-              <div className="rounded-xl rounded-tl-sm bg-muted p-3 text-sm">
+              <div
+                className="animate-bubble-in rounded-xl rounded-tl-sm bg-muted p-3 text-sm"
+                style={{ animationDelay: "0.1s" }}
+              >
                 <p className="mb-1 text-xs font-medium text-muted-foreground">Aniket</p>
                 "Sir, main samajh sakta hoon budget ek concern hai — same quality mein hum aapko 30%
                 kam price de sakte hain. Kal shaam 4 baje ek quick demo fix kar doon?"
               </div>
-              <div className="ml-auto max-w-[85%] rounded-xl rounded-tr-sm bg-primary/15 p-3 text-sm">
+              <div
+                className="animate-bubble-in ml-auto max-w-[85%] rounded-xl rounded-tr-sm bg-primary/15 p-3 text-sm"
+                style={{ animationDelay: "0.35s" }}
+              >
                 <p className="mb-1 text-xs font-medium text-primary">Rajesh</p>
                 "Haan bilkul, kal 4 baje baat kar lete hain."
               </div>
             </div>
             <div className="mt-4 flex justify-end">
-              <Badge variant="success">
+              <Badge variant="success" className="animate-bubble-in" style={{ animationDelay: "0.6s" }}>
                 <Check className="h-3 w-3" /> Auto-tagged as hot lead
               </Badge>
             </div>
