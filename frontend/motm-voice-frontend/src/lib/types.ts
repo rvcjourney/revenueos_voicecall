@@ -1,4 +1,4 @@
-// Domain types mirrored from the Talkryn backend API contract (spec section 5.3).
+// Domain types mirrored from the QuickHowl backend API contract (spec section 5.3).
 
 export type UserRole = "admin" | "member" | "manager" | "agent";
 

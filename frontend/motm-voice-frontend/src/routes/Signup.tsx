@@ -54,7 +54,7 @@ export default function Signup() {
 
         <TabsContent value="join">
           <p className="mb-4 text-xs text-muted-foreground">
-            Have an 8-character invite code from your admin? Join their existing Talkryn workspace.
+            Have an 8-character invite code from your admin? Join their existing QuickHowl workspace.
           </p>
           <JoinTeamForm
             onSuccess={async (values) => {
@@ -67,7 +67,7 @@ export default function Signup() {
 
         <TabsContent value="org">
           <p className="mb-4 text-xs text-muted-foreground">
-            Setting up Talkryn for your company for the first time? Create a new organization.
+            Setting up QuickHowl for your company for the first time? Create a new organization.
           </p>
           <CreateOrgForm />
         </TabsContent>
@@ -184,7 +184,7 @@ function CreateOrgForm() {
         await openRazorpayCheckout({
           key: result.razorpay_key_id,
           subscription_id: result.subscription_id,
-          name: "Talkryn",
+          name: "QuickHowl",
           description: `${result.plan_name} plan`,
           prefill: { name: orgValues?.full_name, email: orgValues?.email, contact: orgValues?.phone },
           theme: { color: "#6366f1" },

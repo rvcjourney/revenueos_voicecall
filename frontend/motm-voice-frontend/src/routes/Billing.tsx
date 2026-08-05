@@ -281,7 +281,7 @@ function ChangePlanDialog({
         await openRazorpayCheckout({
           key: result.razorpay_key_id,
           subscription_id: result.subscription_id,
-          name: "Talkryn",
+          name: "QuickHowl",
           description: `${result.plan_name} plan`,
           prefill: { name: userName, email: userEmail },
           theme: { color: "#6366f1" },

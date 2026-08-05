@@ -73,7 +73,7 @@ export function isNetworkError(error: unknown): boolean {
 
 export function apiErrorMessage(error: unknown, fallback = "Something went wrong."): string {
   if (axios.isAxiosError(error)) {
-    if (!error.response) return "Can't reach the Talkryn server. Is the backend running?";
+    if (!error.response) return "Can't reach the QuickHowl server. Is the backend running?";
     const detail = error.response.data?.detail;
     if (typeof detail === "string") return detail;
     if (error.response.status === 401) return "Your session has expired. Please log in again.";

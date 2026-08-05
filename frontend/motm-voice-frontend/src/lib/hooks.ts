@@ -16,7 +16,7 @@ import {
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryUpdate } from "./types";
+import type { AgentCreate, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -238,8 +238,6 @@ export function useRequestAgentAccess() {
   });
 }
 
-<<<<<<< Updated upstream
-=======
 export function useMyCreationRequests() {
   return useQuery({
     queryKey: ["my-creation-requests"],
@@ -306,7 +304,23 @@ export function useMarkPromptPerformance() {
   return useMutation({
     mutationFn: ({ id, is_high_performing }: { id: string; is_high_performing: boolean }) =>
       promptLibraryApi.markPerformance(id, is_high_performing),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+    onMutate: async ({ id, is_high_performing }) => {
+      await qc.cancelQueries({ queryKey: ["prompt-library"] });
+      const previous = qc.getQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] });
+      qc.setQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] }, (old) =>
+        old?.map((p) => (p.id === id ? { ...p, is_high_performing } : p))
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      context?.previous.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
+      // Refetch in the background — don't block the mutation on it, that's
+      // what made the star toggle feel slow (mutateAsync waited on the
+      // whole list reload before resolving).
+      void qc.invalidateQueries({ queryKey: ["prompt-library"] });
+    },
   });
 }
 
@@ -318,7 +332,6 @@ export function useSyncPromptsFromAgents() {
   });
 }
 
->>>>>>> Stashed changes
 // ── Inbound agents ─────────────────────────────────────────────────────────
 export function useInboundAgents() {
   return useQuery({
