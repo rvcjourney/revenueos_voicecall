@@ -1167,6 +1167,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
     warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
 
+    # ElevenLabs' plugin has no real prewarm() -- tts.prewarm() below is a no-op for it
+    # (only Sarvam/Cartesia implement a connection pool it can actually warm), so
+    # without this, the very first request pays a full TLS+WebSocket handshake to
+    # elevenlabs.io inline with the welcome message: extra silence before the agent
+    # speaks, AND a colder/differently-paced opening chunk than every turn after it,
+    # which is what read as "a different tone" on the first line. Firing a tiny
+    # throwaway synthesis now reuses the same participant-connect window LLM warmup
+    # already gets for free, and warms the shared HTTP session (_ensure_session() in
+    # the plugin) so the real welcome request reuses an already-open connection.
+    if voice_provider == "elevenlabs":
+        async def _warm_elevenlabs_tts() -> None:
+            warm_tts = elevenlabs.TTS(api_key=ELEVENLABS_API_KEY)
+            try:
+                async for _ in warm_tts.synthesize("hi"):
+                    pass
+            finally:
+                await warm_tts.aclose()
+        _safe_task(_warm_elevenlabs_tts(), "elevenlabs-tts-warmup")
+
     if inbound_participant is not None:
         participant = inbound_participant  # already awaited above, before this config was known
     else:
@@ -1321,10 +1340,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                                   # of relying on silence length alone, so a pause mid
                                                   # phone-number no longer gets treated as "done talking"
             endpointing={
-                "min_delay": 0.5,  # back down to SDK default now that turn_detection (above) is what
-                                   # decides "still mid-number" — it stretches the wait toward max_delay
-                                   # on its own low-confidence turns instead of needing a raised floor
-                                   # for every single turn (which was making all replies feel laggy)
+                "min_delay": 0.9,  # was dropped to the SDK default 0.5s trusting turn_detection
+                                   # (above) alone to catch a mid-sentence pause -- in practice it
+                                   # doesn't catch every case, and the agent started replying while
+                                   # the customer had only paused briefly, not actually finished.
+                                   # Restoring the floor to 0.9s (proven previously for the same
+                                   # mid-phone-number case) so every turn gets at least this much
+                                   # silence before committing, with turn_detection still handling
+                                   # the smarter judgment call on top of that floor.
                 "max_delay": 3.0,  # unchanged (SDK default) — ceiling the model can stretch to when unsure
             },
             interruption={
