@@ -21,6 +21,8 @@ from app.core.security import (
     verify_password,
 )
 from app.database import get_db
+from app.models.plan import Plan
+from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
 from app.schemas.auth import (
     LoginRequest,
@@ -239,10 +241,25 @@ async def get_my_org_info(
     if not org:
         from app.core.exceptions import NotFoundError
         raise NotFoundError("Organization not found")
+
+    # org.plan_tier is a legacy column that's never updated after a Razorpay
+    # plan change/upgrade -- the real current plan lives on the org's active
+    # Subscription -> Plan, same source Billing.tsx and the superadmin
+    # Organizations list already use. Fall back to plan_tier only for an org
+    # with no Subscription row yet (e.g. registered but never checked out).
+    sub = await db.scalar(
+        select(Subscription).where(Subscription.org_id == org.id, Subscription.deleted_at.is_(None))
+    )
+    plan_name = org.plan_tier
+    if sub:
+        plan = await db.get(Plan, sub.plan_id)
+        if plan:
+            plan_name = plan.name
+
     return {
         "id": str(org.id),
         "name": org.name,
-        "plan_tier": org.plan_tier,
+        "plan_tier": plan_name,
         "monthly_call_quota": org.monthly_call_quota,
         "calls_used_this_period": org.calls_used_this_period,
     }
