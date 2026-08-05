@@ -54,7 +54,7 @@ export default function PlatformLogin() {
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-1 text-center">
           <p className="text-sm font-semibold tracking-tight text-foreground">
-            Talkryn <span className="font-normal text-muted-foreground">Platform Console</span>
+            QuickHowl <span className="font-normal text-muted-foreground">Platform Console</span>
           </p>
           <p className="text-xs text-muted-foreground">Internal use only. Platform admin sign-in.</p>
         </div>

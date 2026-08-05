@@ -43,7 +43,7 @@ export default function Login() {
   }
 
   return (
-    <AuthLayout title="Welcome back" subtitle="Log in to your Talkryn account to keep your campaigns running.">
+    <AuthLayout title="Welcome back" subtitle="Log in to your QuickHowl account to keep your campaigns running.">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         {serverError && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

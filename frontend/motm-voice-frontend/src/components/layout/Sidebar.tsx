@@ -6,6 +6,7 @@ import {
   Phone,
   BarChart3,
   Headset,
+  BookMarked,
   Mic,
   Users,
   PhoneCall,
@@ -31,6 +32,7 @@ const mainNav = [
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/agents", label: "AI Agents", icon: Headset },
+  { to: "/prompt-library", label: "Prompt Library", icon: BookMarked },
 ];
 
 const adminNav = [

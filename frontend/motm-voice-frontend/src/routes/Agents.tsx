@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Bot,
@@ -69,17 +69,34 @@ const emptyForm: AgentCreate = {
 export default function Agents() {
   const { isAdmin } = useAuth();
   const agents = useAgents();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentTemplate | null>(null);
+  const [prefillSystemPrompt, setPrefillSystemPrompt] = useState<string | undefined>(undefined);
   const [testCallAgent, setTestCallAgent] = useState<AgentTemplate | null>(null);
   const [requestCreationOpen, setRequestCreationOpen] = useState(false);
 
+  // Arriving from the Prompt Library's "Use in this agent" button — open the
+  // create-agent dialog pre-filled, then clear the nav state so a refresh or
+  // back-navigation doesn't reopen it.
+  useEffect(() => {
+    const prefill = (location.state as { prefillSystemPrompt?: string } | null)?.prefillSystemPrompt;
+    if (!prefill) return;
+    setEditingAgent(null);
+    setPrefillSystemPrompt(prefill);
+    setEditorOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
   function openCreate() {
     setEditingAgent(null);
+    setPrefillSystemPrompt(undefined);
     setEditorOpen(true);
   }
   function openEdit(agent: AgentTemplate) {
     setEditingAgent(agent);
+    setPrefillSystemPrompt(undefined);
     setEditorOpen(true);
   }
 
@@ -134,7 +151,12 @@ export default function Agents() {
         />
       )}
 
-      <AgentEditorDialog open={editorOpen} onOpenChange={setEditorOpen} agent={editingAgent} />
+      <AgentEditorDialog
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        agent={editingAgent}
+        initialSystemPrompt={prefillSystemPrompt}
+      />
       <TestCallDialog agent={testCallAgent} onOpenChange={() => setTestCallAgent(null)} />
       <RequestCreationDialog open={requestCreationOpen} onOpenChange={setRequestCreationOpen} />
     </div>
@@ -231,10 +253,12 @@ function AgentEditorDialog({
   open,
   onOpenChange,
   agent,
+  initialSystemPrompt,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   agent: AgentTemplate | null;
+  initialSystemPrompt?: string;
 }) {
   const { isAdmin } = useAuth();
   const [form, setForm] = useState<AgentCreate>(agent ? toFormValues(agent) : emptyForm);
@@ -248,9 +272,11 @@ function AgentEditorDialog({
   // the parent flips `open` externally (which is how "Edit" opens this).
   useEffect(() => {
     if (open) {
-      setForm(agent ? toFormValues(agent) : emptyForm);
+      const base = agent ? toFormValues(agent) : emptyForm;
+      setForm(initialSystemPrompt ? { ...base, system_prompt: initialSystemPrompt } : base);
     }
-  }, [open, agent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, agent, initialSystemPrompt]);
 
   function update<K extends keyof AgentCreate>(key: K, value: AgentCreate[K]) {
     setForm((f) => ({ ...f, [key]: value }));

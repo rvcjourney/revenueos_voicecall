@@ -10,12 +10,13 @@ import {
   foldersApi,
   inboundAgentsApi,
   plansApi,
+  promptLibraryApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, CampaignCreate, InboundAgentCreate } from "./types";
+import type { AgentCreate, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -234,6 +235,100 @@ export function useRequestAgentAccess() {
   return useMutation({
     mutationFn: (id: string) => agentsApi.requestAccess(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+  });
+}
+
+export function useMyCreationRequests() {
+  return useQuery({
+    queryKey: ["my-creation-requests"],
+    queryFn: () => agentsApi.myCreationRequests().then((r) => r.data),
+  });
+}
+
+// ── Prompt library ───────────────────────────────────────────────────────
+export function usePromptLibrary(params?: { q?: string; tag?: string }) {
+  return useQuery({
+    queryKey: ["prompt-library", params],
+    queryFn: () => promptLibraryApi.list(params).then((r) => unwrapList(r.data)),
+  });
+}
+
+export function usePromptHistory(id: string | undefined) {
+  return useQuery({
+    queryKey: ["prompt-library-history", id],
+    queryFn: () => promptLibraryApi.history(id!).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useCreatePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PromptLibraryCreate) => promptLibraryApi.create(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+export function useUpdatePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: PromptLibraryUpdate }) => promptLibraryApi.update(id, data),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["prompt-library"] });
+      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
+    },
+  });
+}
+
+export function useDeletePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => promptLibraryApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+export function useRestorePromptVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) => promptLibraryApi.restore(id, version),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["prompt-library"] });
+      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
+    },
+  });
+}
+
+export function useMarkPromptPerformance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, is_high_performing }: { id: string; is_high_performing: boolean }) =>
+      promptLibraryApi.markPerformance(id, is_high_performing),
+    onMutate: async ({ id, is_high_performing }) => {
+      await qc.cancelQueries({ queryKey: ["prompt-library"] });
+      const previous = qc.getQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] });
+      qc.setQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] }, (old) =>
+        old?.map((p) => (p.id === id ? { ...p, is_high_performing } : p))
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      context?.previous.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
+      // Refetch in the background — don't block the mutation on it, that's
+      // what made the star toggle feel slow (mutateAsync waited on the
+      // whole list reload before resolving).
+      void qc.invalidateQueries({ queryKey: ["prompt-library"] });
+    },
+  });
+}
+
+export function useSyncPromptsFromAgents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => promptLibraryApi.syncFromAgents(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
   });
 }
 
