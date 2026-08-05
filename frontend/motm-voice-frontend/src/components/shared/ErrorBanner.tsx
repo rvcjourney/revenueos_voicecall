@@ -25,7 +25,7 @@ export function ErrorBanner({ error, onRetry, className }: ErrorBannerProps) {
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
         )}
         <div>
-          <p className="font-medium text-destructive">{offline ? "Can't reach Talkryn" : "Something went wrong"}</p>
+          <p className="font-medium text-destructive">{offline ? "Can't reach QuickHowl" : "Something went wrong"}</p>
           <p className="text-muted-foreground">{apiErrorMessage(error)}</p>
         </div>
       </div>

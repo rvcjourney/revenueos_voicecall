@@ -74,10 +74,10 @@ async def sync_plan_to_razorpay(plan: Plan) -> str:
                 "period": "monthly",
                 "interval": 1,
                 "item": {
-                    "name": f"Talkryn {plan.name}",
+                    "name": f"QuickHowl {plan.name}",
                     "amount": effective_price,
                     "currency": plan.currency,
-                    "description": f"Talkryn {plan.name} plan — {plan.credits_per_month} min/month",
+                    "description": f"QuickHowl {plan.name} plan — {plan.credits_per_month} min/month",
                 },
                 "notes": {"internal_plan_id": str(plan.id)},
             },

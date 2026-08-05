@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-seed_plans.py — Upsert the Talkryn Plans catalog (Starter/Professional/
+seed_plans.py — Upsert the QuickHowl Plans catalog (Starter/Professional/
 Enterprise/Business), deactivating any previously-seeded plan not in this
 set (e.g. the old Free/Pro/Premium catalog) rather than deleting it, so any
 org still assigned to an old plan keeps working untouched.
@@ -150,7 +150,7 @@ async def main() -> None:
         for plan in existing_plans:
             if plan.name not in _NEW_NAMES and plan.is_active:
                 plan.is_active = False
-                print(f"Deactivated old plan {plan.name!r} (id={plan.id}) -- superseded by Talkryn Plans.")
+                print(f"Deactivated old plan {plan.name!r} (id={plan.id}) -- superseded by QuickHowl Plans.")
 
         for definition in PLAN_DEFINITIONS:
             existing = await session.scalar(select(Plan).where(Plan.name == definition["name"]))

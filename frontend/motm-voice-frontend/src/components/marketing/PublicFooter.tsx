@@ -54,7 +54,7 @@ export function PublicFooter() {
       </div>
       <div className="border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
         <p>
-          © {new Date().getFullYear()} Talkryn. All rights reserved. ·{" "}
+          © {new Date().getFullYear()} QuickHowl. All rights reserved. ·{" "}
           <Link to="/login" className="hover:text-foreground">
             Log in
           </Link>

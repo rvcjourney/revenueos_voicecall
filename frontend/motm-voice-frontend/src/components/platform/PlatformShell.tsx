@@ -44,7 +44,7 @@ function PlatformTopBar() {
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <span className="text-sm font-semibold tracking-tight text-foreground">
-            Talkryn <span className="font-normal text-muted-foreground">Platform Console</span>
+            QuickHowl <span className="font-normal text-muted-foreground">Platform Console</span>
           </span>
           <nav className="flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
