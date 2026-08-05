@@ -115,20 +115,44 @@ async def checkout(
 
     try:
         if sub and sub.provider == "razorpay" and sub.status in _ACTIVE_RAZORPAY_STATUSES:
-            # Already has a mandate authorized — change the plan in place,
-            # no new Checkout/authorization needed.
-            await razorpay_update_subscription_plan(sub.provider_subscription_id, razorpay_plan_id)
-            sub.plan_id = plan.id
-            await db.commit()
-            return CheckoutResponse(
-                action="change",
-                plan_name=plan.name,
-                amount_minor=effective_price,
-                currency=plan.currency,
-            )
+            # Already has a mandate authorized — try to change the plan in
+            # place, no new Checkout/authorization needed. Razorpay only
+            # allows this for card-paid subscriptions though: UPI/eMandate
+            # subscriptions reject it outright ("subscriptions cannot be
+            # updated when payment mode is upi") — confirmed against a real
+            # account, and documented as a hard platform restriction, not
+            # something we can work around via a different API call. Since
+            # UPI is the dominant payment method for this org's customers,
+            # fall back to the same cancel-and-recreate flow a first-time
+            # subscriber goes through instead of failing the upgrade.
+            try:
+                await razorpay_update_subscription_plan(sub.provider_subscription_id, razorpay_plan_id)
+                sub.plan_id = plan.id
+                await db.commit()
+                return CheckoutResponse(
+                    action="change",
+                    plan_name=plan.name,
+                    amount_minor=effective_price,
+                    currency=plan.currency,
+                )
+            except RazorpayError as exc:
+                if "cannot be updated when payment mode is" not in str(exc).lower():
+                    raise
+                log.info(
+                    "razorpay_plan_change_requires_new_subscription",
+                    org_id=str(token.org_id), subscription_id=sub.provider_subscription_id,
+                )
+                try:
+                    await razorpay_cancel_subscription(sub.provider_subscription_id)
+                except RazorpayError as cancel_exc:
+                    log.warning(
+                        "razorpay_old_subscription_cancel_failed",
+                        subscription_id=sub.provider_subscription_id, error=str(cancel_exc),
+                    )
 
-        # First-time (or non-Razorpay) subscription: create a fresh Razorpay
-        # Subscription and open Checkout to authorize the recurring mandate.
+        # First-time (or non-Razorpay, or UPI-plan-change-fallback) subscription:
+        # create a fresh Razorpay Subscription and open Checkout to authorize
+        # the recurring mandate.
         razorpay_sub = await razorpay_create_subscription(razorpay_plan_id=razorpay_plan_id, org_id=str(token.org_id))
     except RazorpayError as exc:
         raise ConflictError(str(exc))

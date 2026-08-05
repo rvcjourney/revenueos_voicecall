@@ -149,6 +149,46 @@ async def test_checkout_existing_active_subscription_changes_plan(client, db):
     mock_edit.assert_awaited_once_with("sub_existing", "plan_new123")
 
 
+async def test_checkout_upi_subscription_falls_back_to_new_subscription(client, db):
+    """Razorpay rejects in-place plan edits for UPI/eMandate-paid subscriptions
+    (card-only) -- checkout should cancel the old one and create a fresh
+    subscription requiring a new Checkout authorization, same as a first-time
+    subscriber, instead of failing the upgrade outright."""
+    old_plan = await _make_plan(db, name="Starter")
+    new_plan = await _make_plan(db, name="Professional", price_minor=1_499_900)
+    org, _user, token = await _make_org_with_subscription(
+        db, old_plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_upi_old", "status": "active"}
+    )
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new123")), \
+         patch("app.api.billing.razorpay_update_subscription_plan", new=AsyncMock(
+             side_effect=RazorpayError("Could not change Razorpay subscription plan: subscriptions cannot be updated when payment mode is upi")
+         )), \
+         patch("app.api.billing.razorpay_cancel_subscription", new=AsyncMock(
+             return_value={"id": "sub_upi_old", "status": "cancelled"}
+         )) as mock_cancel, \
+         patch("app.api.billing.razorpay_create_subscription", new=AsyncMock(
+             return_value={"id": "sub_upi_new", "status": "created"}
+         )) as mock_create:
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(new_plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["action"] == "new"
+    assert body["subscription_id"] == "sub_upi_new"
+    mock_cancel.assert_awaited_once_with("sub_upi_old")
+    mock_create.assert_awaited_once()
+
+    from sqlalchemy import select as _select
+    sub = await db.scalar(_select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.provider_subscription_id == "sub_upi_new"
+    assert sub.status == "created"
+
+
 async def test_checkout_rejects_custom_pricing_plan(client, db):
     plan = await _make_plan(db, name="Business", is_custom_pricing=True)
     org = Organization(name="Org", slug=f"org-{uuid.uuid4().hex[:8]}")
