@@ -1340,6 +1340,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
     )
 
+    def _on_speech_created(ev) -> None:
+        # Proves whether turn_handling.interruption (above) is actually cutting
+        # the agent off mid-sentence, rather than inferring it indirectly from
+        # turn timestamps -- wait_for_playout() resolves whether the speech
+        # finished normally or was cut short, and .interrupted tells us which.
+        speech_handle = ev.speech_handle
+
+        async def _log_if_interrupted() -> None:
+            try:
+                await speech_handle.wait_for_playout()
+            except Exception:
+                pass
+            if speech_handle.interrupted:
+                logger.info("Agent speech interrupted by caller (turn %d)", voice_agent._turn_count)
+
+        _safe_task(_log_if_interrupted(), "interruption-logger")
+
+    session.on("speech_created", _on_speech_created)
+
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant):
         # Customer hung up — classify + POST the outcome BEFORE tearing the room
