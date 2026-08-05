@@ -1285,6 +1285,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name)
     digit_spellout_transform = _digit_spellout_transform()
 
+    def _log_tts_ttfb(metrics) -> None:
+        # ttfb = seconds from "synthesis requested" to "first audio byte back
+        # from the provider" -- the number that actually answers "did the
+        # caller hear a real pause", as opposed to the full-utterance
+        # synthesis duration already logged by the Sarvam/ElevenLabs plugins
+        # ("WebSocket session completed successfully"), which covers the
+        # whole reply and isn't when playback actually started.
+        if getattr(metrics, "type", None) != "tts_metrics":
+            return
+        logger.info(
+            "TTS time-to-first-audio-byte: %.3fs (turn %d)",
+            metrics.ttfb, voice_agent._turn_count,
+        )
+
+    tts.on("metrics_collected", _log_tts_ttfb)
+
     session = AgentSession(
         stt=sarvam.STT(
             api_key  = SARVAM_API_KEY,
