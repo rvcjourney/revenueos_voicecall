@@ -68,14 +68,6 @@ export function useVerifyPayment() {
   });
 }
 
-export function useCancelSubscription() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => billingApi.cancel().then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
-  });
-}
-
 // ── Folders ──────────────────────────────────────────────────────────────
 export function useFolders() {
   return useQuery({

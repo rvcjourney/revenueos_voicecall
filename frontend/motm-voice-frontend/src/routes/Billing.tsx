@@ -21,14 +21,13 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ConfirmDialog } from "@/components/platform/ConfirmDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { PlanPicker } from "@/components/billing/PlanPicker";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
-import { useBillingCurrent, useCancelSubscription, useCheckout, useCreditUsage, useVerifyPayment } from "@/lib/hooks";
+import { useBillingCurrent, useCheckout, useCreditUsage, useVerifyPayment } from "@/lib/hooks";
 import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
 import type { PublicPlan } from "@/lib/types";
 
@@ -111,7 +110,6 @@ export default function Billing() {
             )}
             <div className="flex items-center gap-2">
               <ChangePlanDialog currentPlanId={plan?.id} userName={user?.full_name} userEmail={user?.email} />
-              {orgActive && <CancelSubscriptionButton />}
             </div>
           </div>
 
@@ -328,39 +326,5 @@ function ChangePlanDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CancelSubscriptionButton() {
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const cancel = useCancelSubscription();
-
-  async function handleConfirm() {
-    try {
-      await cancel.mutateAsync();
-      toast.success("Subscription will end at the close of the current billing cycle");
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't cancel subscription"));
-    } finally {
-      setConfirmOpen(false);
-    }
-  }
-
-  return (
-    <>
-      <Button variant="outline" size="sm" onClick={() => setConfirmOpen(true)}>
-        Cancel subscription
-      </Button>
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="Cancel your subscription?"
-        description="You'll keep access until the end of the current billing cycle, then your organization will be suspended."
-        confirmLabel="Cancel subscription"
-        variant="destructive"
-        loading={cancel.isPending}
-        onConfirm={handleConfirm}
-      />
-    </>
   );
 }

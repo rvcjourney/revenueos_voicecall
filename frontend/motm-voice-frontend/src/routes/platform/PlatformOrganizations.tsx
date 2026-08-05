@@ -33,10 +33,11 @@ export default function PlatformOrganizations() {
 
   const orgs = usePlatformOrgs({ q: debouncedSearch || undefined, limit: PAGE_SIZE, offset });
 
-  const total = orgs.data?.total ?? 0;
-  const items = orgs.data?.items ?? [];
+  // Backend returns a plain array (no {items, total} envelope) — paginate off
+  // what's actually on this page rather than a total the API never provides.
+  const items = orgs.data ?? [];
   const page = Math.floor(offset / PAGE_SIZE) + 1;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasNextPage = items.length === PAGE_SIZE;
 
   return (
     <div className="space-y-6">
@@ -111,19 +112,12 @@ export default function PlatformOrganizations() {
           </Card>
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Page {page} of {pageCount} · {total.toLocaleString()} organizations
-            </span>
+            <span>Page {page} · {items.length} organization{items.length === 1 ? "" : "s"}</span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))} disabled={offset === 0}>
                 <ChevronLeft className="h-3.5 w-3.5" /> Previous
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setOffset((o) => o + PAGE_SIZE)}
-                disabled={offset + PAGE_SIZE >= total}
-              >
+              <Button variant="outline" size="sm" onClick={() => setOffset((o) => o + PAGE_SIZE)} disabled={!hasNextPage}>
                 Next <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             </div>

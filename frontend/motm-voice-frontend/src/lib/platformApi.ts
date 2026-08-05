@@ -81,7 +81,7 @@ export const platformMetricsApi = {
 // ── Organizations ────────────────────────────────────────────────────────
 export const platformOrgsApi = {
   list: (params?: { q?: string; limit?: number; offset?: number }) =>
-    platformApi.get<PlatformListResponse<PlatformOrg>>("/api/platform/orgs", { params }),
+    platformApi.get<PlatformOrg[]>("/api/platform/orgs", { params }),
   get: (id: string) => platformApi.get<PlatformOrgDetail>(`/api/platform/orgs/${id}`),
   update: (id: string, data: PlatformOrgUpdate) =>
     platformApi.patch<PlatformOrgDetail>(`/api/platform/orgs/${id}`, data),
