@@ -1335,6 +1335,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # enough to filter single-word fillers ("haan"/"achha") while still letting
                                       # genuine short interruptions cut in; min_duration above still requires 600ms
                                       # of sustained speech, which also filters brief noise blips.
+                "false_interruption_timeout": None,  # SDK default (2.0) PAUSES the agent's audio on a
+                                      # detected interruption and silently RESUMES it from where it left
+                                      # off if a full turn doesn't confirm within 2s — audibly identical to
+                                      # "the agent just kept talking" even though an interruption fired.
+                                      # min_duration + min_words above already require 600ms of sustained,
+                                      # transcribed speech before triggering, so a second false-positive
+                                      # safety net isn't needed — disabling it (None) makes every detected
+                                      # interruption cut the agent off for good, immediately.
             },
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
