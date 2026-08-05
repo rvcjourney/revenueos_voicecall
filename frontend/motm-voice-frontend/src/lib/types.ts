@@ -437,3 +437,43 @@ export interface ListResponse<T> {
   items: T[];
   total: number;
 }
+
+// ── Prompt library ───────────────────────────────────────────────────────
+export interface PromptLibraryVersion {
+  version: number;
+  structured_prompt: string;
+  editor_id: string | null;
+  editor_name: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface PromptLibraryEntry {
+  id: string;
+  title: string;
+  tags: string[];
+  raw_input: string | null;
+  structured_prompt: string;
+  is_high_performing: boolean;
+  current_version: number;
+  source_agent_id: string | null;
+  source_agent_name: string | null;
+  created_by_id: string | null;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptLibraryCreate {
+  title: string;
+  tags?: string[];
+  raw_input?: string | null;
+  structured_prompt: string;
+}
+
+export interface PromptLibraryUpdate {
+  title?: string;
+  tags?: string[];
+  structured_prompt?: string;
+  note?: string | null;
+}

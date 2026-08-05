@@ -23,6 +23,7 @@ from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
 from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 import chatterbox_tts
 
 from config import (
@@ -1133,7 +1134,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     welcome_message = _localize_welcome_message(
         meta.get("welcome_message") or AGENT_WELCOME_MESSAGE, tz_name
     )
-    voice_provider  = (meta.get("voice_provider") or "elevenlabs").lower()
+    # LOCAL_TEST_VOICE_PROVIDER only matters when there's no real call metadata at
+    # all (i.e. `agent.py console` locally) -- meta.get() always wins on a real
+    # call, so this has no effect in production.
+    voice_provider  = (meta.get("voice_provider") or os.getenv("LOCAL_TEST_VOICE_PROVIDER") or "elevenlabs").lower()
     voice_id        = meta.get("voice_id") or (
         CARTESIA_VOICE_ID if voice_provider == "cartesia"
         else CHATTERBOX_VOICE_ID if voice_provider == "chatterbox"
@@ -1296,15 +1300,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts=tts,
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
+            turn_detection=MultilingualModel(),  # semantic end-of-turn model (Hindi/English) — judges
+                                                  # whether an utterance actually sounds finished instead
+                                                  # of relying on silence length alone, so a pause mid
+                                                  # phone-number no longer gets treated as "done talking"
             endpointing={
-                "min_delay": 0.9,  # was implicit SDK default 0.5s — too short for a customer
-                                   # pausing between spoken digit-groups while dictating a phone
-                                   # number; the turn was being finalized mid-number
-                "max_delay": 3.0,  # unchanged (SDK default)
+                "min_delay": 0.5,  # back down to SDK default now that turn_detection (above) is what
+                                   # decides "still mid-number" — it stretches the wait toward max_delay
+                                   # on its own low-confidence turns instead of needing a raised floor
+                                   # for every single turn (which was making all replies feel laggy)
+                "max_delay": 3.0,  # unchanged (SDK default) — ceiling the model can stretch to when unsure
             },
             interruption={
                 "min_duration": 0.6,  # caller must sustain speech for 600ms to count as an interruption
-                "min_words":    12,   # customer must say ~12 words to interrupt agent — prevents "haan/achha" and noise-triggered blips from breaking sentences
+                "min_words":    2,    # was 12 — that required a full 12-word utterance before any interruption
+                                      # registered, so real interruptions ("ruko", "suniye", "nahi nahi") never
+                                      # crossed the bar and the agent kept talking over the customer. 2 words is
+                                      # enough to filter single-word fillers ("haan"/"achha") while still letting
+                                      # genuine short interruptions cut in; min_duration above still requires 600ms
+                                      # of sustained speech, which also filters brief noise blips.
             },
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],

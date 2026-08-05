@@ -28,6 +28,10 @@ import type {
   OrgInfo,
   OrgQuotaInfo,
   OrgStats,
+  PromptLibraryCreate,
+  PromptLibraryEntry,
+  PromptLibraryUpdate,
+  PromptLibraryVersion,
   PublicPlan,
   SipTrunk,
   VerifyPaymentRequest,
@@ -126,6 +130,23 @@ export const agentsApi = {
       headers: { "Content-Type": "multipart/form-data" },
     }),
   myCreationRequests: () => api.get<AgentCreationRequest[]>("/api/agents/my-creation-requests"),
+};
+
+// ── Prompt library ───────────────────────────────────────────────────────
+export const promptLibraryApi = {
+  list: (params?: { q?: string; tag?: string }) =>
+    api.get<ListResponse<PromptLibraryEntry>>("/api/prompt-library", { params }),
+  create: (data: PromptLibraryCreate) => api.post<PromptLibraryEntry>("/api/prompt-library", data),
+  update: (id: string, data: PromptLibraryUpdate) =>
+    api.patch<PromptLibraryEntry>(`/api/prompt-library/${id}`, data),
+  remove: (id: string) => api.delete(`/api/prompt-library/${id}`),
+  history: (id: string) => api.get<PromptLibraryVersion[]>(`/api/prompt-library/${id}/history`),
+  restore: (id: string, version: number) =>
+    api.post<PromptLibraryEntry>(`/api/prompt-library/${id}/restore/${version}`),
+  markPerformance: (id: string, is_high_performing: boolean) =>
+    api.patch<PromptLibraryEntry>(`/api/prompt-library/${id}/performance`, { is_high_performing }),
+  syncFromAgents: () =>
+    api.post<{ created: number; message: string }>("/api/prompt-library/sync-from-agents"),
 };
 
 // ── Inbound Agents (answer calls arriving on a number) ────────────────────

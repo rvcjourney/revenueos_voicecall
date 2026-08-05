@@ -32,6 +32,7 @@ dist/
 postgres_data/
 redis_data/
 minio_data/
+docker-compose.override.yml
 
 # ── Celery Beat runtime state (regenerated wherever beat runs) ────────────────
 celerybeat-schedule*

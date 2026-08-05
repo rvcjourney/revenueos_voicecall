@@ -10,12 +10,13 @@ import {
   foldersApi,
   inboundAgentsApi,
   plansApi,
+  promptLibraryApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, CampaignCreate, InboundAgentCreate } from "./types";
+import type { AgentCreate, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -237,6 +238,87 @@ export function useRequestAgentAccess() {
   });
 }
 
+<<<<<<< Updated upstream
+=======
+export function useMyCreationRequests() {
+  return useQuery({
+    queryKey: ["my-creation-requests"],
+    queryFn: () => agentsApi.myCreationRequests().then((r) => r.data),
+  });
+}
+
+// ── Prompt library ───────────────────────────────────────────────────────
+export function usePromptLibrary(params?: { q?: string; tag?: string }) {
+  return useQuery({
+    queryKey: ["prompt-library", params],
+    queryFn: () => promptLibraryApi.list(params).then((r) => unwrapList(r.data)),
+  });
+}
+
+export function usePromptHistory(id: string | undefined) {
+  return useQuery({
+    queryKey: ["prompt-library-history", id],
+    queryFn: () => promptLibraryApi.history(id!).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useCreatePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PromptLibraryCreate) => promptLibraryApi.create(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+export function useUpdatePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: PromptLibraryUpdate }) => promptLibraryApi.update(id, data),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["prompt-library"] });
+      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
+    },
+  });
+}
+
+export function useDeletePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => promptLibraryApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+export function useRestorePromptVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) => promptLibraryApi.restore(id, version),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["prompt-library"] });
+      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
+    },
+  });
+}
+
+export function useMarkPromptPerformance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, is_high_performing }: { id: string; is_high_performing: boolean }) =>
+      promptLibraryApi.markPerformance(id, is_high_performing),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+export function useSyncPromptsFromAgents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => promptLibraryApi.syncFromAgents(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
+  });
+}
+
+>>>>>>> Stashed changes
 // ── Inbound agents ─────────────────────────────────────────────────────────
 export function useInboundAgents() {
   return useQuery({
