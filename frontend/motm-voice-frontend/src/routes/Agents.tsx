@@ -36,6 +36,7 @@ import {
   useClonedVoices,
   useCreateAgent,
   useDeleteAgent,
+  useElevenlabsVoiceOptions,
   useRequestAgentAccess,
   useUpdateAgent,
   useMyTrunks,
@@ -44,8 +45,42 @@ import { agentsApi, apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import type { AgentCreate, AgentTemplate } from "@/lib/types";
 
-const VOICE_PROVIDERS = ["elevenlabs", "cartesia", "sarvam", "chatterbox"];
+const VOICE_PROVIDERS = ["elevenlabs", "sarvam"];
 const LLM_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+
+// Sarvam's Bulbul v3 speaker catalog is a fixed, documented set (not a live
+// per-account list the way ElevenLabs' is) — sourced directly from the
+// installed livekit-plugins-sarvam SDK's MODEL_SPEAKER_COMPATIBILITY table
+// for the "bulbul:v3" model (see agent/config.py's SARVAM_MODEL), not
+// guessed. Kept here rather than round-tripping to the backend since it
+// never changes without a plugin upgrade.
+const SARVAM_VOICES: { id: string; name: string; gender: "male" | "female" }[] = [
+  { id: "shubh", name: "Shubh", gender: "male" },
+  { id: "ritu", name: "Ritu", gender: "female" },
+  { id: "rahul", name: "Rahul", gender: "male" },
+  { id: "pooja", name: "Pooja", gender: "female" },
+  { id: "simran", name: "Simran", gender: "female" },
+  { id: "kavya", name: "Kavya", gender: "female" },
+  { id: "amit", name: "Amit", gender: "male" },
+  { id: "ratan", name: "Ratan", gender: "male" },
+  { id: "rohan", name: "Rohan", gender: "male" },
+  { id: "dev", name: "Dev", gender: "male" },
+  { id: "ishita", name: "Ishita", gender: "female" },
+  { id: "shreya", name: "Shreya", gender: "female" },
+  { id: "manan", name: "Manan", gender: "male" },
+  { id: "sumit", name: "Sumit", gender: "male" },
+  { id: "priya", name: "Priya", gender: "female" },
+  { id: "aditya", name: "Aditya", gender: "male" },
+  { id: "kabir", name: "Kabir", gender: "male" },
+  { id: "neha", name: "Neha", gender: "female" },
+  { id: "varun", name: "Varun", gender: "male" },
+  { id: "roopa", name: "Roopa", gender: "female" },
+  { id: "aayan", name: "Aayan", gender: "male" },
+  { id: "ashutosh", name: "Ashutosh", gender: "male" },
+  { id: "advait", name: "Advait", gender: "male" },
+  { id: "amelia", name: "Amelia", gender: "female" },
+  { id: "sophia", name: "Sophia", gender: "female" },
+];
 
 const ACCESS_ACCENT: Record<string, string> = {
   approved: "var(--success)",
@@ -265,6 +300,7 @@ function AgentEditorDialog({
   const [optimizing, setOptimizing] = useState(false);
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
+  const elevenlabsVoices = useElevenlabsVoiceOptions(open && form.voice_provider === "elevenlabs");
 
   // AgentEditorDialog stays mounted permanently (only `open` toggles) so the
   // form must be re-synced here whenever it's opened for a different agent --
@@ -358,7 +394,16 @@ function AgentEditorDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Voice provider</Label>
-              <Select value={form.voice_provider} onValueChange={(v) => update("voice_provider", v)}>
+              <Select
+                value={form.voice_provider}
+                onValueChange={(v) => {
+                  // A voice_id from the old provider is meaningless (and can't be
+                  // validated) for the new one -- clear it so a stale/mismatched
+                  // pair can never get saved. See: previous agent voice_id vs
+                  // voice_provider mismatch bug.
+                  setForm((f) => ({ ...f, voice_provider: v, voice_id: "" }));
+                }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {VOICE_PROVIDERS.map((v) => <SelectItem key={v} value={v} className="capitalize">{v}</SelectItem>)}
@@ -366,8 +411,37 @@ function AgentEditorDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Voice ID</Label>
-              <Input value={form.voice_id} onChange={(e) => update("voice_id", e.target.value)} placeholder="e.g. Suyash" />
+              <Label>Voice</Label>
+              {form.voice_provider === "sarvam" ? (
+                <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
+                  <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
+                  <SelectContent>
+                    {SARVAM_VOICES.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.name} <span className="text-muted-foreground">({v.gender})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : elevenlabsVoices.isLoading ? (
+                <Skeleton className="h-9 w-full" />
+              ) : elevenlabsVoices.isError ? (
+                <p className="text-xs text-destructive">
+                  Couldn't load voices — {apiErrorMessage(elevenlabsVoices.error, "try again")}
+                </p>
+              ) : (
+                <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
+                  <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
+                  <SelectContent>
+                    {(elevenlabsVoices.data ?? []).map((v) => (
+                      <SelectItem key={v.voice_id} value={v.voice_id}>
+                        {v.name}
+                        {v.gender && <span className="text-muted-foreground"> ({v.gender})</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           {isAdmin && (
