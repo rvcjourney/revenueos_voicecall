@@ -121,7 +121,12 @@ async def list_voices(http: aiohttp.ClientSession, *, api_key: str) -> list[dict
         voice_id, name = v.get("voice_id"), v.get("name")
         if not voice_id or not name:
             continue
-        voices.append({"voice_id": voice_id, "name": name, "gender": labels.get("gender")})
+        voices.append({
+            "voice_id": voice_id,
+            "name": name,
+            "gender": labels.get("gender"),
+            "accent": labels.get("accent"),
+        })
     voices.sort(key=lambda v: v["name"].lower())
     return voices
 

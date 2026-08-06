@@ -126,7 +126,9 @@ export const agentsApi = {
   optimizePrompt: (raw_input: string) =>
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", { raw_input }),
   elevenlabsVoiceOptions: () =>
-    api.get<{ voice_id: string; name: string; gender: string | null }[]>("/api/agents/voice-options/elevenlabs"),
+    api.get<{ voice_id: string; name: string; gender: string | null; accent: string | null }[]>(
+      "/api/agents/voice-options/elevenlabs"
+    ),
   requestCreation: (form: FormData) =>
     api.post<{ id: string; message: string }>("/api/agents/creation-request", form, {
       headers: { "Content-Type": "multipart/form-data" },

@@ -44,6 +44,7 @@ class VoiceOption(BaseModel):
     voice_id: str
     name: str
     gender: str | None = None
+    accent: str | None = None
 
 
 @router.get("/voice-options/elevenlabs", response_model=list[VoiceOption])

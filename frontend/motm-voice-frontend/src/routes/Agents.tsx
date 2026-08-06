@@ -17,7 +17,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -54,32 +62,37 @@ const LLM_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
 // for the "bulbul:v3" model (see agent/config.py's SARVAM_MODEL), not
 // guessed. Kept here rather than round-tripping to the backend since it
 // never changes without a plugin upgrade.
-const SARVAM_VOICES: { id: string; name: string; gender: "male" | "female" }[] = [
-  { id: "shubh", name: "Shubh", gender: "male" },
-  { id: "ritu", name: "Ritu", gender: "female" },
-  { id: "rahul", name: "Rahul", gender: "male" },
-  { id: "pooja", name: "Pooja", gender: "female" },
-  { id: "simran", name: "Simran", gender: "female" },
-  { id: "kavya", name: "Kavya", gender: "female" },
-  { id: "amit", name: "Amit", gender: "male" },
-  { id: "ratan", name: "Ratan", gender: "male" },
-  { id: "rohan", name: "Rohan", gender: "male" },
-  { id: "dev", name: "Dev", gender: "male" },
-  { id: "ishita", name: "Ishita", gender: "female" },
-  { id: "shreya", name: "Shreya", gender: "female" },
-  { id: "manan", name: "Manan", gender: "male" },
-  { id: "sumit", name: "Sumit", gender: "male" },
-  { id: "priya", name: "Priya", gender: "female" },
-  { id: "aditya", name: "Aditya", gender: "male" },
-  { id: "kabir", name: "Kabir", gender: "male" },
-  { id: "neha", name: "Neha", gender: "female" },
-  { id: "varun", name: "Varun", gender: "male" },
-  { id: "roopa", name: "Roopa", gender: "female" },
-  { id: "aayan", name: "Aayan", gender: "male" },
-  { id: "ashutosh", name: "Ashutosh", gender: "male" },
-  { id: "advait", name: "Advait", gender: "male" },
-  { id: "amelia", name: "Amelia", gender: "female" },
-  { id: "sophia", name: "Sophia", gender: "female" },
+//
+// `focus` mirrors that same SDK table's own grouping: everything under its
+// "Customer Care" and "Content Creation" headings is a native Hindi/Hinglish
+// voice (this platform's primary use case); only "International" (Amelia,
+// Sophia) is an English-accented voice not tuned for Hindi.
+const SARVAM_VOICES: { id: string; name: string; gender: "male" | "female"; focus: "hindi" | "international" }[] = [
+  { id: "shubh", name: "Shubh", gender: "male", focus: "hindi" },
+  { id: "ritu", name: "Ritu", gender: "female", focus: "hindi" },
+  { id: "rahul", name: "Rahul", gender: "male", focus: "hindi" },
+  { id: "pooja", name: "Pooja", gender: "female", focus: "hindi" },
+  { id: "simran", name: "Simran", gender: "female", focus: "hindi" },
+  { id: "kavya", name: "Kavya", gender: "female", focus: "hindi" },
+  { id: "amit", name: "Amit", gender: "male", focus: "hindi" },
+  { id: "ratan", name: "Ratan", gender: "male", focus: "hindi" },
+  { id: "rohan", name: "Rohan", gender: "male", focus: "hindi" },
+  { id: "dev", name: "Dev", gender: "male", focus: "hindi" },
+  { id: "ishita", name: "Ishita", gender: "female", focus: "hindi" },
+  { id: "shreya", name: "Shreya", gender: "female", focus: "hindi" },
+  { id: "manan", name: "Manan", gender: "male", focus: "hindi" },
+  { id: "sumit", name: "Sumit", gender: "male", focus: "hindi" },
+  { id: "priya", name: "Priya", gender: "female", focus: "hindi" },
+  { id: "aditya", name: "Aditya", gender: "male", focus: "hindi" },
+  { id: "kabir", name: "Kabir", gender: "male", focus: "hindi" },
+  { id: "neha", name: "Neha", gender: "female", focus: "hindi" },
+  { id: "varun", name: "Varun", gender: "male", focus: "hindi" },
+  { id: "roopa", name: "Roopa", gender: "female", focus: "hindi" },
+  { id: "aayan", name: "Aayan", gender: "male", focus: "hindi" },
+  { id: "ashutosh", name: "Ashutosh", gender: "male", focus: "hindi" },
+  { id: "advait", name: "Advait", gender: "male", focus: "hindi" },
+  { id: "amelia", name: "Amelia", gender: "female", focus: "international" },
+  { id: "sophia", name: "Sophia", gender: "female", focus: "international" },
 ];
 
 const ACCESS_ACCENT: Record<string, string> = {
@@ -301,6 +314,14 @@ function AgentEditorDialog({
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
   const elevenlabsVoices = useElevenlabsVoiceOptions(open && form.voice_provider === "elevenlabs");
+  const clonedVoices = useClonedVoices();
+  // Cloned voices are ElevenLabs voice_ids too -- surfaced as a group inside
+  // the same Voice dropdown below (not a second selector) so there's only
+  // ever one place that can set voice_id, never two controls disagreeing
+  // about what's actually selected.
+  const readyClonedVoices = isAdmin
+    ? (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.elevenlabs_voice_id)
+    : [];
 
   // AgentEditorDialog stays mounted permanently (only `open` toggles) so the
   // form must be re-synced here whenever it's opened for a different agent --
@@ -416,11 +437,22 @@ function AgentEditorDialog({
                 <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
                   <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
                   <SelectContent>
-                    {SARVAM_VOICES.map((v) => (
-                      <SelectItem key={v.id} value={v.id}>
-                        {v.name} <span className="text-muted-foreground">({v.gender})</span>
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel>Hindi / Hinglish voices</SelectLabel>
+                      {SARVAM_VOICES.filter((v) => v.focus === "hindi").map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>International (English-accented)</SelectLabel>
+                      {SARVAM_VOICES.filter((v) => v.focus === "international").map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               ) : elevenlabsVoices.isLoading ? (
@@ -433,23 +465,69 @@ function AgentEditorDialog({
                 <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
                   <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
                   <SelectContent>
-                    {(elevenlabsVoices.data ?? []).map((v) => (
-                      <SelectItem key={v.voice_id} value={v.voice_id}>
-                        {v.name}
-                        {v.gender && <span className="text-muted-foreground"> ({v.gender})</span>}
-                      </SelectItem>
-                    ))}
+                    {(() => {
+                      const all = elevenlabsVoices.data ?? [];
+                      const isHindiFriendly = (accent: string | null) =>
+                        !!accent && /indian|hindi/i.test(accent);
+                      const hindiFriendly = all.filter((v) => isHindiFriendly(v.accent));
+                      const others = all.filter((v) => !isHindiFriendly(v.accent));
+                      const renderVoice = (v: (typeof all)[number]) => (
+                        <SelectItem key={v.voice_id} value={v.voice_id}>
+                          {v.name}
+                          {v.gender && <span className="text-muted-foreground"> ({v.gender})</span>}
+                        </SelectItem>
+                      );
+                      // ElevenLabs' multilingual model can speak Hindi with any
+                      // voice, but only voices actually labeled with an Indian
+                      // accent sound natural doing it — surface those first.
+                      // If none carry that label (small/unusual account), skip
+                      // the grouping entirely rather than show an empty section.
+                      const clonedGroup = readyClonedVoices.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel>Your cloned voices</SelectLabel>
+                          {readyClonedVoices.map((v) => (
+                            <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>
+                              {v.name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      );
+                      if (hindiFriendly.length === 0) {
+                        return (
+                          <>
+                            {clonedGroup}
+                            {all.map(renderVoice)}
+                          </>
+                        );
+                      }
+                      return (
+                        <>
+                          {clonedGroup}
+                          <SelectGroup>
+                            <SelectLabel>Hindi-friendly accent</SelectLabel>
+                            {hindiFriendly.map(renderVoice)}
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectLabel>Other voices</SelectLabel>
+                            {others.map(renderVoice)}
+                          </SelectGroup>
+                        </>
+                      );
+                    })()}
                   </SelectContent>
                 </Select>
               )}
+              {isAdmin && !clonedVoices.isLoading && readyClonedVoices.length === 0 && form.voice_provider === "elevenlabs" && (
+                <p className="text-xs text-muted-foreground">
+                  No cloned voices yet —{" "}
+                  <Link to="/voice-cloning" className="text-primary hover:underline">
+                    clone one from the Voice Cloning section
+                  </Link>{" "}
+                  to use it here.
+                </p>
+              )}
             </div>
           </div>
-          {isAdmin && (
-            <ClonedVoicesSection
-              voiceProvider={form.voice_provider}
-              onSelectVoice={(voiceId) => update("voice_id", voiceId)}
-            />
-          )}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>LLM model</Label>
@@ -487,45 +565,6 @@ function AgentEditorDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function ClonedVoicesSection({
-  voiceProvider,
-  onSelectVoice,
-}: {
-  voiceProvider?: string;
-  onSelectVoice: (voiceId: string) => void;
-}) {
-  const clonedVoices = useClonedVoices();
-  const readyVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready");
-
-  if (voiceProvider !== "elevenlabs") return null;
-
-  return (
-    <div className="space-y-1.5">
-      <Label>Use a cloned voice</Label>
-      {clonedVoices.isLoading ? (
-        <Skeleton className="h-9 w-full" />
-      ) : readyVoices.length > 0 ? (
-        <Select onValueChange={onSelectVoice}>
-          <SelectTrigger><SelectValue placeholder="Pick a cloned voice…" /></SelectTrigger>
-          <SelectContent>
-            {readyVoices.map((v) => (
-              <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          No cloned voices yet —{" "}
-          <Link to="/voice-cloning" className="text-primary hover:underline">
-            clone one from the Voice Cloning section
-          </Link>{" "}
-          to use it here.
-        </p>
-      )}
-    </div>
   );
 }
 
