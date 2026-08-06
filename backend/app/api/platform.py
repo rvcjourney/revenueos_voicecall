@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import aiohttp
@@ -699,9 +699,40 @@ async def platform_org_usage_analytics(
 
 # ── Infrastructure health ─────────────────────────────────────────────────────
 
+# Supabase's Free-tier database size cap (see Dashboard → Usage). Not fetched
+# from an API -- there isn't a cheap one for this -- just the known published
+# limit, used here purely to render a progress bar. Update if the project is
+# ever upgraded off the Free plan.
+SUPABASE_FREE_DB_SIZE_LIMIT_BYTES = 500 * 1024 * 1024
+
+
+async def _db_stats(db: AsyncSession) -> dict:
+    """
+    Cheap pg_catalog queries only -- no Supabase Management API involved, so
+    this works with nothing beyond the DB credentials the app already has.
+    Mirrors the checks Supabase's own "Advisor" flags (RLS-disabled public
+    tables), plus size/connection numbers for a rough capacity gauge.
+    """
+    size_bytes = await db.scalar(text("select pg_database_size(current_database())"))
+    connections_current = await db.scalar(text("select count(*) from pg_stat_activity"))
+    max_connections_raw = await db.scalar(text("show max_connections"))
+    tables_missing_rls = (await db.execute(text(
+        "select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace "
+        "where n.nspname = 'public' and c.relkind = 'r' and relrowsecurity = false "
+        "order by relname"
+    ))).scalars().all()
+    return {
+        "size_bytes": int(size_bytes or 0),
+        "connections_current": int(connections_current or 0),
+        "connections_max": int(max_connections_raw or 0),
+        "tables_missing_rls": list(tables_missing_rls),
+    }
+
+
 @router.get("/health", response_model=PlatformHealthOut)
 async def platform_health(
     admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Live status of the services this request depends on. `api=True` is
@@ -734,6 +765,7 @@ async def platform_health(
             return {}
 
     worker_replies = await asyncio.to_thread(_ping_workers)
+    db_stats = await _db_stats(db)
 
     elevenlabs_usage: dict | None = None
     if settings.ELEVENLABS_API_KEY:
@@ -754,6 +786,11 @@ async def platform_health(
         elevenlabs_characters_used=elevenlabs_usage["character_count"] if elevenlabs_usage else None,
         elevenlabs_characters_limit=elevenlabs_usage["character_limit"] if elevenlabs_usage else None,
         elevenlabs_next_reset_unix=elevenlabs_usage["next_reset_unix"] if elevenlabs_usage else None,
+        db_size_bytes=db_stats["size_bytes"],
+        db_size_limit_bytes=SUPABASE_FREE_DB_SIZE_LIMIT_BYTES,
+        db_connections_current=db_stats["connections_current"],
+        db_connections_max=db_stats["connections_max"],
+        db_tables_missing_rls=db_stats["tables_missing_rls"],
     )
 
 

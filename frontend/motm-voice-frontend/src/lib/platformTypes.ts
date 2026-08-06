@@ -117,6 +117,11 @@ export interface PlatformHealth {
   elevenlabs_characters_used: number | null;
   elevenlabs_characters_limit: number | null;
   elevenlabs_next_reset_unix: number | null;
+  db_size_bytes: number;
+  db_size_limit_bytes: number;
+  db_connections_current: number;
+  db_connections_max: number;
+  db_tables_missing_rls: string[];
 }
 
 export interface PlatformVoiceCloneRequest {

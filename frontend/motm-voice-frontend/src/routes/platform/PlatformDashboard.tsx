@@ -1,4 +1,4 @@
-import { Building2, CheckCircle2, Phone, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, Phone, XCircle, Zap } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { StatCard } from "@/components/shared/StatCard";
@@ -78,6 +78,14 @@ function SystemHealthCard() {
       ? Math.min((health.data.elevenlabs_characters_used / health.data.elevenlabs_characters_limit) * 100, 100)
       : null;
 
+  const dbSizePct = health.data
+    ? Math.min((health.data.db_size_bytes / health.data.db_size_limit_bytes) * 100, 100)
+    : null;
+  const dbConnPct =
+    health.data && health.data.db_connections_max > 0
+      ? Math.min((health.data.db_connections_current / health.data.db_connections_max) * 100, 100)
+      : null;
+
   return (
     <Card>
       <CardHeader>
@@ -137,9 +145,52 @@ function SystemHealthCard() {
                 )}
               </div>
             )}
+
+            <div className="space-y-4 border-t border-border pt-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <p className="font-medium">Database size</p>
+                    <p className="text-muted-foreground">
+                      {formatBytes(health.data.db_size_bytes)} / {formatBytes(health.data.db_size_limit_bytes)}
+                    </p>
+                  </div>
+                  <Progress value={dbSizePct ?? 0} />
+                  {dbSizePct !== null && dbSizePct >= 85 && (
+                    <p className="text-xs text-warning">Approaching Supabase Free-tier storage cap</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <p className="font-medium">DB connections</p>
+                    <p className="text-muted-foreground">
+                      {health.data.db_connections_current} / {health.data.db_connections_max}
+                    </p>
+                  </div>
+                  <Progress value={dbConnPct ?? 0} />
+                </div>
+              </div>
+
+              {health.data.db_tables_missing_rls.length > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <p>
+                    <span className="font-medium text-destructive">Row-Level Security disabled</span> on{" "}
+                    {health.data.db_tables_missing_rls.length} table
+                    {health.data.db_tables_missing_rls.length > 1 ? "s" : ""}:{" "}
+                    <span className="text-muted-foreground">{health.data.db_tables_missing_rls.join(", ")}</span>
+                  </p>
+                </div>
+              )}
+            </div>
           </>
         )}
       </CardContent>
     </Card>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
 }

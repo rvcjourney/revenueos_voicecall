@@ -214,3 +214,8 @@ class PlatformHealthOut(BaseModel):
     elevenlabs_characters_used: int | None = None
     elevenlabs_characters_limit: int | None = None
     elevenlabs_next_reset_unix: int | None = None
+    db_size_bytes: int
+    db_size_limit_bytes: int
+    db_connections_current: int
+    db_connections_max: int
+    db_tables_missing_rls: list[str]
