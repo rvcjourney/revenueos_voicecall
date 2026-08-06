@@ -5,7 +5,6 @@ import uuid as _uuid_module
 from datetime import datetime, timezone
 from uuid import UUID
 
-import aiohttp
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 log = logging.getLogger(__name__)
@@ -14,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
-from app.core.elevenlabs_voice import ElevenLabsVoiceError, list_voices as list_elevenlabs_voices
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError
 from app.core.plan_features import check_agent_voice_settings
 from app.config import settings
@@ -36,35 +34,6 @@ class PromptOptimizeRequest(BaseModel):
 
 class PromptOptimizeResponse(BaseModel):
     optimized_prompt: str
-
-
-# ── Voice picker ───────────────────────────────────────────────────────────
-
-class VoiceOption(BaseModel):
-    voice_id: str
-    name: str
-    gender: str | None = None
-    accent: str | None = None
-
-
-@router.get("/voice-options/elevenlabs", response_model=list[VoiceOption])
-async def list_elevenlabs_voice_options(
-    token: TokenPayload = Depends(get_current_user),
-):
-    """
-    Live voice catalog from the platform's shared ElevenLabs account, so the
-    agent editor can offer a name-based picker instead of a raw voice_id text
-    field. See list_voices()'s docstring for why this is filtered to
-    premade voices only (never another org's cloned voice).
-    """
-    if not settings.ELEVENLABS_API_KEY:
-        raise ConflictError("ElevenLabs is not configured on this platform")
-    try:
-        async with aiohttp.ClientSession() as http:
-            voices = await list_elevenlabs_voices(http, api_key=settings.ELEVENLABS_API_KEY)
-    except ElevenLabsVoiceError as exc:
-        raise ConflictError(str(exc))
-    return [VoiceOption(**v) for v in voices]
 
 
 @router.post("/optimize-prompt", response_model=PromptOptimizeResponse)

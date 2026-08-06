@@ -197,15 +197,6 @@ export function useFetchRecording() {
 }
 
 // ── Agents ───────────────────────────────────────────────────────────────
-export function useElevenlabsVoiceOptions(enabled: boolean) {
-  return useQuery({
-    queryKey: ["elevenlabs-voice-options"],
-    queryFn: () => agentsApi.elevenlabsVoiceOptions().then((r) => r.data),
-    enabled,
-    staleTime: 10 * 60_000, // the platform's stock voice catalog barely changes
-  });
-}
-
 export function useAgents() {
   return useQuery({
     queryKey: ["agents"],

@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -44,7 +45,6 @@ import {
   useClonedVoices,
   useCreateAgent,
   useDeleteAgent,
-  useElevenlabsVoiceOptions,
   useRequestAgentAccess,
   useUpdateAgent,
   useMyTrunks,
@@ -93,6 +93,24 @@ const SARVAM_VOICES: { id: string; name: string; gender: "male" | "female"; focu
   { id: "advait", name: "Advait", gender: "male", focus: "hindi" },
   { id: "amelia", name: "Amelia", gender: "female", focus: "international" },
   { id: "sophia", name: "Sophia", gender: "female", focus: "international" },
+];
+
+// Curated ElevenLabs voices picked specifically for this platform's Indian
+// sales/support calls (not the full account-wide catalog) — names, voice_ids,
+// and language/accent came directly from the ElevenLabs voice library.
+const ELEVENLABS_VOICES: {
+  id: string;
+  name: string;
+  gender: "male" | "female";
+  focus: "hindi" | "indian-english";
+}[] = [
+  { id: "P3JECz9WQeXyyodBL3ZD", name: "Gargi — Regional E-com Customer…", gender: "female", focus: "hindi" },
+  { id: "U6U9JrUgcMgeM9W1PYFd", name: "Sujit — Regional Outbound Sales Agent", gender: "male", focus: "hindi" },
+  { id: "UbB19hYD8fvYxwJAVTY5", name: "Anika — Expressive & High Energy", gender: "female", focus: "hindi" },
+  { id: "7LIHJn2g4SPvZIQniujs", name: "Ramesh P — Top Indian Sales Outbound", gender: "male", focus: "indian-english" },
+  { id: "Ms9OTvWb99V6DwRHZn6q", name: "Monika Sogam — Deep and Clear", gender: "female", focus: "hindi" },
+  { id: "hRclHnAGI1PGQgXUYKsd", name: "Samisha — Sweet & Warm SDR Voice", gender: "female", focus: "hindi" },
+  { id: "zmh5xhBvMzqR4ZlXgcgL", name: "Monika Sogam — Lead Qualification", gender: "female", focus: "hindi" },
 ];
 
 const ACCESS_ACCENT: Record<string, string> = {
@@ -313,7 +331,6 @@ function AgentEditorDialog({
   const [optimizing, setOptimizing] = useState(false);
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
-  const elevenlabsVoices = useElevenlabsVoiceOptions(open && form.voice_provider === "elevenlabs");
   const clonedVoices = useClonedVoices();
   // Cloned voices are ElevenLabs voice_ids too -- surfaced as a group inside
   // the same Voice dropdown below (not a second selector) so there's only
@@ -322,6 +339,11 @@ function AgentEditorDialog({
   const readyClonedVoices = isAdmin
     ? (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.elevenlabs_voice_id)
     : [];
+
+  // Whether the Voice field shows the cloned-voice picker or the regular
+  // name/gender list -- exactly one is ever interactive at a time, so
+  // there's only one place that can set voice_id.
+  const [useClonedVoice, setUseClonedVoice] = useState(false);
 
   // AgentEditorDialog stays mounted permanently (only `open` toggles) so the
   // form must be re-synced here whenever it's opened for a different agent --
@@ -334,6 +356,15 @@ function AgentEditorDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, agent, initialSystemPrompt]);
+
+  // Default the toggle to "on" when editing an agent whose saved voice_id is
+  // actually one of this org's ready cloned voices. Watches clonedVoices.data
+  // too since that query can still be loading the moment the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    setUseClonedVoice(!!agent?.voice_id && readyClonedVoices.some((v) => v.elevenlabs_voice_id === agent.voice_id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, agent, clonedVoices.data]);
 
   function update<K extends keyof AgentCreate>(key: K, value: AgentCreate[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -432,7 +463,24 @@ function AgentEditorDialog({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Voice</Label>
+              <div className="flex items-center justify-between">
+                <Label>Voice</Label>
+                {isAdmin && form.voice_provider === "elevenlabs" && (
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    Use cloned voice
+                    <Switch
+                      checked={useClonedVoice}
+                      onCheckedChange={(v) => {
+                        // Whichever side you're leaving had voice_id pointed at
+                        // its own list -- clear it so a stale value from one
+                        // list can never get saved while the other is showing.
+                        setUseClonedVoice(v);
+                        update("voice_id", "");
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
               {form.voice_provider === "sarvam" ? (
                 <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
                   <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
@@ -455,76 +503,51 @@ function AgentEditorDialog({
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-              ) : elevenlabsVoices.isLoading ? (
-                <Skeleton className="h-9 w-full" />
-              ) : elevenlabsVoices.isError ? (
-                <p className="text-xs text-destructive">
-                  Couldn't load voices — {apiErrorMessage(elevenlabsVoices.error, "try again")}
-                </p>
+              ) : useClonedVoice ? (
+                readyClonedVoices.length > 0 ? (
+                  <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
+                    <SelectTrigger><SelectValue placeholder="Pick a cloned voice…" /></SelectTrigger>
+                    <SelectContent>
+                      {readyClonedVoices.map((v) => (
+                        <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {clonedVoices.isLoading ? "Loading cloned voices…" : (
+                      <>
+                        No cloned voices yet —{" "}
+                        <Link to="/voice-cloning" className="text-primary hover:underline">
+                          clone one from the Voice Cloning section
+                        </Link>{" "}
+                        to use it here.
+                      </>
+                    )}
+                  </p>
+                )
               ) : (
                 <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
                   <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
                   <SelectContent>
-                    {(() => {
-                      const all = elevenlabsVoices.data ?? [];
-                      const isHindiFriendly = (accent: string | null) =>
-                        !!accent && /indian|hindi/i.test(accent);
-                      const hindiFriendly = all.filter((v) => isHindiFriendly(v.accent));
-                      const others = all.filter((v) => !isHindiFriendly(v.accent));
-                      const renderVoice = (v: (typeof all)[number]) => (
-                        <SelectItem key={v.voice_id} value={v.voice_id}>
-                          {v.name}
-                          {v.gender && <span className="text-muted-foreground"> ({v.gender})</span>}
+                    <SelectGroup>
+                      <SelectLabel>Hindi voices</SelectLabel>
+                      {ELEVENLABS_VOICES.filter((v) => v.focus === "hindi").map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
                         </SelectItem>
-                      );
-                      // ElevenLabs' multilingual model can speak Hindi with any
-                      // voice, but only voices actually labeled with an Indian
-                      // accent sound natural doing it — surface those first.
-                      // If none carry that label (small/unusual account), skip
-                      // the grouping entirely rather than show an empty section.
-                      const clonedGroup = readyClonedVoices.length > 0 && (
-                        <SelectGroup>
-                          <SelectLabel>Your cloned voices</SelectLabel>
-                          {readyClonedVoices.map((v) => (
-                            <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>
-                              {v.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      );
-                      if (hindiFriendly.length === 0) {
-                        return (
-                          <>
-                            {clonedGroup}
-                            {all.map(renderVoice)}
-                          </>
-                        );
-                      }
-                      return (
-                        <>
-                          {clonedGroup}
-                          <SelectGroup>
-                            <SelectLabel>Hindi-friendly accent</SelectLabel>
-                            {hindiFriendly.map(renderVoice)}
-                          </SelectGroup>
-                          <SelectGroup>
-                            <SelectLabel>Other voices</SelectLabel>
-                            {others.map(renderVoice)}
-                          </SelectGroup>
-                        </>
-                      );
-                    })()}
+                      ))}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>Indian-accented English</SelectLabel>
+                      {ELEVENLABS_VOICES.filter((v) => v.focus === "indian-english").map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
-              )}
-              {isAdmin && !clonedVoices.isLoading && readyClonedVoices.length === 0 && form.voice_provider === "elevenlabs" && (
-                <p className="text-xs text-muted-foreground">
-                  No cloned voices yet —{" "}
-                  <Link to="/voice-cloning" className="text-primary hover:underline">
-                    clone one from the Voice Cloning section
-                  </Link>{" "}
-                  to use it here.
-                </p>
               )}
             </div>
           </div>

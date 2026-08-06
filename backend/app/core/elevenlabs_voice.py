@@ -78,59 +78,6 @@ async def clone_voice(
     return voice_id
 
 
-async def list_voices(http: aiohttp.ClientSession, *, api_key: str) -> list[dict]:
-    """
-    GET /v1/voices — the platform's shared ElevenLabs account's voice library,
-    used to populate a name-based voice picker (app/api/agents.py) instead of
-    making users paste a raw voice_id.
-
-    Filtered to category="premade" (ElevenLabs' own built-in stock voices)
-    only. The account also holds every org's cloned voices (one shared
-    ElevenLabs account for the whole platform -- see module docstring), and
-    those must NOT show up here: an org picking a name from this list has no
-    way to know it belongs to a different tenant, which would both leak
-    another org's cloned-voice name and get rejected anyway at save time by
-    app/core/plan_features.py's ownership check. Org-owned cloned voices are
-    already surfaced separately and correctly scoped, via GET /api/voice-cloning
-    (backed by the ClonedVoice table, not this raw account-wide list).
-    """
-    try:
-        async with http.get(
-            f"{_BASE}/voices",
-            headers={"xi-api-key": api_key},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            if resp.status == 401:
-                raise ElevenLabsVoiceError("Invalid ElevenLabs API key")
-            if resp.status != 200:
-                body = await resp.text()
-                log.warning("elevenlabs_list_voices_error", status=resp.status, body=body[:500])
-                raise ElevenLabsVoiceError(f"ElevenLabs returned {resp.status}")
-            data = await resp.json(content_type=None)
-    except ElevenLabsVoiceError:
-        raise
-    except Exception as exc:
-        log.warning("elevenlabs_list_voices_failed", error=str(exc))
-        raise ElevenLabsVoiceError("Could not reach ElevenLabs") from exc
-
-    voices = []
-    for v in data.get("voices", []):
-        if v.get("category") != "premade":
-            continue
-        labels = v.get("labels") or {}
-        voice_id, name = v.get("voice_id"), v.get("name")
-        if not voice_id or not name:
-            continue
-        voices.append({
-            "voice_id": voice_id,
-            "name": name,
-            "gender": labels.get("gender"),
-            "accent": labels.get("accent"),
-        })
-    voices.sort(key=lambda v: v["name"].lower())
-    return voices
-
-
 async def get_account_usage(http: aiohttp.ClientSession, *, api_key: str) -> dict:
     """
     GET /v1/user/subscription — the platform's own character quota for the
