@@ -1181,11 +1181,30 @@ async def _run_test_call_async(
                 # Agent will POST the real outcome via /calls/{id}/agent-report
                 call_row.status = CallStatus.COMPLETED
             call_row.ended_at = now
+            duration = None
             if answered_at:
                 call_row.answered_at = answered_at
-                call_row.duration_seconds = min(
-                    int((now - answered_at).total_seconds()), 660
-                )
+                duration = min(int((now - answered_at).total_seconds()), 660)
+                call_row.duration_seconds = duration
+
+            # Same billing rule as campaign calls (see _finalize_call above):
+            # a test call that actually connected consumes call-minutes too —
+            # it's a real call on real infrastructure, not a free simulation.
+            if place_result == "placed":
+                usage = await record_call_credits(session, org_id=_UUID(org_id), duration_seconds=duration)
+                if usage["overage_minutes"] > 0:
+                    session.add(CallEvent(
+                        call_id=call_row.id,
+                        event_type="credit_overage_billed",
+                        payload={
+                            "minutes_billed": usage["minutes_billed"],
+                            "overage_minutes": usage["overage_minutes"],
+                            "overage_cost_cents": usage["overage_cost_cents"],
+                            "credits_used_this_period": usage["credits_used_this_period"],
+                            "credits_per_month": usage["credits_per_month"],
+                        },
+                    ))
+
             await session.commit()
 
     log.info("test_call_done", call_id=call_id, result=place_result)

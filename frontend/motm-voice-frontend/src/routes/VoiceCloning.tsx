@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Mic, Play, Square, Trash2, Upload, Video, Volume2 } from "lucide-react";
+import { Loader2, Mic, Play, RotateCcw, Square, Trash2, Upload, Video, Volume2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -293,6 +293,11 @@ export default function VoiceCloning() {
                     <Play className="h-3 w-3" /> Sample ready
                   </span>
                 )}
+                {recordedUrl && !recording && (
+                  <Button type="button" variant="ghost" size="sm" onClick={resetSource}>
+                    <RotateCcw className="h-3.5 w-3.5" /> Retake
+                  </Button>
+                )}
               </div>
               {recordedUrl && (
                 <audio src={recordedUrl} controls className="h-9 w-full max-w-sm" />
@@ -351,6 +356,11 @@ export default function VoiceCloning() {
                     <span className="flex items-center gap-1.5 text-xs text-success">
                       <Play className="h-3 w-3" /> Video ready
                     </span>
+                  )}
+                  {recordedVideoUrl && !videoRecording && (
+                    <Button type="button" variant="ghost" size="sm" onClick={resetVideoSource}>
+                      <RotateCcw className="h-3.5 w-3.5" /> Retake
+                    </Button>
                   )}
                 </div>
                 {/* Always mounted (not conditional on videoRecording) so videoPreviewRef

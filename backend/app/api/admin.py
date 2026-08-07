@@ -24,6 +24,8 @@ from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.dnc import DoNotCallEntry, DNCReason
+from app.models.plan import Plan
+from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
 from app.schemas.agent import AgentAccessRequestOut, AgentCreationRequestAdminOut
 from app.schemas.auth import AdminCreateUserRequest, AdminUpdateUserRequest, AdminUserOut
@@ -54,10 +56,23 @@ async def get_org_info(
     if not org:
         raise NotFoundError("Organization not found")
     org_id_hex = str(org.id).replace("-", "")
+
+    # See app/api/auth.py's get_my_org_info -- org.plan_tier is a legacy
+    # column never updated after a Razorpay plan change; the real current
+    # plan lives on the org's active Subscription -> Plan.
+    sub = await db.scalar(
+        select(Subscription).where(Subscription.org_id == org.id, Subscription.deleted_at.is_(None))
+    )
+    plan_name = org.plan_tier
+    if sub:
+        plan = await db.get(Plan, sub.plan_id)
+        if plan:
+            plan_name = plan.name
+
     return {
         "id": str(org.id),
         "name": org.name,
-        "plan_tier": org.plan_tier,
+        "plan_tier": plan_name,
         "monthly_call_quota": org.monthly_call_quota,
         "calls_used_this_period": org.calls_used_this_period,
         "invite_code": org_id_hex[:8].upper(),  # share this with team members
