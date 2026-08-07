@@ -219,6 +219,14 @@ _theek   = r"(?:theek|ठीक)"
 _hai_w   = r"(?:hai|है)"
 _ji_w    = r"(?:ji|जी)"
 _accha   = r"(?:accha|अच्छा)"
+_interest = r"interest(?:ed)?"  # "interest" and "interested" both occur in real transcripts
+_nahi_w   = r"(?:nahi|नहीं)"
+# Up to 2 filler words between the negation and "interest"/"chahiye" -- real
+# speech doesn't always put them adjacent (e.g. "interest भी नहीं है" has
+# "bhi"/"hai" in between). Bounded rather than unbounded so an unrelated "nahi"
+# elsewhere in a longer sentence ("interested hoon, bas price ki clarity nahi
+# hai") can't falsely trigger a hangup on a customer who's still interested.
+_GAP      = r"(?:\s+\S+){0,2}\s+"
 
 # Devanagari letters are built from a base consonant plus separate combining
 # vowel-sign codepoints (matras) -- Python's stdlib `re` module's \b/\w do NOT
@@ -249,8 +257,8 @@ _HANGUP_RE = re.compile(
     # firm_decline check below) — nothing to gain by continuing to pitch someone
     # who has already refused.
     r"|not\s+interested|no\s+thanks|no\s+thank\s+you"
-    r"|(?:nahi|नहीं)\s*(?:hai\s*)?(?:interested|चाहिए)"
-    r"|(?:interested|चाहिए)\s*(?:nahi|नहीं)"
+    rf"|{_nahi_w}{_GAP}{_interest}|{_interest}{_GAP}{_nahi_w}"
+    rf"|{_nahi_w}\s*(?:hai\s*)?चाहिए|चाहिए\s*{_nahi_w}"
     # System-level
     r"|disconnect|hang\s*up|call\s+end"
     r")" + _LA,
