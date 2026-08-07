@@ -1351,13 +1351,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 "max_delay": 3.0,  # unchanged (SDK default) — ceiling the model can stretch to when unsure
             },
             interruption={
-                "min_duration": 0.6,  # caller must sustain speech for 600ms to count as an interruption
-                "min_words":    2,    # was 12 — that required a full 12-word utterance before any interruption
-                                      # registered, so real interruptions ("ruko", "suniye", "nahi nahi") never
-                                      # crossed the bar and the agent kept talking over the customer. 2 words is
-                                      # enough to filter single-word fillers ("haan"/"achha") while still letting
-                                      # genuine short interruptions cut in; min_duration above still requires 600ms
-                                      # of sustained speech, which also filters brief noise blips.
+                "min_duration": 0.35,  # was 0.6 -- a single short word ("ruko", "wait", "sorry")
+                                      # rarely sustains 600ms of speech, so real short interruptions were
+                                      # being silently ignored (this check must pass before min_words is
+                                      # even evaluated). 0.35s is still comfortably above VAD's own 0.20s
+                                      # onset requirement (prewarm() below), so it still filters clicks/
+                                      # breaths shorter than a real word.
+                "min_words":    1,    # was 2 -- required two full recognized words before an interruption
+                                      # registered, so a single-word interruption ("nahi", "ruko") never
+                                      # crossed the bar and the agent talked over the customer until they
+                                      # said a second word. 1 word is the minimum that still filters pure
+                                      # noise (STT must recognize an actual word, not just sound).
                 "false_interruption_timeout": None,  # SDK default (2.0) PAUSES the agent's audio on a
                                       # detected interruption and silently RESUMES it from where it left
                                       # off if a full turn doesn't confirm within 2s — audibly identical to
