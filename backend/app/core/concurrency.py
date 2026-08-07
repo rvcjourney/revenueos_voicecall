@@ -35,6 +35,12 @@ _SLOT_KEY_TTL = 3600            # 1-hour safety TTL — prevents a stuck counter
 _MAX_CONCURRENT_CACHE_TTL = 60   # seconds a resolved plan limit is cached
 DEFAULT_MAX_CONCURRENT_PER_ORG = 10  # fallback when an org has no active subscription/plan
 
+# Hard cap, not plan-based: whoever launched a campaign (or placed a test call)
+# can only ever have ONE of their own calls in flight at a time, platform-wide
+# across every campaign and test call they own. Independent of the org-level
+# and per-trunk caps above — a call must clear all three.
+DEFAULT_MAX_CONCURRENT_PER_USER = 1
+
 
 def org_slot_key(org_id: UUID) -> str:
     return f"motm:concurrency:{org_id}"
@@ -137,6 +143,37 @@ async def decr_queued(org_id: UUID) -> None:
             await r.set(org_queued_key(org_id), 0)
     except Exception:
         pass
+
+
+def user_slot_key(user_id: UUID) -> str:
+    return f"motm:concurrency:user:{user_id}"
+
+
+async def acquire_user_slot(user_id: UUID, max_concurrent: int = DEFAULT_MAX_CONCURRENT_PER_USER) -> bool:
+    """
+    Atomically grab the user's single concurrent-call slot. Returns True if
+    acquired, False if that user already has a call in flight.
+    Falls back to True (allow) if Redis is unavailable.
+    """
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        result = await r.eval(_LUA_ACQUIRE_SLOT, 1, user_slot_key(user_id), max_concurrent, _SLOT_KEY_TTL)
+        return bool(result)
+    except Exception:
+        return True  # fail open — don't block calls if Redis is down
+
+
+async def release_user_slot(user_id: UUID) -> None:
+    """Decrement the user's active-call counter. Floors at 0 to guard against bugs."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        count = await r.decr(user_slot_key(user_id))
+        if count < 0:
+            await r.set(user_slot_key(user_id), 0)
+    except Exception:
+        pass  # best-effort
 
 
 async def get_current_usage(session: AsyncSession, org_id: UUID) -> dict:

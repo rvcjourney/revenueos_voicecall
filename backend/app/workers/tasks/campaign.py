@@ -39,9 +39,11 @@ from sqlalchemy import func, select, update
 from app.config import settings
 from app.core.concurrency import (
     acquire_org_slot,
+    acquire_user_slot,
     decr_queued,
     incr_queued,
     release_org_slot,
+    release_user_slot,
     resolve_org_max_concurrent,
 )
 from app.core.credits import record_call_credits
@@ -613,6 +615,56 @@ async def _save_recording_async(
 async def _run_one_call(
     http: aiohttp.ClientSession,
     *,
+    owner_user_id: uuid.UUID | None = None,
+    **kwargs,
+) -> None:
+    """Wrapper around _run_one_call_body: gates on the campaign owner's single
+    concurrent-call slot (1 call in flight per admin/user, platform-wide,
+    shared with test calls) before delegating to the existing org/trunk-level
+    flow. Kept as a thin wrapper rather than folded into the body so the
+    user-slot release can't be skipped by one of the body's several
+    early-return paths.
+    """
+    contact_id = kwargs["contact_id"]
+    contact_phone = kwargs["contact_phone"]
+
+    user_slot_acquired = owner_user_id is None  # no owner to attribute to -- fail open
+    if owner_user_id is not None:
+        user_wait_attempts = max(1, settings.CONCURRENCY_MAX_WAIT_SECONDS // _ORG_MAX_WAIT_POLL_INTERVAL)
+        for attempt in range(user_wait_attempts):
+            if await acquire_user_slot(owner_user_id):
+                user_slot_acquired = True
+                break
+            if attempt == 0:
+                log.info("user_at_capacity_queuing", user_id=str(owner_user_id), phone=contact_phone)
+            await asyncio.sleep(_ORG_MAX_WAIT_POLL_INTERVAL)
+
+    if not user_slot_acquired:
+        # This admin/user stayed at their 1-call cap past MAX_WAIT — never dialed.
+        log.warning("user_slot_max_wait_exceeded", user_id=str(owner_user_id), phone=contact_phone,
+                    max_wait=settings.CONCURRENCY_MAX_WAIT_SECONDS)
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                await session.execute(
+                    update(CampaignContact)
+                    .where(CampaignContact.id == contact_id)
+                    .values(status=ContactStatus.QUEUE_TIMEOUT, last_attempted_at=datetime.now(timezone.utc))
+                )
+                call_row = await session.get(Call, kwargs["call_id"])
+                if call_row:
+                    await session.delete(call_row)
+        return
+
+    try:
+        await _run_one_call_body(http, **kwargs)
+    finally:
+        if owner_user_id is not None:
+            await release_user_slot(owner_user_id)
+
+
+async def _run_one_call_body(
+    http: aiohttp.ClientSession,
+    *,
     campaign_id: str,
     org_id: uuid.UUID,
     agent_template_id: uuid.UUID,
@@ -986,6 +1038,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 livekit_trunk_id=livekit_trunk_id,
                 sip_caller_id=sip_caller_id,
                 org_max_concurrent=org_max_concurrent,
+                owner_user_id=campaign.created_by_id,
                 **tmpl_kwargs,
                 **d,
             )
@@ -1070,6 +1123,32 @@ def run_campaign(self, campaign_id: str) -> None:
 # ── Test call ─────────────────────────────────────────────────────────────────
 
 async def _run_test_call_async(
+    agent_id: str,
+    phone_number: str,
+    call_id: str,
+    org_id: str,
+    trunk_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """Place a single test call for an agent template (no campaign).
+
+    The caller (app/api/agents.py) already acquired this user's 1-call slot
+    before dispatching this task -- released here once the call is fully
+    done, however it ends (answered+finished, no_answer, failed, or an
+    unhandled exception), so the admin is never left locked out by a slot
+    that never gets freed. Thin wrapper so the release logic can't be
+    accidentally skipped by one of the several early-return paths below.
+    """
+    from uuid import UUID as _UUID
+
+    try:
+        await _run_test_call_body(agent_id, phone_number, call_id, org_id, trunk_id)
+    finally:
+        if user_id:
+            await release_user_slot(_UUID(user_id))
+
+
+async def _run_test_call_body(
     agent_id: str,
     phone_number: str,
     call_id: str,
@@ -1232,9 +1311,12 @@ async def _run_test_call_async(
     max_retries=0,
     acks_late=True,
 )
-def place_test_call(self, agent_id: str, phone_number: str, call_id: str, org_id: str, trunk_id: str | None = None) -> None:
+def place_test_call(
+    self, agent_id: str, phone_number: str, call_id: str, org_id: str,
+    trunk_id: str | None = None, user_id: str | None = None,
+) -> None:
     """Place a single test call for an agent template (no campaign)."""
-    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id))
+    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id))
 
 
 @celery_app.task(

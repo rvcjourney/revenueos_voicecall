@@ -391,26 +391,43 @@ async def test_call(
             raise NotFoundError("Selected phone number not found")
         trunk_id = str(trunk.id)
 
-    # Create a Call record immediately so we can return call_id to the frontend
-    room_name = f"test-{_uuid_module.uuid4().hex}"
-    call = Call(
-        org_id=token.org_id,
-        phone_number=phone,
-        direction=CallDirection.OUTBOUND,
-        status=CallStatus.INITIATED,
-        outcome=CallOutcome.PENDING,
-        livekit_room_name=room_name,
-        started_at=datetime.now(timezone.utc),
-    )
-    db.add(call)
-    await db.commit()
-    await db.refresh(call)
+    # One call in flight per admin/user, platform-wide (test calls + campaign
+    # calls share this cap) — reject outright rather than queueing, since this
+    # is a synchronous request the caller is waiting on.
+    from app.core.concurrency import acquire_user_slot
 
-    # Dispatch to Celery worker (calls queue)
-    from app.workers.tasks.campaign import place_test_call
-    place_test_call.apply_async(
-        args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id],
-        queue="calls",
-    )
+    if not await acquire_user_slot(token.user_id):
+        raise ConflictError("You already have a call in progress — wait for it to finish before starting another")
+
+    try:
+        # Create a Call record immediately so we can return call_id to the frontend
+        room_name = f"test-{_uuid_module.uuid4().hex}"
+        call = Call(
+            org_id=token.org_id,
+            phone_number=phone,
+            direction=CallDirection.OUTBOUND,
+            status=CallStatus.INITIATED,
+            outcome=CallOutcome.PENDING,
+            livekit_room_name=room_name,
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(call)
+        await db.commit()
+        await db.refresh(call)
+
+        # Dispatch to Celery worker (calls queue) — the worker releases this
+        # user's slot once the call actually ends (see _run_test_call_async).
+        from app.workers.tasks.campaign import place_test_call
+        place_test_call.apply_async(
+            args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id, str(token.user_id)],
+            queue="calls",
+        )
+    except Exception:
+        # Never dispatched (or never will be worked) -- release now instead of
+        # leaving the admin locked out of test calls for up to an hour.
+        from app.core.concurrency import release_user_slot
+
+        await release_user_slot(token.user_id)
+        raise
 
     return TestCallResponse(call_id=str(call.id), status="initiated")
