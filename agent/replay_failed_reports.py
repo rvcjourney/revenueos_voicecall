@@ -41,7 +41,12 @@ async def replay() -> None:
 
     async with httpx.AsyncClient(timeout=10.0) as http:
         for i, line in enumerate(lines, 1):
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"[{i:>3}/{len(lines)}] → skip (malformed line: {exc})")
+                still_failed.append(line)
+                continue
             call_id = entry.get("call_id")
             payload = entry.get("payload", {})
             print(f"[{i:>3}/{len(lines)}] call={call_id}", end="  ")

@@ -64,6 +64,13 @@ AGENT_SYSTEM_PROMPT   = os.getenv("AGENT_SYSTEM_PROMPT",   "You are a helpful vo
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# ── Observability ─────────────────────────────────────────────────────────────
+# "development" renders logs as colored console text; anything else renders JSON.
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+# Optional — Sentry init is a no-op (see logging_config.init_sentry) when unset.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+
 # ── Internal reporting ────────────────────────────────────────────────────────
 BACKEND_INTERNAL_URL = os.getenv("BACKEND_INTERNAL_URL", "http://localhost:8000")
 AGENT_WEBHOOK_SECRET = os.getenv("AGENT_WEBHOOK_SECRET", "")

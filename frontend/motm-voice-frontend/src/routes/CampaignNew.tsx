@@ -66,6 +66,11 @@ export default function CampaignNew() {
       toast.error("Campaign name and AI agent are required");
       return;
     }
+    const hasDefaultTrunk = trunks.data?.some((t) => t.is_default);
+    if (!form.sip_trunk_id && !hasDefaultTrunk) {
+      toast.error("No phone number is set up yet. Select a number, or connect one in Settings first.");
+      return;
+    }
     try {
       const res = await createCampaign.mutateAsync({
         name: form.name,

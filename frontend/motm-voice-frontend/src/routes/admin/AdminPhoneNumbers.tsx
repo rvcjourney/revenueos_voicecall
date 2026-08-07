@@ -149,6 +149,7 @@ function TrunkCard({ trunk }: { trunk: SipTrunk }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {trunk.is_default && <Badge variant="info">Default</Badge>}
             <Badge variant={trunk.is_active ? "success" : "destructive"}>
               {trunk.is_active ? <Check className="h-3 w-3" /> : null} {trunk.is_active ? "Active" : "Inactive"}
             </Badge>

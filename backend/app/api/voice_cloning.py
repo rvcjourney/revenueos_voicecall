@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import aiohttp
+import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from app.models.voice_clone_request import VoiceCloneRequest
 from app.schemas.voice_cloning import ClonedVoiceListResponse, ClonedVoiceOut
 from app.storage.backend import get_storage
 
+log = structlog.get_logger(__name__)
 router = APIRouter()
 
 # Consent videos are a short fixed-script recording, not a large media file —
@@ -124,9 +126,20 @@ async def create_voice_clone_request(
     await storage.upload(
         settings.BUCKET_VOICE_CONSENT, audio_key, sample_bytes, content_type=file.content_type or "audio/mpeg"
     )
-    await storage.upload(
-        settings.BUCKET_VOICE_CONSENT, video_key, video_bytes, content_type=consent_video.content_type or "video/webm"
-    )
+    try:
+        await storage.upload(
+            settings.BUCKET_VOICE_CONSENT, video_key, video_bytes, content_type=consent_video.content_type or "video/webm"
+        )
+    except Exception:
+        # The audio file already landed in storage but no DB row will ever
+        # reference it — clean it up rather than leaving it orphaned. Best
+        # effort: if the delete itself fails, log it for manual cleanup
+        # instead of masking the original upload error.
+        try:
+            await storage.delete(settings.BUCKET_VOICE_CONSENT, audio_key)
+        except Exception:
+            log.exception("voice_clone_orphan_cleanup_failed", audio_key=audio_key)
+        raise
 
     req = VoiceCloneRequest(
         id=request_id,

@@ -8,10 +8,10 @@ import asyncio
 import hashlib
 import hmac
 import json
-import logging
 import re
 import time
 import certifi
+import structlog
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -50,20 +50,17 @@ from config import (
     SARVAM_STT_MODEL,
     SARVAM_STT_MODE,
     SARVAM_STT_LANGUAGE,
-    LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
     FAILED_REPORTS_PATH,
     validate_config,
 )
+from logging_config import configure_logging, init_sentry, set_log_context
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("voice-agent")
+configure_logging()
+init_sentry()
+logger = structlog.get_logger("voice-agent")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
@@ -1149,6 +1146,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
     campaign_id     = meta.get("campaign_id", "")
+    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id)
 
     if meta.get("system_prompt"):
         logger.info("system_prompt | source=room_metadata campaign=%s len=%d", campaign_id, len(raw_prompt))

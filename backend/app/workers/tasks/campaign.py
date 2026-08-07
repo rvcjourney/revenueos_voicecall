@@ -124,7 +124,8 @@ async def _acquire_trunk_slot(livekit_trunk_id: str) -> bool:
             _SLOT_KEY_TTL,
         )
         return bool(result)
-    except Exception:
+    except Exception as exc:
+        log.error("trunk_slot_redis_fail_open", trunk_id=livekit_trunk_id, error=str(exc))
         return True  # fail open — don't block calls if Redis is down
 
 
@@ -167,7 +168,8 @@ async def _acquire_cps_slot() -> None:
             if result:
                 return
             await asyncio.sleep(0.1)
-    except Exception:
+    except Exception as exc:
+        log.error("cps_slot_redis_fail_open", error=str(exc))
         return  # fail open — don't block calls if Redis is down
 
 
@@ -176,7 +178,8 @@ async def _acquire_lock(campaign_id: str) -> bool:
     try:
         from app.core.redis import get_redis
         return bool(await (await get_redis()).set(_lock_key(campaign_id), "1", nx=True, ex=_LOCK_TTL))
-    except Exception:
+    except Exception as exc:
+        log.error("campaign_lock_redis_fail_open", campaign_id=campaign_id, error=str(exc))
         if campaign_id in _mem_locks:
             return False
         _mem_locks.add(campaign_id)
@@ -605,7 +608,7 @@ async def _save_recording_async(
                     return
             except Exception as exc:
                 log.warning("recording_save_error", call_id=str(call_id), error=str(exc))
-    log.warning("recording_fetch_gave_up", call_id=str(call_id), to=to_number)
+    log.error("recording_fetch_gave_up", call_id=str(call_id), to=to_number)
 
 
 # ── Per-call coroutine (runs in parallel inside the dispatch loop) ────────────
