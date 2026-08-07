@@ -187,22 +187,73 @@ class _CappedGroqLLM(groq.LLM):
 
 
 # ── Hangup detection ──────────────────────────────────────────────────────────
+# Sarvam's STT transcribes Hindi words in Devanagari script even in codemix mode
+# (confirmed against real call transcripts — e.g. "नहीं", not "nahi") while
+# English loanwords ("bye", "ok", "interested") stay in Latin script. Every
+# Hindi word below is matched in BOTH scripts for exactly this reason — the
+# original Latin-only version of this pattern (alvida/chalta hoon/band karo/...)
+# was very likely never matching a single real Hindi-spoken hangup, since real
+# transcripts never come back romanized.
+_alvida  = r"(?:alvida|अलविदा)"
+_chalta  = r"(?:chalta|चलता)"
+_chalti  = r"(?:chalti|चलती)"
+_nikalta = r"(?:nikalta|निकलता)"
+_nikalti = r"(?:nikalti|निकलती)"
+_hoon    = r"(?:hoon|hu|हूँ|हूं)"
+_phone   = r"(?:phone|फोन)"
+_rakhna  = r"(?:rakhna|रखना)"
+_rakh    = r"(?:rakh|रख)"
+_band    = r"(?:band|बंद)"
+_karo    = r"(?:karo|करो)"
+_rakho   = r"(?:rakho|रखो)"
+_do_w    = r"(?:do|दो)"
+_call_w  = r"(?:call|कॉल)"
+_khatam  = r"(?:khatam|khatm|खतम|ख़त्म)"
+_karte   = r"(?:karte|करते)"
+_hain    = r"(?:hain|हैं)"
+_rakhta  = r"(?:rakhta|रखता)"
+_rakhti  = r"(?:rakhti|रखती)"
+_rahi    = r"(?:rahi|रही)"
+_chalo   = r"(?:chalo|चलो)"
+_theek   = r"(?:theek|ठीक)"
+_hai_w   = r"(?:hai|है)"
+_ji_w    = r"(?:ji|जी)"
+_accha   = r"(?:accha|अच्छा)"
+
+# Devanagari letters are built from a base consonant plus separate combining
+# vowel-sign codepoints (matras) -- Python's stdlib `re` module's \b/\w do NOT
+# treat those combining marks as word characters, so \b silently splits a word
+# like "अलविदा" mid-letter and never matches it with a trailing \b (confirmed:
+# \b-wrapped Devanagari alternatives never matched ANY real or synthetic test
+# string). These lookarounds define "boundary" as "not touching another
+# non-space, non-punctuation character" instead -- script-agnostic, and still
+# allows punctuation with no space before it (real transcripts do this, e.g.
+# "interested. Thank you").
+_LB = r"(?<![^\s.,!?;:\"'()\-])"
+_LA = r"(?![^\s.,!?;:\"'()\-])"
+
 _HANGUP_RE = re.compile(
-    r"\b("
+    _LB + r"(" +
     # Universal — these words are ONLY ever used to end a call
-    r"bye|goodbye|alvida"
-    # Hinglish bye combos
-    r"|ok\s*bye|chalo\s*bye|theek\s*hai\s*bye|ok\s+ji\s+bye|accha\s+bye"
+    rf"bye|goodbye|{_alvida}"
+    # Hinglish bye combos ("bye"/"ok" stay Latin as English loanwords)
+    rf"|ok\s*bye|{_chalo}\s*bye|{_theek}\s*{_hai_w}\s*bye|ok\s+{_ji_w}\s+bye|{_accha}\s+bye"
     # "I'm heading off" — very unambiguous phone-enders
-    r"|chalta\s+hoon|chalti\s+hoon|nikalta\s+hoon|nikalti\s+hoon"
-    r"|chalta\s+hu|chalti\s+hu|nikalta\s+hu|nikalti\s+hu"
+    rf"|{_chalta}\s+{_hoon}|{_chalti}\s+{_hoon}|{_nikalta}\s+{_hoon}|{_nikalti}\s+{_hoon}"
     # Putting down the phone — only said when actually ending
-    r"|phone\s+rakhna|phone\s+rakh|band\s+karo|rakho\s+phone|rakh\s+do"
-    r"|call\s+khatam|khatam\s+karte\s+hain"
-    r"|rakhta\s+hoon|rakhti\s+hoon|rakh\s+rahi\s+hoon"
+    rf"|{_phone}\s+{_rakhna}|{_phone}\s+{_rakh}|{_band}\s+{_karo}|{_rakho}\s+{_phone}|{_rakh}\s+{_do_w}"
+    rf"|{_call_w}\s+{_khatam}|{_khatam}\s+{_karte}\s+{_hain}"
+    rf"|{_rakhta}\s+{_hoon}|{_rakhti}\s+{_hoon}|{_rakh}\s+{_rahi}\s+{_hoon}"
+    # Firm rejection — customer isn't just pausing/thinking, they've said no.
+    # A clear decline should end the call at ANY turn count (see _trigger_hangup's
+    # firm_decline check below) — nothing to gain by continuing to pitch someone
+    # who has already refused.
+    r"|not\s+interested|no\s+thanks|no\s+thank\s+you"
+    r"|(?:nahi|नहीं)\s*(?:hai\s*)?(?:interested|चाहिए)"
+    r"|(?:interested|चाहिए)\s*(?:nahi|नहीं)"
     # System-level
     r"|disconnect|hang\s*up|call\s+end"
-    r")\b",
+    r")" + _LA,
     re.IGNORECASE | re.UNICODE,
 )
 _FAREWELL = "Bahut shukriya ji, aapka time dene ke liye! Take care, Bye"
@@ -607,7 +658,15 @@ class VoiceAgent(Agent):
         """Called when agent's own speech contains [end_call] — agent already said goodbye."""
         if self._ending:
             return
-        if self._turn_count < 5:
+        # A customer who just firmly declined ("not interested", "nahi chahiye", "bye"...)
+        # should be allowed to end the call at ANY turn count -- the <5 floor below exists
+        # to catch the LLM bailing too early with no real signal from the customer yet
+        # (e.g. after a single "haan"), not to force it to keep pitching someone who has
+        # already said no. Real bug this fixed: customer declined at turn 4, got stuck in
+        # silence probes for the rest of the call instead of a clean goodbye.
+        last_user_text = self._user_messages[-1] if self._user_messages else ""
+        firm_decline = bool(_HANGUP_RE.search(last_user_text))
+        if self._turn_count < 5 and not firm_decline:
             # LLM generated [end_call] too early — suppress and let conversation continue
             logger.warning("[end_call] at turn %d (<5) — suppressing early exit", self._turn_count)
             return
