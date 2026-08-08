@@ -179,6 +179,21 @@ async def _resolve_inbound_call(meta: dict, participant, room_name: str) -> dict
 # =============================================================================
 # Groq LLM wrapper — caps max_tokens on every call
 # =============================================================================
+# Reasoning models add real chain-of-thought latency before the visible answer
+# even at their lowest setting -- openai/gpt-oss-20b/120b can only go as low as
+# "low" (confirmed in the installed livekit-plugins-groq SDK, which auto-sets
+# reasoning_effort="low" for those two models and nothing lower is available),
+# which measured as an 18s+ welcome-message delay in real testing. qwen/qwen3.6-27b
+# is the one model on this list that supports a genuine non-thinking mode via
+# reasoning_effort="none" -- explicitly forced here since the installed SDK
+# version predates this model and has no built-in default for it (it would
+# otherwise fall through to Groq's server-side default, which is "default"/
+# thinking-mode-on).
+_REASONING_EFFORT_OVERRIDES = {
+    "qwen/qwen3.6-27b": "none",
+}
+
+
 class _CappedGroqLLM(groq.LLM):
     def chat(self, *, chat_ctx, **kwargs):
         ek = dict(kwargs.pop("extra_kwargs", {}) or {})
@@ -1229,7 +1244,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     system_prompt = _build_prompt(raw_prompt, welcome_message, language)
     logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
 
-    llm = _CappedGroqLLM(model=llm_model, temperature=llm_temperature)
+    llm_kwargs: dict = {"model": llm_model, "temperature": llm_temperature}
+    if llm_model in _REASONING_EFFORT_OVERRIDES:
+        llm_kwargs["reasoning_effort"] = _REASONING_EFFORT_OVERRIDES[llm_model]
+    llm = _CappedGroqLLM(**llm_kwargs)
     # Start warmup immediately with the real system prompt so Groq caches the full context.
     # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
     warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
