@@ -284,7 +284,7 @@ function ChangePlanDialog({
           name: "QuickHowl",
           description: `${result.plan_name} plan`,
           prefill: { name: userName, email: userEmail },
-          theme: { color: "#6366f1" },
+          theme: { color: "#2563eb" },
           handler: async (response) => {
             try {
               await verifyPayment.mutateAsync(response);
