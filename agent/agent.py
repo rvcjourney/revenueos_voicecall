@@ -193,6 +193,14 @@ _REASONING_EFFORT_OVERRIDES = {
     "qwen/qwen3.6-27b": "none",
 }
 
+# Confirmed via a real 400 from Groq: "failed to template request: ... minijinja:
+# rendering failed: raise_exception: No user query found in messages." -- this
+# model's chat template hard-rejects a request containing only a system prompt
+# and no user turn, which is exactly how the welcome message is generated (no
+# customer has spoken yet). Every other model tolerates this; only listing the
+# ones confirmed to need the workaround in on_enter() below.
+_NEEDS_SYNTHETIC_FIRST_TURN = {"qwen/qwen3.6-27b"}
+
 
 class _CappedGroqLLM(groq.LLM):
     def chat(self, *, chat_ctx, **kwargs):
@@ -736,7 +744,25 @@ class VoiceAgent(Agent):
         self.session.on("agent_state_changed", self._on_agent_state_changed)
         try:
             logger.info("Generating welcome via LLM pipeline...")
-            await self.session.generate_reply()
+            reply_kwargs: dict = {}
+            model_name = getattr(self.session.llm, "model", "")
+            if model_name in _NEEDS_SYNTHETIC_FIRST_TURN:
+                # Short bracketed trigger (matches the existing "[FIRST TURN...]"
+                # convention already in the system prompt) satisfies this model's
+                # template requirement without reading as real customer speech.
+                reply_kwargs["user_input"] = (
+                    "[SYSTEM: The call has just connected — greet the customer now, "
+                    "following your welcome-turn instructions.]"
+                )
+            handle = await self.session.generate_reply(**reply_kwargs)
+            if not handle.chat_items:
+                # generate_reply() completed without raising but produced zero
+                # output -- e.g. a provider-side API error logged deep inside the
+                # SDK's generation pipeline that never propagates up as a Python
+                # exception here. Previously this silently logged "Welcome
+                # generated" even though nothing was ever spoken, leaving the
+                # caller in dead air until they spoke first themselves.
+                raise RuntimeError("generate_reply produced no output (empty chat_items)")
             logger.info("Welcome generated ✓")
         except Exception as e:
             msg = str(e).lower()
