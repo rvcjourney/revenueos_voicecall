@@ -69,7 +69,7 @@ class AgentCreate(BaseModel):
     system_prompt: str = ""
     voice_id: str = "9BWtsMINqrJLrRacOk9x"
     voice_provider: str = "elevenlabs"
-    llm_model: str = "llama-3.1-8b-instant"
+    llm_model: str = "openai/gpt-oss-20b"
     llm_temperature: float = 0.7
     max_call_duration_seconds: int = 600
 
