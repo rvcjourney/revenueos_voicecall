@@ -20,7 +20,7 @@ services:
       - ENVIRONMENT=production
       - DOCS_ENABLED=false
       - DEBUG=false
-      - 'CORS_ORIGINS=["https://app.quickhole.com"]'
+      - 'CORS_ORIGINS=["https://app.quickhowl.com"]'
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -115,7 +115,7 @@ services:
       context: ./frontend/motm-voice-frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: https://app.quickhole.com
+        VITE_API_URL: https://app.quickhowl.com
     container_name: motm-frontend
     restart: always
     ports:
