@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/lib/theme";
 import { AuthedLayout } from "@/components/layout/AuthedLayout";
 import { PlatformAuthedLayout } from "@/components/platform/PlatformShell";
 import { PageLoader } from "@/components/shared/PageLoader";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 
 const Landing = lazy(() => import("@/routes/Landing"));
 const Login = lazy(() => import("@/routes/Login"));
@@ -58,67 +59,69 @@ const queryClient = new QueryClient({
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
-          <TooltipProvider delayDuration={200}>
-            <BrowserRouter>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route path="/" element={<Landing />} />
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/signup" element={<Signup />} />
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <AuthProvider>
+            <TooltipProvider delayDuration={200}>
+              <BrowserRouter>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/" element={<Landing />} />
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/signup" element={<Signup />} />
 
-                  <Route element={<AuthedLayout />}>
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/campaigns" element={<CampaignsList />} />
-                    <Route path="/campaigns/new" element={<CampaignNew />} />
-                    <Route path="/campaigns/:id" element={<CampaignDetail />} />
-                    <Route path="/calls" element={<CallsList />} />
-                    <Route path="/calls/:id" element={<CallDetail />} />
-                    <Route path="/agents" element={<Agents />} />
-                    <Route path="/prompt-library" element={<PromptLibrary />} />
-                    <Route path="/voice-cloning" element={<VoiceCloning />} />
-                    <Route path="/analytics" element={<Analytics />} />
-                    <Route path="/billing" element={<Billing />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="/admin/team" element={<AdminTeam />} />
-                    <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
-                    <Route path="/admin/inbound-agents" element={<InboundAgents />} />
-                    <Route path="/admin/dnc" element={<AdminDnc />} />
-                    <Route path="/admin/audit" element={<AdminAudit />} />
-                  </Route>
-
-                  <Route path="/app" element={<Navigate to="/dashboard" replace />} />
-
-                  <Route
-                    path="/ops/*"
-                    element={
-                      <PlatformAuthProvider>
-                        <Outlet />
-                      </PlatformAuthProvider>
-                    }
-                  >
-                    <Route path="login" element={<PlatformLogin />} />
-                    <Route element={<PlatformAuthedLayout />}>
-                      <Route index element={<Navigate to="/ops/dashboard" replace />} />
-                      <Route path="dashboard" element={<PlatformDashboard />} />
-                      <Route path="organizations" element={<PlatformOrganizations />} />
-                      <Route path="organizations/:id" element={<PlatformOrgDetail />} />
-                      <Route path="plans" element={<PlatformPlans />} />
-                      <Route path="voice-clone-requests" element={<PlatformVoiceCloneRequests />} />
-                      <Route path="analytics" element={<PlatformAnalytics />} />
+                    <Route element={<AuthedLayout />}>
+                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/campaigns" element={<CampaignsList />} />
+                      <Route path="/campaigns/new" element={<CampaignNew />} />
+                      <Route path="/campaigns/:id" element={<CampaignDetail />} />
+                      <Route path="/calls" element={<CallsList />} />
+                      <Route path="/calls/:id" element={<CallDetail />} />
+                      <Route path="/agents" element={<Agents />} />
+                      <Route path="/prompt-library" element={<PromptLibrary />} />
+                      <Route path="/voice-cloning" element={<VoiceCloning />} />
+                      <Route path="/analytics" element={<Analytics />} />
+                      <Route path="/billing" element={<Billing />} />
+                      <Route path="/settings" element={<Settings />} />
+                      <Route path="/admin/team" element={<AdminTeam />} />
+                      <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
+                      <Route path="/admin/inbound-agents" element={<InboundAgents />} />
+                      <Route path="/admin/dnc" element={<AdminDnc />} />
+                      <Route path="/admin/audit" element={<AdminAudit />} />
                     </Route>
-                  </Route>
 
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </BrowserRouter>
-            <Toaster position="top-right" />
-          </TooltipProvider>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+                    <Route path="/app" element={<Navigate to="/dashboard" replace />} />
+
+                    <Route
+                      path="/ops/*"
+                      element={
+                        <PlatformAuthProvider>
+                          <Outlet />
+                        </PlatformAuthProvider>
+                      }
+                    >
+                      <Route path="login" element={<PlatformLogin />} />
+                      <Route element={<PlatformAuthedLayout />}>
+                        <Route index element={<Navigate to="/ops/dashboard" replace />} />
+                        <Route path="dashboard" element={<PlatformDashboard />} />
+                        <Route path="organizations" element={<PlatformOrganizations />} />
+                        <Route path="organizations/:id" element={<PlatformOrgDetail />} />
+                        <Route path="plans" element={<PlatformPlans />} />
+                        <Route path="voice-clone-requests" element={<PlatformVoiceCloneRequests />} />
+                        <Route path="analytics" element={<PlatformAnalytics />} />
+                      </Route>
+                    </Route>
+
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </Suspense>
+              </BrowserRouter>
+              <Toaster position="top-right" />
+            </TooltipProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

@@ -13,7 +13,7 @@ export function Logo({ className, iconClassName }: { className?: string; iconCla
         Quick
         <span
           className="bg-clip-text text-transparent"
-          style={{ backgroundImage: "linear-gradient(135deg, #7dd3fc, #2563eb)" }}
+          style={{ backgroundImage: "var(--gradient-primary)" }}
         >
           Howl
         </span>

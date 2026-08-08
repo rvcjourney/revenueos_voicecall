@@ -18,6 +18,7 @@ import {
   Play,
   Pause,
   ArrowDownRight,
+  Mic,
 } from "lucide-react";
 import { PublicNav } from "@/components/marketing/PublicNav";
 import { PublicFooter } from "@/components/marketing/PublicFooter";
@@ -36,6 +37,11 @@ import {
 import { cn } from "@/lib/utils";
 
 const features = [
+  {
+    icon: Mic,
+    title: "Clone any voice, reuse everywhere",
+    description: "Clone your own voice, a top rep's, or your founder's once — then assign it to any AI agent across every campaign, no re-recording required.",
+  },
   {
     icon: Languages,
     title: "Human-like multilingual voice",
@@ -85,9 +91,10 @@ const features = [
 
 const steps = [
   { icon: Upload, step: "01", title: "Upload Contacts", description: "Drag in a CSV or Excel file with thousands of leads — we handle column mapping automatically." },
-  { icon: SlidersHorizontal, step: "02", title: "Configure Agent", description: "Pick a voice, a language, and write (or let AI optimize) a system prompt in minutes." },
-  { icon: Rocket, step: "03", title: "Launch Campaign", description: "Calls go out concurrently, at your pace, inside your calling window — no manual dialing." },
-  { icon: Download, step: "04", title: "Export Leads", description: "Download interested leads, callbacks, or full results the moment they're ready — synced to your CRM." },
+  { icon: Mic, step: "02", title: "Clone Your Voice", description: "Record 60 seconds of your own voice, a top rep's, or your founder's — clone it once, then reuse it on any agent." },
+  { icon: SlidersHorizontal, step: "03", title: "Configure Agent", description: "Pick any voice — including one you've cloned — a language, and write (or let AI optimize) a system prompt in minutes." },
+  { icon: Rocket, step: "04", title: "Launch Campaign", description: "Calls go out concurrently, at your pace, inside your calling window — no manual dialing." },
+  { icon: Download, step: "05", title: "Export Leads", description: "Download interested leads, callbacks, or full results the moment they're ready — synced to your CRM." },
 ];
 
 const stepAccents = [
@@ -95,9 +102,10 @@ const stepAccents = [
   "border-primary/30 bg-primary/10 text-primary",
   "border-info/30 bg-info/10 text-info",
   "border-success/30 bg-success/10 text-success",
+  "border-border bg-muted text-muted-foreground",
 ];
 
-const stepStagger = ["lg:ml-0", "lg:ml-12", "lg:ml-24", "lg:ml-36"];
+const stepStagger = ["lg:ml-0", "lg:ml-12", "lg:ml-24", "lg:ml-36", "lg:ml-48"];
 
 const faqs = [
   {
@@ -123,6 +131,10 @@ const faqs = [
   {
     q: "Can my sales reps use this without full admin access?",
     a: "Yes. Members get a restricted view — their own campaigns only — and must request access to each AI agent before using it, which an admin approves.",
+  },
+  {
+    q: "Can I use my own voice, or a custom voice, for the AI agent?",
+    a: "Yes. Clone your own voice, a top rep's, or your founder's once using our voice cloning tool, then assign that voice to any AI agent — no re-recording needed for future campaigns.",
   },
 ];
 
@@ -165,10 +177,15 @@ export default function Landing() {
             <h1 className="font-heading text-4xl font-semibold leading-[1.1] sm:text-5xl lg:text-6xl">
               Your AI sales team that <span className="text-gradient">never stops dialing</span>
             </h1>
+            <p className="font-heading text-xl font-semibold leading-tight text-foreground sm:text-2xl">
+              <Mic className="mr-1.5 inline h-5 w-5 -translate-y-0.5 text-primary" />
+              ...and sounds exactly like <span className="text-gradient">you</span>.
+            </p>
             <p className="max-w-lg text-lg text-muted-foreground">
               Human-sounding voice agents that call, qualify, and follow up with leads in Hinglish,
               English, and 20+ languages — real conversations and live analytics, without adding a
-              single new hire.
+              single new hire. Clone your own voice, a top rep's, or your founder's once, then reuse
+              it across every AI agent.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button size="lg" variant="gradient" asChild>
@@ -189,67 +206,95 @@ export default function Landing() {
             </div>
           </div>
 
-          <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.15s" }}>
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <div className="flex items-center gap-3">
-                <AIAvatar size="sm" />
-                <div>
-                  <p className="text-sm font-medium">Aniket — AI Agent</p>
-                  <p className="text-xs text-muted-foreground">Speaking with Rajesh Sharma</p>
+          <div className="min-w-0 space-y-4">
+            <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.15s" }}>
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div className="flex items-center gap-3">
+                  <AIAvatar size="sm" />
+                  <div>
+                    <p className="text-sm font-medium">Aniket — AI Agent</p>
+                    <p className="text-xs text-muted-foreground">Speaking with Rajesh Sharma</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleDemoAudio}
+                    aria-label={isDemoPlaying ? "Pause call recording" : "Play call recording"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-all hover:scale-110 hover:bg-accent active:scale-90"
+                  >
+                    {isDemoPlaying ? (
+                      <Pause className="h-3.5 w-3.5" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5 translate-x-[1px]" />
+                    )}
+                  </button>
+                  <audio
+                    ref={demoAudioRef}
+                    src="/demo-call.mp3"
+                    onPlay={() => setIsDemoPlaying(true)}
+                    onPause={() => setIsDemoPlaying(false)}
+                    onEnded={() => setIsDemoPlaying(false)}
+                    className="hidden"
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={toggleDemoAudio}
-                  aria-label={isDemoPlaying ? "Pause call recording" : "Play call recording"}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-foreground transition-all hover:scale-110 hover:bg-accent active:scale-90"
+                <Badge variant="success">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                  </span>
+                  Live {demoTimeLabel}
+                </Badge>
+              </div>
+              <div className="flex justify-center py-4">
+                <SoundWave />
+              </div>
+              <div className="space-y-3">
+                <div
+                  className="animate-bubble-in rounded-xl rounded-tl-sm bg-muted p-3 text-sm"
+                  style={{ animationDelay: "0.1s" }}
                 >
-                  {isDemoPlaying ? (
-                    <Pause className="h-3.5 w-3.5" />
-                  ) : (
-                    <Play className="h-3.5 w-3.5 translate-x-[1px]" />
-                  )}
-                </button>
-                <audio
-                  ref={demoAudioRef}
-                  src="/demo-call.mp3"
-                  onPlay={() => setIsDemoPlaying(true)}
-                  onPause={() => setIsDemoPlaying(false)}
-                  onEnded={() => setIsDemoPlaying(false)}
-                  className="hidden"
-                />
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">Aniket</p>
+                  "Sir, main samajh sakta hoon budget ek concern hai — same quality mein hum aapko 30%
+                  kam price de sakte hain. Kal shaam 4 baje ek quick demo fix kar doon?"
+                </div>
+                <div
+                  className="animate-bubble-in ml-auto max-w-[85%] rounded-xl rounded-tr-sm bg-primary/15 p-3 text-sm"
+                  style={{ animationDelay: "0.35s" }}
+                >
+                  <p className="mb-1 text-xs font-medium text-primary">Rajesh</p>
+                  "Haan bilkul, kal 4 baje baat kar lete hain."
+                </div>
               </div>
-              <Badge variant="success">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                </span>
-                Live {demoTimeLabel}
-              </Badge>
-            </div>
-            <div className="flex justify-center py-4">
-              <SoundWave />
-            </div>
-            <div className="space-y-3">
-              <div
-                className="animate-bubble-in rounded-xl rounded-tl-sm bg-muted p-3 text-sm"
-                style={{ animationDelay: "0.1s" }}
-              >
-                <p className="mb-1 text-xs font-medium text-muted-foreground">Aniket</p>
-                "Sir, main samajh sakta hoon budget ek concern hai — same quality mein hum aapko 30%
-                kam price de sakte hain. Kal shaam 4 baje ek quick demo fix kar doon?"
-              </div>
-              <div
-                className="animate-bubble-in ml-auto max-w-[85%] rounded-xl rounded-tr-sm bg-primary/15 p-3 text-sm"
-                style={{ animationDelay: "0.35s" }}
-              >
-                <p className="mb-1 text-xs font-medium text-primary">Rajesh</p>
-                "Haan bilkul, kal 4 baje baat kar lete hain."
+              <div className="mt-4 flex justify-end">
+                <Badge variant="success" className="animate-bubble-in" style={{ animationDelay: "0.6s" }}>
+                  <Check className="h-3 w-3" /> Auto-tagged as hot lead
+                </Badge>
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
-              <Badge variant="success" className="animate-bubble-in" style={{ animationDelay: "0.6s" }}>
-                <Check className="h-3 w-3" /> Auto-tagged as hot lead
-              </Badge>
+
+            <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.3s" }}>
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                    <Mic className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium">Voice Cloning</p>
+                    <p className="text-xs text-muted-foreground">Founder's voice — 42s sample</p>
+                  </div>
+                </div>
+                <Badge variant="success">
+                  <Check className="h-3 w-3" /> Cloned
+                </Badge>
+              </div>
+              <div className="flex justify-center py-4">
+                <SoundWave />
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Now speaking as:</span>
+                <Badge variant="outline">Aniket</Badge>
+                <Badge variant="outline">Priya</Badge>
+                <Badge variant="outline">+12 more agents</Badge>
+              </div>
             </div>
           </div>
         </div>
@@ -278,15 +323,15 @@ export default function Landing() {
       <section id="how-it-works" className="border-t border-border/60 py-20">
         <div className="reveal-on-scroll mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
-            <h2 className="font-heading text-3xl font-semibold sm:text-4xl">From spreadsheet to closed deals in 4 steps</h2>
+            <h2 className="font-heading text-3xl font-semibold sm:text-4xl">From spreadsheet to closed deals in 5 steps</h2>
             <p className="mt-3 text-muted-foreground">No dialer to configure, no scripts to memorize — just upload your list and launch in minutes.</p>
           </div>
           <div className="mt-16 mx-auto max-w-md lg:max-w-2xl">
             {steps.map((s, i) => (
-              <div key={s.step}>
+              <div key={s.step} className="reveal-on-scroll" style={{ animationDelay: `${i * 0.08}s` }}>
                 <div
                   className={cn(
-                    "w-full max-w-sm rounded-2xl border p-5 transition-transform hover:-translate-y-0.5",
+                    "hover-lift w-full max-w-sm rounded-2xl border p-5",
                     stepAccents[i % stepAccents.length],
                     stepStagger[i % stepStagger.length]
                   )}

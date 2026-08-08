@@ -159,6 +159,47 @@ async def _get_trunk(db: AsyncSession, trunk_id: UUID, org_id: UUID) -> SipTrunk
     return trunk
 
 
+async def _rebalance_default(db: AsyncSession, org_id: UUID) -> None:
+    """
+    Keep is_default meaningful after an is_active change: it must never point
+    at a trunk that isn't active. Call this whenever a trunk's is_active
+    flips (test pass/fail, manual deactivate, delete) unless the caller is
+    already setting is_default explicitly in the same request.
+    """
+    active = (await db.execute(
+        select(SipTrunk).where(
+            SipTrunk.org_id == org_id,
+            SipTrunk.is_active.is_(True),
+            SipTrunk.deleted_at.is_(None),
+        )
+    )).scalars().all()
+
+    current_defaults = (await db.execute(
+        select(SipTrunk).where(
+            SipTrunk.org_id == org_id,
+            SipTrunk.is_default.is_(True),
+            SipTrunk.deleted_at.is_(None),
+        )
+    )).scalars().all()
+
+    if len(active) == 1:
+        # The one working number in the org is the obvious default.
+        for t in current_defaults:
+            if t.id != active[0].id:
+                t.is_default = False
+        active[0].is_default = True
+        return
+
+    # Zero or multiple active trunks: don't guess which one should be
+    # default, but never leave "default" pointing at a dead trunk — a
+    # stale default is worse than none (it silently triggers the global
+    # fallback caller ID instead of surfacing a "no number" error).
+    active_ids = {t.id for t in active}
+    for t in current_defaults:
+        if t.id not in active_ids:
+            t.is_default = False
+
+
 # ── Admin: list all trunks ────────────────────────────────────────────────────
 
 @router.get("", response_model=list[TrunkOut])
@@ -297,10 +338,10 @@ async def connect_vobiz(
     #    vobiz_auth_token are stored explicitly too so future Vobiz API calls
     #    (e.g. re-validating the DID, recording lookups) don't need to reuse
     #    the sip_* fields.
-    is_first_trunk = not bool(await db.scalar(
-        select(SipTrunk.id).where(SipTrunk.org_id == token.org_id, SipTrunk.deleted_at.is_(None))
-    ))
-
+    # is_default is NOT set here — it's only ever assigned once a trunk
+    # passes /test and _rebalance_default confirms it's the org's sole
+    # working number. Defaulting an untested trunk is exactly how a
+    # campaign ends up trying to call through a number that doesn't work.
     trunk = SipTrunk(
         org_id=token.org_id,
         name=f"Vobiz {did}",
@@ -310,7 +351,7 @@ async def connect_vobiz(
         sip_password=body.auth_token,
         caller_id=did,
         transport=SipTransport.TCP,
-        is_default=is_first_trunk,
+        is_default=False,
         is_active=False,
     )
     trunk.vobiz_auth_id = body.auth_id
@@ -357,10 +398,12 @@ async def test_trunk(
             )
         except TwirpError as exc:
             trunk.is_active = False
+            await _rebalance_default(db, trunk.org_id)
             await db.commit()
             raise HTTPException(status_code=400, detail=f"Test call failed: {exc.message}")
         except Exception as exc:
             trunk.is_active = False
+            await _rebalance_default(db, trunk.org_id)
             await db.commit()
             raise HTTPException(status_code=400, detail=f"Test call failed: {exc}")
         finally:
@@ -372,6 +415,7 @@ async def test_trunk(
         await lk.aclose()
 
     trunk.is_active = True
+    await _rebalance_default(db, trunk.org_id)
     await db.commit()
     await db.refresh(trunk)
     return TestTrunkResponse(
@@ -613,7 +657,8 @@ async def update_trunk(
         trunk.is_active = body.is_active
 
     if body.is_default is not None and body.is_default:
-        # Clear existing org default before setting new one
+        # Explicit admin choice — clear existing org default before setting
+        # new one. Takes priority over auto-rebalancing below.
         existing_defaults = (await db.execute(
             select(SipTrunk).where(
                 SipTrunk.org_id == token.org_id,
@@ -626,6 +671,11 @@ async def update_trunk(
         trunk.is_default = True
     elif body.is_default is not None:
         trunk.is_default = False
+    elif body.is_active is not None:
+        # is_active changed but the caller didn't touch is_default explicitly
+        # — make sure "default" doesn't end up pointing at a trunk that was
+        # just deactivated.
+        await _rebalance_default(db, token.org_id)
 
     await db.commit()
     await db.refresh(trunk)
@@ -644,6 +694,7 @@ async def delete_trunk(
     trunk.deleted_at = datetime.now(timezone.utc)
     trunk.is_default = False
     trunk.is_active = False
+    await _rebalance_default(db, token.org_id)
     await db.commit()
 
 

@@ -90,6 +90,7 @@ async def vobiz_recording_webhook(
         return {"status": "ok"}
     except Exception:
         log.exception("vobiz_recording_webhook_error")
+        await db.rollback()  # leave the session clean so get_db's own commit doesn't also fail
         return {"status": "error"}  # still 200 — prevents Vobiz retry storms
 
 
@@ -123,6 +124,7 @@ async def vobiz_hangup_webhook(
         return {"status": "ok"}
     except Exception:
         log.exception("vobiz_hangup_webhook_error")
+        await db.rollback()  # leave the session clean so get_db's own commit doesn't also fail
         return {"status": "error"}  # still 200 — prevents Vobiz retry storms
 
 
@@ -222,4 +224,5 @@ async def razorpay_webhook(
         return {"status": "ok"}
     except Exception:
         log.exception("razorpay_webhook_error")
+        await db.rollback()  # leave the session clean so get_db's own commit doesn't also fail
         return {"status": "error"}
