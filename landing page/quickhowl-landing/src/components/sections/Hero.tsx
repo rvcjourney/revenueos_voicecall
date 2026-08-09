@@ -8,7 +8,7 @@ export function Hero() {
     <section id="top" className="relative overflow-hidden">
       <div className="hero-blob" />
       <div className="dot-grid absolute inset-0" />
-      <div className="animate-fade-up relative mx-auto max-w-5xl px-4 py-14 text-center sm:px-6 lg:px-8 lg:py-20">
+      <div className="animate-fade-up relative mx-auto max-w-5xl px-4 pb-14 pt-4 text-center sm:px-6 sm:pt-6 lg:px-8 lg:pb-20 lg:pt-8">
         <Badge variant="success" className="mx-auto max-w-full">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current animate-pulse-glow" />
           <span className="min-w-0 whitespace-normal">AI voice agents built for Hindi &amp; English sales calls</span>
