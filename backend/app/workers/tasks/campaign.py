@@ -397,7 +397,10 @@ async def _place_call(
                 outcome = "no_answer"
             else:
                 outcome = "failed"
-            log.warning("sip_call_not_placed", room=room_name, sip_code=sip_code, outcome=outcome)
+            log.warning(
+                "sip_call_not_placed", room=room_name, sip_code=sip_code, outcome=outcome,
+                twirp_message=exc.message, metadata=dict(exc.metadata),
+            )
             try:
                 await lk.room.delete_room(lk_api.DeleteRoomRequest(room=room_name))
             except Exception:
