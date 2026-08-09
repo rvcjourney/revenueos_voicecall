@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { ArrowRight, Check, Mic } from "lucide-react";
 import { AIAvatar } from "@/components/shared/AIAvatar";
 import { SoundWave } from "@/components/shared/SoundWave";
@@ -7,15 +6,6 @@ import { Button } from "@/components/ui/button";
 import { SIGNUP_URL } from "@/lib/env";
 
 export function Hero() {
-  // Purely cosmetic — ticks the demo card's "Live" badge forward from 02:14
-  // so the hero mock reads as an in-progress call, not a screenshot.
-  const [demoElapsedSeconds, setDemoElapsedSeconds] = useState(134);
-  useEffect(() => {
-    const id = window.setInterval(() => setDemoElapsedSeconds((s) => s + 1), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  const demoTimeLabel = `${Math.floor(demoElapsedSeconds / 60)}:${String(demoElapsedSeconds % 60).padStart(2, "0")}`;
-
   return (
     <section id="top" className="relative overflow-hidden">
       <div className="hero-blob" />
@@ -24,20 +14,20 @@ export function Hero() {
         <div className="animate-fade-up min-w-0 space-y-5">
           <Badge variant="success" className="max-w-full">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current animate-pulse-glow" />
-            <span className="min-w-0 whitespace-normal">Live now — 1,200+ AI sales calls running across timezones</span>
+            <span className="min-w-0 whitespace-normal">AI voice agents built for Hindi &amp; English sales calls</span>
           </Badge>
-          <h1 className="font-heading text-3xl font-semibold leading-[1.15] sm:text-4xl lg:text-5xl">
+          <h1 className="font-heading text-2xl font-semibold leading-[1.15] sm:text-3xl lg:text-4xl">
             Your AI sales team that <span className="text-gradient">never stops dialing</span>
           </h1>
-          <p className="font-heading text-lg font-semibold leading-tight text-foreground sm:text-xl">
+          <p className="font-heading text-base font-semibold leading-tight text-foreground sm:text-lg">
             <Mic className="mr-1.5 inline h-4 w-4 -translate-y-0.5 text-primary" />
             ...and sounds exactly like <span className="text-gradient">you</span>.
           </p>
-          <p className="max-w-lg text-base text-muted-foreground">
+          <p className="max-w-lg text-sm text-muted-foreground sm:text-base">
             Human-sounding voice agents that call, qualify, and follow up with leads in Hinglish,
-            English, and 20+ languages — real conversations and live analytics, without adding a
-            single new hire. Clone your own voice, a top rep's, or your founder's once, then reuse
-            it across every AI agent.
+            English, and more — real conversations and live analytics, without adding a single new
+            hire. Clone your own voice, a top rep's, or your founder's once, then reuse it across
+            every AI agent.
           </p>
           <div className="flex flex-wrap gap-3">
             <Button size="lg" variant="gradient" className="rounded-full" asChild>
@@ -68,13 +58,7 @@ export function Hero() {
                   <p className="text-xs text-muted-foreground">Speaking with Rajesh Sharma</p>
                 </div>
               </div>
-              <Badge variant="success">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                </span>
-                Live {demoTimeLabel}
-              </Badge>
+              <Badge variant="outline">Sample conversation</Badge>
             </div>
             <div className="flex justify-center py-2">
               <SoundWave />
@@ -125,7 +109,7 @@ export function Hero() {
               <span className="text-muted-foreground">Now speaking as:</span>
               <Badge variant="outline">Aniket</Badge>
               <Badge variant="outline">Priya</Badge>
-              <Badge variant="outline">+12 more agents</Badge>
+              <Badge variant="outline">More agent voices</Badge>
             </div>
           </div>
         </div>
