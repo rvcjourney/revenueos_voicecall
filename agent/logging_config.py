@@ -57,6 +57,27 @@ def _inject_ctx(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[st
     return event_dict
 
 
+class _SanitizeRelayedRecords(logging.Filter):
+    """
+    Fixes a real crash on every log line when a job runs in a livekit-agents
+    subprocess: LogQueueHandler.emit() (livekit/agents/ipc/log_queue.py)
+    renders the record to a plain string and relays it to this (the main)
+    process, but doesn't clear the `_logger`/`_name` attributes structlog's
+    wrap_for_formatter() attached earlier. ProcessorFormatter.format() uses
+    those attributes to decide whether record.msg is still the original dict
+    -- finds them still set, assumes so, and calls record.msg.copy() on what
+    is now a plain string. Stripping the stale markers here makes
+    ProcessorFormatter correctly take its "foreign log" branch instead,
+    exactly as it already does for genuine third-party (non-structlog) logs.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not isinstance(getattr(record, "msg", None), dict) and hasattr(record, "_logger"):
+            del record._logger  # type: ignore[attr-defined]
+            del record._name  # type: ignore[attr-defined]
+        return True
+
+
 def configure_logging() -> None:
     """Configure structlog + stdlib root logger. Call before any log statement."""
     log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
@@ -83,6 +104,7 @@ def configure_logging() -> None:
     )
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
+    handler.addFilter(_SanitizeRelayedRecords())
 
     root = logging.getLogger()
     root.handlers.clear()
