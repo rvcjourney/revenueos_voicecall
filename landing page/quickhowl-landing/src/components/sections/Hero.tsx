@@ -26,14 +26,14 @@ export function Hero() {
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current animate-pulse-glow" />
             <span className="min-w-0 whitespace-normal">Live now — 1,200+ AI sales calls running across timezones</span>
           </Badge>
-          <h1 className="font-heading text-4xl font-semibold leading-[1.1] sm:text-5xl lg:text-6xl">
+          <h1 className="font-heading text-3xl font-semibold leading-[1.15] sm:text-4xl lg:text-5xl">
             Your AI sales team that <span className="text-gradient">never stops dialing</span>
           </h1>
-          <p className="font-heading text-xl font-semibold leading-tight text-foreground sm:text-2xl">
-            <Mic className="mr-1.5 inline h-5 w-5 -translate-y-0.5 text-primary" />
+          <p className="font-heading text-lg font-semibold leading-tight text-foreground sm:text-xl">
+            <Mic className="mr-1.5 inline h-4 w-4 -translate-y-0.5 text-primary" />
             ...and sounds exactly like <span className="text-gradient">you</span>.
           </p>
-          <p className="max-w-lg text-lg text-muted-foreground">
+          <p className="max-w-lg text-base text-muted-foreground">
             Human-sounding voice agents that call, qualify, and follow up with leads in Hinglish,
             English, and 20+ languages — real conversations and live analytics, without adding a
             single new hire. Clone your own voice, a top rep's, or your founder's once, then reuse
@@ -58,8 +58,8 @@ export function Hero() {
           </div>
         </div>
 
-        <div className="min-w-0 space-y-4">
-          <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.15s" }}>
+        <div className="min-w-0 space-y-3">
+          <div className="animate-fade-up glass relative rounded-2xl p-4" style={{ animationDelay: "0.15s" }}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-3">
                 <AIAvatar size="sm" />
@@ -76,7 +76,7 @@ export function Hero() {
                 Live {demoTimeLabel}
               </Badge>
             </div>
-            <div className="flex justify-center py-4">
+            <div className="flex justify-center py-2">
               <SoundWave />
             </div>
             <div className="space-y-3">
@@ -96,14 +96,14 @@ export function Hero() {
                 "Haan bilkul, kal 4 baje baat kar lete hain."
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
+            <div className="mt-3 flex justify-end">
               <Badge variant="success" className="animate-bubble-in" style={{ animationDelay: "0.6s" }}>
                 <Check className="h-3 w-3" /> Auto-tagged as hot lead
               </Badge>
             </div>
           </div>
 
-          <div className="animate-fade-up glass relative rounded-2xl p-5" style={{ animationDelay: "0.3s" }}>
+          <div className="animate-fade-up glass relative rounded-2xl p-4" style={{ animationDelay: "0.3s" }}>
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
@@ -118,7 +118,7 @@ export function Hero() {
                 <Check className="h-3 w-3" /> Cloned
               </Badge>
             </div>
-            <div className="flex justify-center py-4">
+            <div className="flex justify-center py-2">
               <SoundWave />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
