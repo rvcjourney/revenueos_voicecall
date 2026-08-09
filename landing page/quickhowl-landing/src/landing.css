@@ -7,6 +7,50 @@
   padding-block: clamp(3.5rem, 6vw, 6.5rem);
 }
 
+/* Smooth in-page nav scrolling; scroll-margin-top keeps the sticky pill nav
+   from covering a section's heading when it lands. */
+html {
+  scroll-behavior: smooth;
+}
+section[id] {
+  scroll-margin-top: 6.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Overrides styles.css's `.reveal-on-scroll` (a CSS-only animation-timeline:
+   view() effect — Chromium-only, and scrubs opacity to scroll position
+   rather than playing a clean entrance) with a JS-driven, one-time fade-up
+   triggered by useScrollReveal()'s IntersectionObserver, so every section
+   reveals consistently across browsers. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-on-scroll {
+    animation: none;
+    animation-timeline: none;
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal-on-scroll.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Cancels styles.css's animation-timeline: view() too, which isn't gated
+     by reduced-motion there — without this, motion-sensitive users would
+     still get a scroll-scrubbed fade. */
+  .reveal-on-scroll {
+    animation: none;
+    animation-timeline: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Full-bleed dark "mission band" treatment (wireframe's radial-glow dark
    section) — uses the existing card/foreground tokens inverted via .dark
    class scoping is unnecessary here since we want it dark regardless of the

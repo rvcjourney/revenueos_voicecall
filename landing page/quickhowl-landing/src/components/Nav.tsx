@@ -131,8 +131,10 @@ export function Nav() {
       <div
         onMouseEnter={() => active?.menu && openMenu(active.href)}
         className={cn(
-          "glass mt-2 hidden overflow-hidden rounded-3xl border shadow-[var(--shadow-elevated)] transition-all duration-200 md:block",
-          active?.menu ? "max-h-96 border-border opacity-100" : "pointer-events-none max-h-0 border-transparent opacity-0"
+          "glass mt-2 hidden overflow-hidden rounded-3xl border shadow-[var(--shadow-elevated)] transition-all duration-300 ease-out md:block",
+          active?.menu
+            ? "max-h-96 translate-y-0 border-border opacity-100"
+            : "pointer-events-none max-h-0 -translate-y-1 border-transparent opacity-0"
         )}
       >
         {active?.menu && (
@@ -142,12 +144,13 @@ export function Nav() {
               active.menu.length >= 5 ? "grid-cols-5" : active.menu.length === 4 ? "grid-cols-4" : "grid-cols-3"
             )}
           >
-            {active.menu.map((item) => (
+            {active.menu.map((item, i) => (
               <a
                 key={item.label}
                 href={active.href}
                 onClick={() => item.tabId && setActiveTab(item.tabId)}
-                className="hover-lift flex items-start gap-3 rounded-2xl p-3 hover:bg-accent"
+                className="hover-lift animate-fade-up flex items-start gap-3 rounded-2xl p-3 hover:bg-accent"
+                style={{ animationDelay: `${i * 0.05}s` }}
               >
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                   <item.icon className="h-4 w-4" />
@@ -164,8 +167,8 @@ export function Nav() {
 
       <div
         className={cn(
-          "glass mt-2 overflow-hidden rounded-2xl border border-border shadow-[var(--shadow-elevated)] transition-[max-height] md:hidden",
-          open ? "max-h-80" : "max-h-0 border-transparent"
+          "glass mt-2 overflow-hidden rounded-2xl border border-border shadow-[var(--shadow-elevated)] transition-all duration-300 ease-out md:hidden",
+          open ? "max-h-80 opacity-100" : "max-h-0 border-transparent opacity-0"
         )}
       >
         <div className="flex flex-col gap-1 px-4 py-3">

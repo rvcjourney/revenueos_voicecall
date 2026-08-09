@@ -12,8 +12,11 @@ import { Pricing } from "@/components/sections/Pricing";
 import { FAQ } from "@/components/sections/FAQ";
 import { FinalCTA } from "@/components/sections/FinalCTA";
 import { PlatformTabProvider } from "@/lib/platformTab";
+import { useScrollReveal } from "@/lib/hooks";
 
 export default function LandingPage() {
+  useScrollReveal();
+
   return (
     <PlatformTabProvider>
       <div className="min-h-screen overflow-x-clip bg-background">
