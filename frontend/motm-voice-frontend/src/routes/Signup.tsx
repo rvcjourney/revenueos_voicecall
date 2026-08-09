@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanPicker } from "@/components/billing/PlanPicker";
+import { OtpEntry } from "@/components/auth/OtpEntry";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
 import { useCheckout, useVerifyPayment } from "@/lib/hooks";
@@ -31,7 +32,7 @@ const orgSchema = z.object({
   company_name: z.string().min(2, "Enter your company name"),
   email: z.string().email("Enter a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().optional(),
+  phone: z.string().min(10, "Enter a valid phone number"),
 });
 type OrgValues = z.infer<typeof orgSchema>;
 
@@ -137,14 +138,14 @@ function JoinTeamForm({ onSuccess }: { onSuccess: (values: MemberValues) => Prom
 }
 
 function CreateOrgForm() {
-  const { registerOrg } = useAuth();
+  const { registerOrg, verifyOtp } = useAuth();
   const navigate = useNavigate();
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
 
   const [serverError, setServerError] = useState<string | null>(null);
   const [registrationClosed, setRegistrationClosed] = useState(false);
-  const [step, setStep] = useState<"form" | "plan">("form");
+  const [step, setStep] = useState<"form" | "otp" | "plan">("form");
   const [orgValues, setOrgValues] = useState<OrgValues | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
   const [paying, setPaying] = useState(false);
@@ -159,10 +160,10 @@ function CreateOrgForm() {
     setServerError(null);
     setRegistrationClosed(false);
     try {
-      const user = await registerOrg(values);
+      await registerOrg(values);
       setOrgValues(values);
-      setStep("plan");
-      toast.success(`Welcome, ${user.full_name}! Pick a plan to activate ${user.org_name}.`);
+      setStep("otp");
+      toast.success(`Check ${values.email} for a verification code.`);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 409) {
         setRegistrationClosed(true);
@@ -170,6 +171,12 @@ function CreateOrgForm() {
       }
       setServerError(apiErrorMessage(err, "Couldn't create your organization."));
     }
+  }
+
+  async function onOtpVerified() {
+    if (!orgValues) return;
+    setStep("plan");
+    toast.success(`Welcome, ${orgValues.full_name}! Pick a plan to activate ${orgValues.company_name}.`);
   }
 
   async function startPayment() {
@@ -228,6 +235,10 @@ function CreateOrgForm() {
     );
   }
 
+  if (step === "otp" && orgValues) {
+    return <OtpEntry email={orgValues.email} verifyOtp={verifyOtp} onVerified={onOtpVerified} />;
+  }
+
   if (step === "plan") {
     return (
       <div className="space-y-4">
@@ -281,8 +292,9 @@ function CreateOrgForm() {
         {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="org-phone">Phone (optional)</Label>
+        <Label htmlFor="org-phone">Phone</Label>
         <Input id="org-phone" placeholder="+91 98765 43210" {...register("phone")} />
+        {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
       </div>
       <Button type="submit" variant="gradient" className="w-full" size="lg" disabled={isSubmitting}>
         {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

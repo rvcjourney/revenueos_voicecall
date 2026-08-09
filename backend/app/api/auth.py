@@ -20,24 +20,30 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.core.supabase_otp import SupabaseOtpError, send_otp, verify_otp
 from app.database import get_db
 from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
     MemberRegisterRequest,
     ProfileUpdateRequest,
+    RegisterPendingResponse,
     RegisterRequest,
+    ResendOtpRequest,
+    ResetPasswordRequest,
     TokenResponse,
     UserOut,
+    VerifyOtpRequest,
 )
 
 router = APIRouter()
 _bearer_optional = HTTPBearer(auto_error=False)
 
 
-@router.post("/register", response_model=TokenResponse, status_code=201)
+@router.post("/register", response_model=RegisterPendingResponse, status_code=201)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = await db.scalar(select(User.id).where(User.email == body.email))
     if existing:
@@ -69,27 +75,21 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         full_name=body.full_name,
         role=UserRole.ADMIN,
         is_active=True,
+        email_verified_at=None,
     )
     db.add(user)
     await db.commit()
-    await db.refresh(org)
-    await db.refresh(user)
 
-    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
-    refresh_token = create_refresh_token(str(user.id), str(user.org_id))
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=UserOut(
-            id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            org_id=str(user.org_id),
-            org_name=org.name,
-        ),
-    )
+    # No session issued yet — POST /verify-otp is what actually logs the user
+    # in, once they've proven they own this email address.
+    try:
+        await send_otp(body.email)
+    except SupabaseOtpError as exc:
+        # The account row already exists at this point (org+user committed
+        # above) — that's fine, POST /resend-otp lets them retry sending
+        # without re-registering.
+        raise AppValidationError(str(exc), errors=[]) from exc
+    return RegisterPendingResponse(email=body.email)
 
 
 @router.post("/register-member", response_model=TokenResponse, status_code=201)
@@ -152,6 +152,101 @@ async def register_member(body: MemberRegisterRequest, db: AsyncSession = Depend
     )
 
 
+@router.post("/verify-otp", response_model=TokenResponse)
+async def verify_otp_endpoint(body: VerifyOtpRequest, db: AsyncSession = Depends(get_db)):
+    """Confirms the signup OTP and — since this is what actually completes
+    registration — issues the first session (mirrors register()'s old
+    immediate-login behavior, just gated on verification now)."""
+    user = await db.scalar(select(User).where(User.email == body.email, User.deleted_at.is_(None)))
+    if not user:
+        raise NotFoundError("No account found for that email")
+
+    try:
+        ok = await verify_otp(body.email, body.code)
+    except SupabaseOtpError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc
+    if not ok:
+        raise AuthenticationError("That code is incorrect or has expired")
+
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    org = await db.get(Organization, user.org_id)
+    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
+    refresh_token = create_refresh_token(str(user.id), str(user.org_id))
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=UserOut(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            role=user.role,
+            org_id=str(user.org_id),
+            org_name=org.name if org else "",
+        ),
+    )
+
+
+_RESEND_COOLDOWN_SECONDS = 60
+
+
+@router.post("/resend-otp", status_code=204)
+async def resend_otp(body: ResendOtpRequest, db: AsyncSession = Depends(get_db)):
+    user = await db.scalar(select(User.id).where(User.email == body.email, User.deleted_at.is_(None)))
+    if not user:
+        raise NotFoundError("No account found for that email")
+
+    from app.core.redis import get_redis
+    r = await get_redis()
+    cooldown_key = f"motm:otp:resend-cooldown:{body.email}"
+    if not await r.set(cooldown_key, "1", nx=True, ex=_RESEND_COOLDOWN_SECONDS):
+        raise ConflictError("Please wait before requesting another code")
+
+    try:
+        await send_otp(body.email)
+    except SupabaseOtpError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc
+
+
+@router.post("/forgot-password", status_code=204)
+async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Always 204 regardless of whether the email exists, to avoid leaking
+    which addresses have accounts. Only actually sends an OTP if one does."""
+    user = await db.scalar(select(User.id).where(User.email == body.email, User.deleted_at.is_(None)))
+    if not user:
+        return
+
+    try:
+        await send_otp(body.email)
+    except SupabaseOtpError:
+        # Same reasoning as above — don't let a delivery failure leak account
+        # existence via a different response than the "no such email" path.
+        pass
+
+
+@router.post("/reset-password", status_code=204)
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    user = await db.scalar(select(User).where(User.email == body.email, User.deleted_at.is_(None)))
+    if not user:
+        raise NotFoundError("No account found for that email")
+
+    if len(body.new_password) < 6:
+        raise AppValidationError("Password must be at least 6 characters", errors=[])
+
+    try:
+        ok = await verify_otp(body.email, body.code)
+    except SupabaseOtpError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc
+    if not ok:
+        raise AuthenticationError("That code is incorrect or has expired")
+
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -163,6 +258,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise AuthenticationError("Invalid email or password")
     if not user.is_active:
         raise AuthenticationError("Account is inactive. Contact your admin.")
+    if user.email_verified_at is None:
+        raise AuthenticationError("Please verify your email before logging in", code="EMAIL_NOT_VERIFIED")
 
     org = await db.get(Organization, user.org_id)
 

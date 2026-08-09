@@ -137,6 +137,8 @@ class User(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # NULL = signup OTP not yet confirmed (see app/core/supabase_otp.py) — login is blocked until set.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     organization: Mapped["Organization"] = relationship(

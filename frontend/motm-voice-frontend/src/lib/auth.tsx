@@ -8,7 +8,8 @@ interface AuthContextValue {
   isAdmin: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  registerOrg: (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) => Promise<User>;
+  registerOrg: (data: { full_name: string; company_name: string; email: string; password: string; phone: string }) => Promise<{ email: string; message: string }>;
+  verifyOtp: (email: string, code: string) => Promise<User>;
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) => Promise<User>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -67,8 +68,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const registerOrg = useCallback(
-    async (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) => {
+    async (data: { full_name: string; company_name: string; email: string; password: string; phone: string }) => {
+      // No session yet — this only creates the account and sends the OTP.
       const res = await authApi.register(data);
+      return res.data;
+    },
+    []
+  );
+
+  const verifyOtp = useCallback(
+    async (email: string, code: string) => {
+      const res = await authApi.verifyOtp(email, code);
       return persistSession(res.data);
     },
     [persistSession]
@@ -104,11 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       registerOrg,
+      verifyOtp,
       registerMember,
       logout,
       refreshUser,
     }),
-    [user, isLoading, login, registerOrg, registerMember, logout, refreshUser]
+    [user, isLoading, login, registerOrg, verifyOtp, registerMember, logout, refreshUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

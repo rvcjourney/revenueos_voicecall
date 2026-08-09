@@ -11,6 +11,8 @@ import json
 import uuid
 from unittest.mock import AsyncMock, patch
 
+from sqlalchemy import select
+
 from app.core.razorpay_client import RazorpayError
 from app.core.security import create_access_token, create_platform_token, hash_password
 from app.models.agent import AgentTemplate, VoiceProvider
@@ -363,21 +365,39 @@ async def test_webhook_subscription_halted_suspends_org(client, db):
 # ── Reopened registration ────────────────────────────────────────────────
 
 async def test_register_creates_inactive_org(client, db):
-    resp = await client.post(
-        "/api/auth/register",
-        json={
-            "full_name": "New Founder",
-            "company_name": f"NewCo {uuid.uuid4().hex[:6]}",
-            "email": f"founder-{uuid.uuid4().hex[:8]}@newcotest.com",
-            "password": "password123",
-        },
-    )
+    email = f"founder-{uuid.uuid4().hex[:8]}@newcotest.com"
+    with patch("app.api.auth.send_otp", new_callable=AsyncMock) as mock_send:
+        resp = await client.post(
+            "/api/auth/register",
+            json={
+                "full_name": "New Founder",
+                "company_name": f"NewCo {uuid.uuid4().hex[:6]}",
+                "email": email,
+                "password": "password123",
+                "phone": "+919876543210",
+            },
+        )
     assert resp.status_code == 201
-    assert resp.json()["access_token"]
+    assert resp.json()["email"] == email
+    mock_send.assert_awaited_once_with(email)
 
-    org_id = resp.json()["user"]["org_id"]
-    org = await db.get(Organization, uuid.UUID(org_id))
+    # No session yet -- registration alone doesn't activate the org or log
+    # anyone in; that only happens once verify-otp confirms the email.
+    user = await db.scalar(select(User).where(User.email == email))
+    assert user.email_verified_at is None
+    org = await db.get(Organization, user.org_id)
     assert org.is_active is False
+
+    with patch("app.api.auth.verify_otp", new_callable=AsyncMock, return_value=True) as mock_verify:
+        resp = await client.post(
+            "/api/auth/verify-otp", json={"email": email, "code": "123456"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["access_token"]
+    mock_verify.assert_awaited_once_with(email, "123456")
+
+    await db.refresh(user)
+    assert user.email_verified_at is not None
 
 
 # ── org.is_active enforcement ────────────────────────────────────────────

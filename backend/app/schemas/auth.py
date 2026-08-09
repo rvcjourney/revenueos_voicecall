@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -13,7 +13,38 @@ class RegisterRequest(BaseModel):
     company_name: str
     email: EmailStr
     password: str
-    phone: str = ""
+    phone: str
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: str) -> str:
+        # Same E.164-ish normalization used elsewhere for phone numbers
+        # (e.g. app/api/sip_trunks.py, app/api/agents.py's test-call flow).
+        phone = v.strip().replace(" ", "").replace("-", "")
+        if not phone.startswith("+"):
+            phone = "+91" + phone.lstrip("0")
+        if len(phone) < 8:
+            raise ValueError("Enter a valid phone number")
+        return phone
+
+
+class VerifyOtpRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class ResendOtpRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
 
 
 class MemberRegisterRequest(BaseModel):
@@ -43,6 +74,13 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+class RegisterPendingResponse(BaseModel):
+    """register()'s response — no session yet, email must be verified via
+    POST /verify-otp first (that's what actually issues a TokenResponse)."""
+    email: str
+    message: str = "Verification code sent — check your email."
 
 
 # ── Admin schemas ─────────────────────────────────────────────────────────────

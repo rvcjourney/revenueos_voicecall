@@ -1,4 +1,5 @@
 import { useState } from "react";
+import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -9,6 +10,7 @@ import { AuthLayout } from "@/components/marketing/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OtpEntry } from "@/components/auth/OtpEntry";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
 
@@ -20,10 +22,11 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, verifyOtp } = useAuth();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
 
   const {
     register,
@@ -38,8 +41,27 @@ export default function Login() {
       toast.success(`Welcome back, ${user.full_name.split(" ")[0]}`);
       navigate("/dashboard");
     } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.code === "EMAIL_NOT_VERIFIED") {
+        setUnverifiedEmail(values.email);
+        return;
+      }
       setServerError(apiErrorMessage(err, "Couldn't log in with those details."));
     }
+  }
+
+  if (unverifiedEmail) {
+    return (
+      <AuthLayout title="Verify your email" subtitle="One more step before you can log in.">
+        <OtpEntry
+          email={unverifiedEmail}
+          verifyOtp={verifyOtp}
+          onVerified={() => {
+            toast.success("Email verified!");
+            navigate("/dashboard");
+          }}
+        />
+      </AuthLayout>
+    );
   }
 
   return (
@@ -58,6 +80,9 @@ export default function Login() {
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
+            <Link to="/forgot-password" className="text-xs font-medium text-primary hover:underline">
+              Forgot password?
+            </Link>
           </div>
           <div className="relative">
             <Input

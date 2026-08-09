@@ -113,8 +113,16 @@ export async function downloadBlob(path: string, filename: string) {
 export const authApi = {
   login: (email: string, password: string) =>
     api.post<LoginResponse>("/api/auth/login", { email, password }),
-  register: (data: { full_name: string; company_name: string; email: string; password: string; phone?: string }) =>
-    api.post<LoginResponse>("/api/auth/register", data),
+  // No session yet — POST /verify-otp is what actually logs the user in,
+  // once they've proven they own this email address.
+  register: (data: { full_name: string; company_name: string; email: string; password: string; phone: string }) =>
+    api.post<{ email: string; message: string }>("/api/auth/register", data),
+  verifyOtp: (email: string, code: string) =>
+    api.post<LoginResponse>("/api/auth/verify-otp", { email, code }),
+  resendOtp: (email: string) => api.post("/api/auth/resend-otp", { email }),
+  forgotPassword: (email: string) => api.post("/api/auth/forgot-password", { email }),
+  resetPassword: (email: string, code: string, new_password: string) =>
+    api.post("/api/auth/reset-password", { email, code, new_password }),
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) =>
     api.post<LoginResponse>("/api/auth/register-member", data),
   logout: () => api.post("/api/auth/logout").catch(() => undefined),

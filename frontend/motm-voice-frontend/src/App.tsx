@@ -14,6 +14,7 @@ import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 const Landing = lazy(() => import("@/routes/Landing"));
 const Login = lazy(() => import("@/routes/Login"));
 const Signup = lazy(() => import("@/routes/Signup"));
+const ForgotPassword = lazy(() => import("@/routes/ForgotPassword"));
 const NotFound = lazy(() => import("@/routes/NotFound"));
 
 const Dashboard = lazy(() => import("@/routes/Dashboard"));
@@ -70,6 +71,7 @@ export default function App() {
                     <Route path="/" element={<Landing />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/signup" element={<Signup />} />
+                    <Route path="/forgot-password" element={<ForgotPassword />} />
 
                     <Route element={<AuthedLayout />}>
                       <Route path="/dashboard" element={<Dashboard />} />
