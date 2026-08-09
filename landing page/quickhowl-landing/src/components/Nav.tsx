@@ -18,7 +18,6 @@ import {
   Zap,
 } from "lucide-react";
 import { Logo } from "@/components/shared/Logo";
-import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { LOGIN_URL, SIGNUP_URL } from "@/lib/env";
 import { usePlatformTab, type PlatformTabId } from "@/lib/platformTab";
@@ -114,7 +113,6 @@ export function Nav() {
         </nav>
 
         <div className="hidden items-center gap-2 md:flex">
-          <ThemeToggle />
           <Button variant="outline" size="sm" className="rounded-full" asChild>
             <a href={LOGIN_URL}>Log in</a>
           </Button>
@@ -176,10 +174,6 @@ export function Nav() {
               {l.label}
             </a>
           ))}
-          <div className="mt-2 flex items-center justify-between gap-2 px-2">
-            <span className="text-sm text-muted-foreground">Theme</span>
-            <ThemeToggle />
-          </div>
           <div className="mt-2 flex gap-2">
             <Button variant="outline" className="flex-1 rounded-full" asChild>
               <a href={LOGIN_URL}>Log in</a>
