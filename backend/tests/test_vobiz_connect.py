@@ -119,7 +119,7 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
     assert trunk is not None
     assert trunk.org_id == org.id
     assert trunk.is_active is False
-    assert trunk.is_default is True  # first trunk for this org
+    assert trunk.is_default is False  # not defaulted until it passes /test (see _rebalance_default)
     assert trunk.livekit_trunk_id == "ST_livekit_abc"
     assert trunk.sip_domain == "abc123.sip.vobiz.ai"  # the org's own new Vobiz trunk domain
 

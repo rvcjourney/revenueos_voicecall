@@ -8,10 +8,10 @@ import asyncio
 import hashlib
 import hmac
 import json
-import logging
 import re
 import time
 import certifi
+import structlog
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -50,20 +50,17 @@ from config import (
     SARVAM_STT_MODEL,
     SARVAM_STT_MODE,
     SARVAM_STT_LANGUAGE,
-    LOG_LEVEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
     FAILED_REPORTS_PATH,
     validate_config,
 )
+from logging_config import configure_logging, init_sentry, set_log_context
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("voice-agent")
+configure_logging()
+init_sentry()
+logger = structlog.get_logger("voice-agent")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 _LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
@@ -487,6 +484,27 @@ _BOT_IVR_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+# Carrier / network call-forwarding announcements. SIP "answered" (200 OK) fires the
+# moment the forward destination's line picks up -- which may be a network announcement
+# rather than the actual person, and none of that announcement's phrasing matches
+# _VOICEMAIL_RE or _BOT_IVR_RE above. Covers common English carrier wording plus
+# transliterated Hinglish, since outbound trunks here are Indian carriers.
+_FORWARDING_RE = re.compile(
+    r"\b("
+    r"call is being forwarded"
+    r"|(is |being )?divert(ed|ing) your call"
+    r"|forwarding your call"
+    r"|call.{0,15}forward"
+    r"|number you (have )?(dialed|called) (is|has been) (forwarded|diverted)"
+    r"|please wait while we (forward|divert|connect) your call"
+    r"|call forward ki ja rahi hai"
+    r"|aapki call forward"
+    r"|call ko forward kiya ja raha hai"
+    r"|call divert kiya ja raha hai"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
 # Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
 _END_CALL_STRIP_RE = re.compile(
     r'(?:function\s+)?[\[\(]?\bend[_\s]call\b[\]\)]?(?:\s+function)?'
@@ -832,6 +850,13 @@ class VoiceAgent(Agent):
                 logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
                 self._ending = True
                 _safe_task(self._silent_hangup(), "voicemail-hangup")
+                return
+
+            # Call-forwarding announcement detected (not the actual person) — hang up silently
+            if _FORWARDING_RE.search(text):
+                logger.info("Call forwarding announcement detected at turn %d — silent hangup", self._turn_count)
+                self._ending = True
+                _safe_task(self._silent_hangup(), "forwarding-hangup")
                 return
 
             # IVR / automated bot detected — hang up silently
@@ -1257,6 +1282,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
     campaign_id     = meta.get("campaign_id", "")
+    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id)
 
     if meta.get("system_prompt"):
         logger.info("system_prompt | source=room_metadata campaign=%s len=%d", campaign_id, len(raw_prompt))
