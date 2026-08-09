@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { Logo } from "@/components/shared/Logo";
-import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +30,6 @@ export function PublicNav() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
-          <ThemeToggle />
           <div className="h-6 w-px bg-border" />
           <Button variant="ghost" asChild>
             <NavLink to="/login">Log in</NavLink>
@@ -53,10 +51,6 @@ export function PublicNav() {
               {l.label}
             </a>
           ))}
-          <div className="mt-2 flex items-center justify-between gap-2 px-2">
-            <span className="text-sm text-muted-foreground">Theme</span>
-            <ThemeToggle />
-          </div>
           <div className="mt-2 flex gap-2">
             <Button variant="outline" className="flex-1" asChild>
               <NavLink to="/login">Log in</NavLink>
