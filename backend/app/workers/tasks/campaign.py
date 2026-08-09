@@ -323,6 +323,7 @@ async def _place_call(
     language: str = "hinglish",
     llm_model: str = "",
     llm_temperature: float = 0.7,
+    tts_model_id: str = "",
 ) -> str:
     """
     Create room → dispatch AI agent + initiate SIP call (both in parallel).
@@ -346,6 +347,7 @@ async def _place_call(
             "language": language,
             "llm_model": llm_model,
             "llm_temperature": llm_temperature,
+            "tts_model_id": tts_model_id,
         }
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
@@ -1336,6 +1338,128 @@ def place_test_call(
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
     asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id))
+
+
+async def _run_demo_call_async(
+    phone_number: str, call_id: str, org_id: str, user_id: str | None = None,
+) -> None:
+    """Free "Try Now" demo call — QuickHowl's own fixed persona, platform default
+    number, no credit charge. Deliberately NOT built on top of _run_test_call_*:
+    no AgentTemplate/SipTrunk lookup at all (see app/core/demo_call.py's docstring
+    for why none is needed), and the finalize step below never calls
+    record_call_credits — that's the one line that actually makes this free.
+
+    Thin wrapper releasing this user's 1-call slot however the call ends,
+    same reasoning as _run_test_call_async.
+    """
+    from uuid import UUID as _UUID
+
+    try:
+        await _run_demo_call_body(phone_number, call_id, org_id)
+    finally:
+        if user_id:
+            await release_user_slot(_UUID(user_id))
+
+
+async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> None:
+    from uuid import UUID as _UUID
+
+    from app.core.demo_call import (
+        DEMO_LANGUAGE,
+        DEMO_LLM_MODEL,
+        DEMO_LLM_TEMPERATURE,
+        DEMO_SYSTEM_PROMPT,
+        DEMO_TTS_MODEL_ID,
+        DEMO_VOICE_ID,
+        DEMO_VOICE_PROVIDER,
+        DEMO_WELCOME_MESSAGE,
+    )
+
+    async with AsyncSessionLocal() as session:
+        call_row = await session.get(Call, _UUID(call_id))
+        if not call_row:
+            log.error("demo_call_missing_call_row", call_id=call_id)
+            return
+        room_name = call_row.livekit_room_name
+
+    log.info("demo_call_start", call_id=call_id, phone=phone_number, room=room_name)
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http:
+        place_result = await _place_call(
+            http,
+            room_name=room_name,
+            phone=phone_number,
+            contact_name="Try Now",
+            livekit_trunk_id=settings.DEFAULT_SIP_TRUNK_ID,
+            sip_caller_id=settings.DEFAULT_SIP_CALLER_ID,
+            call_id=call_id,
+            campaign_id="",
+            org_id=org_id,
+            agent_template_id="",
+            system_prompt=DEMO_SYSTEM_PROMPT,
+            welcome_message=DEMO_WELCOME_MESSAGE,
+            voice_id=DEMO_VOICE_ID,
+            voice_provider=DEMO_VOICE_PROVIDER,
+            language=DEMO_LANGUAGE,
+            llm_model=DEMO_LLM_MODEL,
+            llm_temperature=DEMO_LLM_TEMPERATURE,
+            tts_model_id=DEMO_TTS_MODEL_ID,
+        )
+
+        log.info("demo_call_placed", call_id=call_id, result=place_result)
+
+        answered_at: datetime | None = None
+        if place_result == "placed":
+            answered_at = datetime.now(timezone.utc)
+            await _wait_for_room_empty(
+                http, room_name=room_name, timeout_seconds=660, campaign_id="",
+            )
+
+    # Finalize the Call row — no record_call_credits() call anywhere here, by design.
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        call_row = await session.get(Call, _UUID(call_id))
+        if call_row:
+            if place_result == "no_answer":
+                call_row.status = CallStatus.NO_ANSWER
+                call_row.outcome = CallOutcome.NO_ANSWER
+            elif place_result == "failed":
+                call_row.status = CallStatus.FAILED
+            else:
+                call_row.status = CallStatus.COMPLETED
+            call_row.ended_at = now
+            if answered_at:
+                call_row.answered_at = answered_at
+                call_row.duration_seconds = min(int((now - answered_at).total_seconds()), 660)
+            await session.commit()
+
+    log.info("demo_call_done", call_id=call_id, result=place_result)
+
+    if place_result == "placed":
+        async with AsyncSessionLocal() as session:
+            vobiz_creds = await resolve_vobiz_credentials(
+                session, org_id=_UUID(org_id), livekit_trunk_id=settings.DEFAULT_SIP_TRUNK_ID,
+            )
+        if vobiz_creds:
+            vobiz_auth_id, vobiz_auth_token = vobiz_creds
+            await _save_recording_async(
+                call_id=_UUID(call_id),
+                to_number=phone_number,
+                called_after=answered_at or datetime.now(timezone.utc) - timedelta(minutes=30),
+                auth_id=vobiz_auth_id,
+                auth_token=vobiz_auth_token,
+            )
+
+
+@celery_app.task(
+    name="app.workers.tasks.campaign.place_demo_call",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+)
+def place_demo_call(self, phone_number: str, call_id: str, org_id: str, user_id: str | None = None) -> None:
+    """Free "Try Now" demo call — see _run_demo_call_async."""
+    asyncio.run(_run_demo_call_async(phone_number, call_id, org_id, user_id))
 
 
 @celery_app.task(

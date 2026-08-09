@@ -1278,6 +1278,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         else ELEVENLABS_VOICE_ID
     )
     language        = (meta.get("language") or "hinglish").lower()
+    tts_model_id    = meta.get("tts_model_id") or ELEVENLABS_MODEL_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
@@ -1416,7 +1417,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts = elevenlabs.TTS(
             api_key               = ELEVENLABS_API_KEY,
             voice_id              = voice_id,
-            model                 = ELEVENLABS_MODEL_ID,
+            model                 = tts_model_id,
             encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
             voice_settings        = elevenlabs.VoiceSettings(
@@ -1426,7 +1427,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 use_speaker_boost = True,
             ),
         )
-        logger.info("ElevenLabs TTS ready ✓ (voice=%s)", voice_id)
+        logger.info("ElevenLabs TTS ready ✓ (voice=%s model=%s)", voice_id, tts_model_id)
 
     # Pre-open the TTS connection (WebSocket for Sarvam/Cartesia) in the background now,
     # rather than paying that handshake latency on the agent's very first spoken turn.

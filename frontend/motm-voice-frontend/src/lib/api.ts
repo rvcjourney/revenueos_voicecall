@@ -142,6 +142,8 @@ export const agentsApi = {
   requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
   testCall: (id: string, phone_number: string, trunk_id?: string) =>
     api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, trunk_id }),
+  tryNow: (phone_number: string) =>
+    api.post<{ call_id: string; status: string }>("/api/agents/try-now", { phone_number }),
   optimizePrompt: (raw_input: string) =>
     api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", { raw_input }),
   requestCreation: (form: FormData) =>

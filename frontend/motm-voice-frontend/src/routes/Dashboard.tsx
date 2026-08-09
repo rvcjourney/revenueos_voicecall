@@ -3,6 +3,7 @@ import { useAdminStats, useCalls, useConcurrency, useCreditUsage, useDashboard, 
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { QuotaConcurrencyCard } from "@/components/dashboard/QuotaConcurrencyCard";
+import { TryNowCard } from "@/components/dashboard/TryNowCard";
 import { ActiveCampaignsCard } from "@/components/dashboard/ActiveCampaignsCard";
 import { RecentCallsCard } from "@/components/dashboard/RecentCallsCard";
 import { DashboardKpiRow } from "@/components/dashboard/DashboardKpiRow";
@@ -49,6 +50,8 @@ export default function Dashboard() {
       />
 
       {dashboard.isError && <ErrorBanner error={dashboard.error} onRetry={() => dashboard.refetch()} />}
+
+      {isAdmin && <TryNowCard />}
 
       <section className="space-y-4">
         <h2 className="eyebrow">Needs your attention now</h2>

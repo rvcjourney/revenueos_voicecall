@@ -438,3 +438,62 @@ async def test_call(
         raise
 
     return TestCallResponse(call_id=str(call.id), status="initiated")
+
+
+# ── Try Now (free demo call) ────────────────────────────────────────────────
+
+class TryNowRequest(BaseModel):
+    phone_number: str
+
+
+@router.post("/try-now", response_model=TestCallResponse, status_code=202)
+async def try_now(
+    body: TryNowRequest,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Free demo call showcasing QuickHowl itself (app/core/demo_call.py's fixed
+    persona) on the platform's own default number — no org/agent lookup, no
+    credit charge. Deliberately a separate, simpler pipeline from test_call:
+    see app/workers/tasks/campaign.py:place_demo_call.
+    """
+    phone = body.phone_number.strip().replace(" ", "").replace("-", "")
+    if not phone.startswith("+"):
+        phone = "+91" + phone.lstrip("0")
+
+    # Same "one call in flight per admin, platform-wide" cap test calls use —
+    # still reasonable here even with no credit cost, since it's the same
+    # underlying LiveKit/Vobiz capacity being spent.
+    from app.core.concurrency import acquire_user_slot
+
+    if not await acquire_user_slot(token.user_id):
+        raise ConflictError("You already have a call in progress — wait for it to finish before starting another")
+
+    try:
+        room_name = f"demo-{_uuid_module.uuid4().hex}"
+        call = Call(
+            org_id=token.org_id,
+            phone_number=phone,
+            direction=CallDirection.OUTBOUND,
+            status=CallStatus.INITIATED,
+            outcome=CallOutcome.PENDING,
+            livekit_room_name=room_name,
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(call)
+        await db.commit()
+        await db.refresh(call)
+
+        from app.workers.tasks.campaign import place_demo_call
+        place_demo_call.apply_async(
+            args=[phone, str(call.id), str(token.org_id), str(token.user_id)],
+            queue="calls",
+        )
+    except Exception:
+        from app.core.concurrency import release_user_slot
+
+        await release_user_slot(token.user_id)
+        raise
+
+    return TestCallResponse(call_id=str(call.id), status="initiated")
