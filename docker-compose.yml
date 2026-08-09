@@ -68,7 +68,13 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "celery", "-A", "app.workers.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
+      # Array-form CMD never invokes a shell, so $$HOSTNAME was never actually
+      # substituted -- celery was being asked to ping a worker literally named
+      # "celery@$HOSTNAME", which never matches its real name and always timed
+      # out. CMD-SHELL runs this through /bin/sh, where $HOSTNAME (after
+      # compose's own $$->$ unescaping) resolves to the container's real
+      # hostname, matching what celery reports as its own worker name.
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -103,6 +109,20 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      # No override here previously meant this inherited the Dockerfile's
+      # baked-in HEALTHCHECK (curl http://localhost:8000/health) -- beat
+      # doesn't serve HTTP at all, so it always failed. Beat has no RPC
+      # control interface to "ping" the way a worker does (no `celery
+      # inspect` equivalent for the scheduler), so instead check that its
+      # schedule file was touched recently -- it rewrites this on every
+      # tick, and the shortest task in beat_schedule runs every 60s, so a
+      # live beat process should never go more than ~120s without a write.
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /var/lib/celerybeat/celerybeat-schedule) )) -lt 120"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     deploy:
       resources:
         limits:
