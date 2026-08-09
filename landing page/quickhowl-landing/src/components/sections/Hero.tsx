@@ -8,19 +8,19 @@ export function Hero() {
     <section id="top" className="relative overflow-hidden">
       <div className="hero-blob" />
       <div className="dot-grid absolute inset-0" />
-      <div className="animate-fade-up relative mx-auto max-w-4xl px-4 py-14 text-center sm:px-6 lg:px-8 lg:py-20">
+      <div className="animate-fade-up relative mx-auto max-w-5xl px-4 py-14 text-center sm:px-6 lg:px-8 lg:py-20">
         <Badge variant="success" className="mx-auto max-w-full">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current animate-pulse-glow" />
           <span className="min-w-0 whitespace-normal">AI voice agents built for Hindi &amp; English sales calls</span>
         </Badge>
-        <h1 className="font-heading mt-4 text-2xl font-semibold leading-[1.2] sm:text-3xl lg:text-4xl">
+        <h1 className="font-heading mt-5 text-4xl font-semibold leading-[1.15] sm:text-5xl lg:text-6xl">
           Your AI sales team that <span className="text-gradient">never stops dialing</span>
         </h1>
-        <p className="font-heading mt-3 text-base font-semibold leading-tight text-foreground sm:text-lg">
-          <Mic className="mr-1.5 inline h-4 w-4 -translate-y-0.5 text-primary" />
+        <p className="font-heading mt-4 text-xl font-semibold leading-tight text-foreground sm:text-2xl">
+          <Mic className="mr-1.5 inline h-5 w-5 -translate-y-0.5 text-primary" />
           ...and sounds exactly like <span className="text-gradient">you</span>.
         </p>
-        <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground sm:text-base">
+        <p className="mx-auto mt-4 max-w-2xl text-base text-muted-foreground sm:text-lg">
           Human-sounding voice agents that call, qualify, and follow up with leads in Hinglish,
           English, and more — real conversations and live analytics, without adding a single new
           hire. Clone your own voice, a top rep's, or your founder's once, then reuse it across
