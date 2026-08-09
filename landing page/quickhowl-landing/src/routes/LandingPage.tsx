@@ -1,0 +1,36 @@
+import { Nav } from "@/components/Nav";
+import { Footer } from "@/components/Footer";
+import { Hero } from "@/components/sections/Hero";
+import { TrustStrip } from "@/components/sections/TrustStrip";
+import { PlatformShowcase } from "@/components/sections/PlatformShowcase";
+import { HowItWorks } from "@/components/sections/HowItWorks";
+import { PlatformPillars } from "@/components/sections/PlatformPillars";
+import { CaseStudies } from "@/components/sections/CaseStudies";
+import { EnterpriseGrade } from "@/components/sections/EnterpriseGrade";
+import { Testimonials } from "@/components/sections/Testimonials";
+import { Pricing } from "@/components/sections/Pricing";
+import { FAQ } from "@/components/sections/FAQ";
+import { FinalCTA } from "@/components/sections/FinalCTA";
+import { PlatformTabProvider } from "@/lib/platformTab";
+
+export default function LandingPage() {
+  return (
+    <PlatformTabProvider>
+      <div className="min-h-screen overflow-x-clip bg-background">
+        <Nav />
+        <Hero />
+        <TrustStrip />
+        <PlatformShowcase />
+        <HowItWorks />
+        <PlatformPillars />
+        <CaseStudies />
+        <EnterpriseGrade />
+        <Testimonials />
+        <Pricing />
+        <FAQ />
+        <FinalCTA />
+        <Footer />
+      </div>
+    </PlatformTabProvider>
+  );
+}

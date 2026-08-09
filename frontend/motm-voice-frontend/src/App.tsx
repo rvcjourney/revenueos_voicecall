@@ -11,7 +11,6 @@ import { PlatformAuthedLayout } from "@/components/platform/PlatformShell";
 import { PageLoader } from "@/components/shared/PageLoader";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 
-const Landing = lazy(() => import("@/routes/Landing"));
 const Login = lazy(() => import("@/routes/Login"));
 const Signup = lazy(() => import("@/routes/Signup"));
 const ForgotPassword = lazy(() => import("@/routes/ForgotPassword"));
@@ -68,7 +67,7 @@ export default function App() {
               <BrowserRouter>
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
-                    <Route path="/" element={<Landing />} />
+                    <Route path="/" element={<Navigate to="/login" replace />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/signup" element={<Signup />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
