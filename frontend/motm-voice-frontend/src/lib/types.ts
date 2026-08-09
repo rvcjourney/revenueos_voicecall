@@ -293,6 +293,7 @@ export interface ConcurrencyUsage {
   in_use: number;
   max: number;
   queued: number;
+  my_queued: number;
 }
 
 export interface ClonedVoice {

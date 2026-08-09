@@ -149,6 +149,43 @@ def user_slot_key(user_id: UUID) -> str:
     return f"motm:concurrency:user:{user_id}"
 
 
+def user_queued_key(user_id: UUID) -> str:
+    return f"motm:concurrency:queued:user:{user_id}"
+
+
+async def incr_user_queued(user_id: UUID) -> None:
+    """Mark one contact as currently waiting on this user's single call slot."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        await r.incr(user_queued_key(user_id))
+        await r.expire(user_queued_key(user_id), _SLOT_KEY_TTL)
+    except Exception:
+        pass
+
+
+async def decr_user_queued(user_id: UUID) -> None:
+    """Counterpart to incr_user_queued — always call in a finally so it can't leak."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        count = await r.decr(user_queued_key(user_id))
+        if count < 0:
+            await r.set(user_queued_key(user_id), 0)
+    except Exception:
+        pass
+
+
+async def get_user_queued(user_id: UUID) -> int:
+    """Read-only snapshot of how many of this user's contacts are waiting on their 1-call slot."""
+    try:
+        from app.core.redis import get_redis
+        r = await get_redis()
+        return int(await r.get(user_queued_key(user_id)) or 0)
+    except Exception:
+        return 0
+
+
 async def acquire_user_slot(user_id: UUID, max_concurrent: int = DEFAULT_MAX_CONCURRENT_PER_USER) -> bool:
     """
     Atomically grab the user's single concurrent-call slot. Returns True if
@@ -176,16 +213,27 @@ async def release_user_slot(user_id: UUID) -> None:
         pass  # best-effort
 
 
-async def get_current_usage(session: AsyncSession, org_id: UUID) -> dict:
-    """Read-only snapshot for GET /api/usage/concurrency: {in_use, max, queued}."""
+async def get_current_usage(session: AsyncSession, org_id: UUID, user_id: UUID | None = None) -> dict:
+    """
+    Read-only snapshot for GET /api/usage/concurrency: {in_use, max, queued, my_queued}.
+
+    `my_queued` (only populated when user_id is given) is the caller's own
+    count of contacts waiting on their personal 1-call slot — distinct from
+    `queued`, which is the org-wide count waiting on the plan's shared cap.
+    A user can see a nonzero my_queued (their second campaign queuing behind
+    their first) while the org-wide queued is 0 (plenty of org capacity free).
+    """
     max_concurrent = await resolve_org_max_concurrent(session, org_id)
     in_use = 0
     queued = 0
+    my_queued = 0
     try:
         from app.core.redis import get_redis
         r = await get_redis()
         in_use = int(await r.get(org_slot_key(org_id)) or 0)
         queued = int(await r.get(org_queued_key(org_id)) or 0)
+        if user_id is not None:
+            my_queued = await get_user_queued(user_id)
     except Exception:
         pass
-    return {"in_use": in_use, "max": max_concurrent, "queued": queued}
+    return {"in_use": in_use, "max": max_concurrent, "queued": queued, "my_queued": my_queued}

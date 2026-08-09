@@ -41,12 +41,14 @@ from app.core.concurrency import (
     acquire_org_slot,
     acquire_user_slot,
     decr_queued,
+    decr_user_queued,
     incr_queued,
+    incr_user_queued,
     release_org_slot,
     release_user_slot,
     resolve_org_max_concurrent,
 )
-from app.core.credits import record_call_credits
+from app.core.credits import has_credits_remaining, record_call_credits
 from app.core.vobiz import fetch_recording_for_call, resolve_vobiz_credentials
 from app.database import make_worker_session_factory
 
@@ -630,14 +632,18 @@ async def _run_one_call(
 
     user_slot_acquired = owner_user_id is None  # no owner to attribute to -- fail open
     if owner_user_id is not None:
-        user_wait_attempts = max(1, settings.CONCURRENCY_MAX_WAIT_SECONDS // _ORG_MAX_WAIT_POLL_INTERVAL)
-        for attempt in range(user_wait_attempts):
-            if await acquire_user_slot(owner_user_id):
-                user_slot_acquired = True
-                break
-            if attempt == 0:
-                log.info("user_at_capacity_queuing", user_id=str(owner_user_id), phone=contact_phone)
-            await asyncio.sleep(_ORG_MAX_WAIT_POLL_INTERVAL)
+        await incr_user_queued(owner_user_id)
+        try:
+            user_wait_attempts = max(1, settings.CONCURRENCY_MAX_WAIT_SECONDS // _ORG_MAX_WAIT_POLL_INTERVAL)
+            for attempt in range(user_wait_attempts):
+                if await acquire_user_slot(owner_user_id):
+                    user_slot_acquired = True
+                    break
+                if attempt == 0:
+                    log.info("user_at_capacity_queuing", user_id=str(owner_user_id), phone=contact_phone)
+                await asyncio.sleep(_ORG_MAX_WAIT_POLL_INTERVAL)
+        finally:
+            await decr_user_queued(owner_user_id)
 
     if not user_slot_acquired:
         # This admin/user stayed at their 1-call cap past MAX_WAIT — never dialed.
@@ -906,6 +912,16 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         update(Campaign).where(Campaign.id == campaign.id).values(status=CampaignStatus.PAUSED)
                     )
                 log.warning("campaign_paused_org_inactive", campaign_id=campaign_id, org_id=str(campaign.org_id))
+                return
+
+            # Same idea, but for credits running out mid-run instead of the org
+            # going inactive — stop dialing before more overage accumulates.
+            if not await has_credits_remaining(session, campaign.org_id):
+                async with session.begin():
+                    await session.execute(
+                        update(Campaign).where(Campaign.id == campaign.id).values(status=CampaignStatus.PAUSED)
+                    )
+                log.warning("campaign_paused_credits_exhausted", campaign_id=campaign_id, org_id=str(campaign.org_id))
                 return
 
         if not _in_calling_window(campaign):

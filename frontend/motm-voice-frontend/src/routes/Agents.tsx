@@ -610,6 +610,7 @@ function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; 
   const [phone, setPhone] = useState("+91");
   const [trunkId, setTrunkId] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const trunks = useMyTrunks();
 
   const trunkOptions = trunks.data ?? [];
@@ -618,12 +619,16 @@ function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; 
   async function handleCall() {
     if (!agent) return;
     setLoading(true);
+    setError(null);
     try {
       await agentsApi.testCall(agent.id, phone, selectedTrunk?.id);
       toast.success("Test call started — it should ring shortly");
       onOpenChange();
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't start test call"));
+      // Shown inline (not just as a toast) since a toast can be missed while
+      // the dialog stays open, and errors here (e.g. "call already in progress",
+      // "out of credits") are actionable right where the user already is.
+      setError(apiErrorMessage(err, "Couldn't start test call"));
     } finally {
       setLoading(false);
     }
@@ -656,6 +661,11 @@ function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; 
           <Label>To</Label>
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
         </div>
+        {error && (
+          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <DialogFooter>
           <Button variant="gradient" onClick={handleCall} disabled={loading || !selectedTrunk}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}

@@ -2,8 +2,10 @@
 app/api/usage.py — Read-only usage endpoints for the frontend.
 
 GET /concurrency exposes the org's current plan-based call-slot usage
-(app/core/concurrency.py) so the UI can show "in use / max" and how many
-contacts are currently queued waiting for capacity.
+(app/core/concurrency.py) so the UI can show "in use / max", how many
+contacts are currently queued org-wide waiting for capacity, and how many
+of the calling user's own contacts are queued behind their personal 1-call-
+at-a-time slot.
 
 GET /credits exposes the org's current credit-based billing usage
 (app/core/credits.py): 1 credit = 1 minute of call time.
@@ -26,8 +28,8 @@ async def get_concurrency_usage(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Current org-level concurrent-call usage: {in_use, max, queued}."""
-    return await get_current_usage(db, token.org_id)
+    """Current org-level concurrent-call usage: {in_use, max, queued, my_queued}."""
+    return await get_current_usage(db, token.org_id, token.user_id)
 
 
 @router.get("/credits")

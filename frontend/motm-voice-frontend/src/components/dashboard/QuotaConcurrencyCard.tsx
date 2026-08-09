@@ -4,6 +4,9 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ConcurrencyUsage, CreditUsage, OrgQuotaInfo } from "@/lib/types";
 
+// Shared with Billing.tsx so both places agree on what "low credits" means.
+export const CREDIT_WARNING_THRESHOLD_PCT = 80;
+
 interface QuotaConcurrencyCardProps {
   orgInfo: OrgQuotaInfo | undefined;
   credits: CreditUsage | undefined;
@@ -13,7 +16,7 @@ interface QuotaConcurrencyCardProps {
 
 export function QuotaConcurrencyCard({ orgInfo, credits, concurrency, loading }: QuotaConcurrencyCardProps) {
   const creditsPct = credits ? Math.min((credits.used / Math.max(credits.allotted, 1)) * 100, 100) : 0;
-  const creditsNear = creditsPct >= 85;
+  const creditsNear = creditsPct >= CREDIT_WARNING_THRESHOLD_PCT;
   const concurrencyPct = concurrency ? Math.min((concurrency.in_use / Math.max(concurrency.max, 1)) * 100, 100) : 0;
 
   return (
@@ -58,6 +61,11 @@ export function QuotaConcurrencyCard({ orgInfo, credits, concurrency, loading }:
           )}
           {concurrency && concurrency.queued > 0 && (
             <p className="text-xs text-info">{concurrency.queued} call{concurrency.queued === 1 ? "" : "s"} queued, waiting for a free line</p>
+          )}
+          {concurrency && concurrency.my_queued > 0 && (
+            <p className="text-xs text-info">
+              {concurrency.my_queued} of your own call{concurrency.my_queued === 1 ? "" : "s"} waiting — you can only have 1 call active at a time
+            </p>
           )}
         </div>
       </CardContent>

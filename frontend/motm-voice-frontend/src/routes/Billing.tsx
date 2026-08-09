@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { PlanPicker } from "@/components/billing/PlanPicker";
+import { CREDIT_WARNING_THRESHOLD_PCT } from "@/components/dashboard/QuotaConcurrencyCard";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
@@ -46,6 +47,7 @@ export default function Billing() {
   const credits = useCreditUsage();
   const billing = useBillingCurrent();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
+  const creditsNear = pct >= CREDIT_WARNING_THRESHOLD_PCT;
 
   const plan = billing.data?.plan;
   const effectivePriceMinor = plan ? plan.discount_price_minor ?? plan.price_minor : null;
@@ -130,6 +132,9 @@ export default function Billing() {
                 {credits.data.overage_minutes.toLocaleString()} overage minute
                 {credits.data.overage_minutes === 1 ? "" : "s"} this period
               </p>
+            )}
+            {credits.data && credits.data.overage_minutes === 0 && creditsNear && (
+              <p className="text-xs text-warning">Approaching credit limit — {Math.round(pct)}% used. Add credits before you run out.</p>
             )}
           </div>
         </CardContent>

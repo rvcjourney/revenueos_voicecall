@@ -38,7 +38,7 @@ import {
   usePauseCampaign,
   useUpdateCampaign,
 } from "@/lib/hooks";
-import { campaignsApi } from "@/lib/api";
+import { campaignsApi, usageApi } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api";
 import { callDurationSeconds, formatDate, formatDateTime, formatDuration } from "@/lib/utils";
 
@@ -77,6 +77,21 @@ export default function CampaignDetail() {
     try {
       await launch.mutateAsync(c.id);
       toast.success("Campaign launched");
+      // Give the dispatcher a moment to start dialing and hit the per-user
+      // 1-call-at-a-time cap (if this user already has another call running)
+      // before we check — an immediate check would always read 0.
+      setTimeout(async () => {
+        try {
+          const { data } = await usageApi.concurrency();
+          if (data.my_queued > 0) {
+            toast.info(
+              "You already have a call in progress — since you can only have 1 call active at a time, this campaign's calls will queue and dial automatically as your current one finishes."
+            );
+          }
+        } catch {
+          // best-effort UX hint only — never surface this check's own failure
+        }
+      }, 5000);
     } catch (err) {
       toast.error(apiErrorMessage(err, "Couldn't launch campaign"));
     }
@@ -109,8 +124,11 @@ export default function CampaignDetail() {
       if (kind === "callback_requested") await campaignsApi.exportCallbacks(c.id, filename);
       if (kind === "all") await campaignsApi.exportAll(c.id, filename);
       toast.success("Export downloaded");
-    } catch {
-      toast.error("Export failed — is the backend reachable?");
+    } catch (err) {
+      // downloadBlob() uses fetch(), not axios, so apiErrorMessage() (which only
+      // understands axios errors) won't parse this — its message is already the
+      // real backend detail (see downloadBlob in lib/api.ts).
+      toast.error(err instanceof Error ? err.message : "Export failed — is the backend reachable?");
     }
   }
 

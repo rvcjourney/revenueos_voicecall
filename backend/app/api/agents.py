@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
-from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError
+from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError, QuotaExceededError
 from app.core.plan_features import check_agent_voice_settings
 from app.config import settings
 from app.database import get_db
@@ -390,6 +390,13 @@ async def test_call(
         if not trunk:
             raise NotFoundError("Selected phone number not found")
         trunk_id = str(trunk.id)
+
+    from app.core.credits import has_credits_remaining
+
+    if not await has_credits_remaining(db, token.org_id):
+        raise QuotaExceededError(
+            "Your organization has used all its available call credits. Visit Billing to add more before placing calls."
+        )
 
     # One call in flight per admin/user, platform-wide (test calls + campaign
     # calls share this cap) — reject outright rather than queueing, since this

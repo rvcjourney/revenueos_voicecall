@@ -29,6 +29,13 @@ CREDIT_PERIOD_DAYS = 30
 # every org is expected to carry a Subscription once plans are seeded).
 DEFAULT_CREDITS_PER_MONTH = 500
 
+# How far over the plan's monthly allotment an org may run before new calls are
+# blocked outright. Overage minutes are already billable (see record_call_credits
+# below), so a hard cutoff exactly at 100% would block calls the org is willing
+# to pay for — this grace window lets a campaign finish out a reasonable overrun
+# instead of stopping mid-run the instant the counter crosses the line.
+CREDIT_GRACE_FRACTION = 0.2
+
 
 def minutes_for_duration(duration_seconds: int | None) -> int:
     """1 credit = 1 minute of call time, rounded up. None/0/negative → 0."""
@@ -176,3 +183,22 @@ async def get_credit_usage(db: AsyncSession, org_id: UUID) -> dict:
         "allotted": credits_per_month,
         "overage_minutes": max(0, org.credits_used_this_period - credits_per_month),
     }
+
+
+async def has_credits_remaining(db: AsyncSession, org_id: UUID) -> bool:
+    """
+    False once the org has used its full monthly allotment plus the grace
+    overage window (CREDIT_GRACE_FRACTION) — the point past which new calls
+    should stop being placed. Overage minutes up to that point are still
+    allowed (and billed) so a campaign isn't cut off the instant it crosses
+    100% of plan credits.
+    """
+    org = await db.get(Organization, org_id)
+    if org is None:
+        return True  # fail open — a missing org row is not this check's problem to catch
+
+    await reset_credit_period_if_stale(db, org)
+
+    credits_per_month = await resolve_org_credits_per_month(db, org_id)
+    hard_limit = credits_per_month * (1 + CREDIT_GRACE_FRACTION)
+    return org.credits_used_this_period < hard_limit

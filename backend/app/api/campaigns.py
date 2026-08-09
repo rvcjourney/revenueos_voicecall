@@ -17,6 +17,7 @@ from app.core.exceptions import (
     PermissionDeniedError,
     ValidationError as AppValidationError,
     CampaignStateError,
+    QuotaExceededError,
 )
 from app.database import get_db
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
@@ -346,6 +347,13 @@ async def launch_campaign(
     if org and not org.is_active:
         raise PermissionDeniedError(
             "Your organization's subscription is inactive — visit Billing to reactivate before launching campaigns."
+        )
+
+    from app.core.credits import has_credits_remaining
+
+    if not await has_credits_remaining(db, token.org_id):
+        raise QuotaExceededError(
+            "Your organization has used all its available call credits. Visit Billing to add more before launching this campaign."
         )
 
     if campaign.status == CampaignStatus.RUNNING:

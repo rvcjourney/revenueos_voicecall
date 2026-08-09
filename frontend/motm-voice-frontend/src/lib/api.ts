@@ -88,7 +88,18 @@ export async function downloadBlob(path: string, filename: string) {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
-  if (!res.ok) throw new Error("Export failed");
+  if (!res.ok) {
+    // Not an axios call, so apiErrorMessage() can't parse this — read the
+    // backend's real {detail} body ourselves rather than discarding it.
+    let detail = "Export failed";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // response wasn't JSON (e.g. a network-level failure) — keep the generic message
+    }
+    throw new Error(detail);
+  }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
