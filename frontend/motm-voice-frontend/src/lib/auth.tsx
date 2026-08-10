@@ -10,7 +10,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<User>;
   registerOrg: (data: { full_name: string; company_name: string; email: string; password: string; phone: string }) => Promise<{ email: string; message: string }>;
   verifyOtp: (email: string, code: string) => Promise<User>;
-  registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) => Promise<User>;
+  registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) => Promise<{ email: string; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -86,10 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const registerMember = useCallback(
     async (data: { full_name: string; email: string; password: string; org_code: string }) => {
+      // No session yet — this only creates the account and sends the OTP.
       const res = await authApi.registerMember(data);
-      return persistSession(res.data);
+      return res.data;
     },
-    [persistSession]
+    []
   );
 
   const logout = useCallback(async () => {

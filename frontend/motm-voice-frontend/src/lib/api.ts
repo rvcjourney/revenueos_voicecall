@@ -123,8 +123,9 @@ export const authApi = {
   forgotPassword: (email: string) => api.post("/api/auth/forgot-password", { email }),
   resetPassword: (email: string, code: string, new_password: string) =>
     api.post("/api/auth/reset-password", { email, code, new_password }),
+  // No session yet either — same as register(), POST /verify-otp logs them in.
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) =>
-    api.post<LoginResponse>("/api/auth/register-member", data),
+    api.post<{ email: string; message: string }>("/api/auth/register-member", data),
   logout: () => api.post("/api/auth/logout").catch(() => undefined),
   me: () => api.get<User>("/api/auth/me"),
   updateProfile: (data: { full_name?: string; password?: string }) =>

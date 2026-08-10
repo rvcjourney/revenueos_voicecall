@@ -37,8 +37,6 @@ const orgSchema = z.object({
 type OrgValues = z.infer<typeof orgSchema>;
 
 export default function Signup() {
-  const { registerMember } = useAuth();
-  const navigate = useNavigate();
   const [tab, setTab] = useState("join");
 
   return (
@@ -57,13 +55,7 @@ export default function Signup() {
           <p className="mb-4 text-xs text-muted-foreground">
             Have an 8-character invite code from your admin? Join their existing QuickHowl workspace.
           </p>
-          <JoinTeamForm
-            onSuccess={async (values) => {
-              const user = await registerMember(values);
-              toast.success(`Welcome to ${user.org_name}!`);
-              navigate("/dashboard");
-            }}
-          />
+          <JoinTeamForm />
         </TabsContent>
 
         <TabsContent value="org">
@@ -84,8 +76,14 @@ export default function Signup() {
   );
 }
 
-function JoinTeamForm({ onSuccess }: { onSuccess: (values: MemberValues) => Promise<void> }) {
+function JoinTeamForm() {
+  const { registerMember, verifyOtp } = useAuth();
+  const navigate = useNavigate();
+
   const [serverError, setServerError] = useState<string | null>(null);
+  const [step, setStep] = useState<"form" | "otp">("form");
+  const [memberValues, setMemberValues] = useState<MemberValues | null>(null);
+
   const {
     register,
     handleSubmit,
@@ -94,11 +92,24 @@ function JoinTeamForm({ onSuccess }: { onSuccess: (values: MemberValues) => Prom
 
   async function onSubmit(values: MemberValues) {
     setServerError(null);
+    const normalized = { ...values, org_code: values.org_code.toUpperCase() };
     try {
-      await onSuccess({ ...values, org_code: values.org_code.toUpperCase() });
+      await registerMember(normalized);
+      setMemberValues(normalized);
+      setStep("otp");
+      toast.success(`Check ${normalized.email} for a verification code.`);
     } catch (err) {
       setServerError(apiErrorMessage(err, "Couldn't join that team. Double-check the invite code."));
     }
+  }
+
+  async function onOtpVerified() {
+    toast.success(`Welcome, ${memberValues?.full_name}!`);
+    navigate("/dashboard");
+  }
+
+  if (step === "otp" && memberValues) {
+    return <OtpEntry email={memberValues.email} verifyOtp={verifyOtp} onVerified={onOtpVerified} />;
   }
 
   return (

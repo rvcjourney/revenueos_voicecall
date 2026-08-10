@@ -92,11 +92,16 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     return RegisterPendingResponse(email=body.email)
 
 
-@router.post("/register-member", response_model=TokenResponse, status_code=201)
+@router.post("/register-member", response_model=RegisterPendingResponse, status_code=201)
 async def register_member(body: MemberRegisterRequest, db: AsyncSession = Depends(get_db)):
     """
     Sales team member self-registers using the 8-char org code shown on the
-    admin Users page.  Creates a MEMBER-role account inside that org.
+    admin Users page. Creates a MEMBER-role account inside that org.
+
+    Mirrors register()'s flow: no session is issued yet, and email_verified_at
+    stays NULL until POST /verify-otp — same OTP step new organizations go
+    through, so /login's `email_verified_at is None` check applies uniformly
+    to every account instead of only ones created via /register.
     """
     # Find org by code prefix (first 8 hex chars of org UUID without dashes)
     code = body.org_code.strip().lower().replace("-", "")
@@ -130,26 +135,16 @@ async def register_member(body: MemberRegisterRequest, db: AsyncSession = Depend
         full_name=body.full_name,
         role=UserRole.MEMBER,
         is_active=True,
+        email_verified_at=None,
     )
     db.add(user)
     await db.commit()
-    await db.refresh(user)
 
-    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
-    refresh_token = create_refresh_token(str(user.id), str(user.org_id))
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=UserOut(
-            id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            org_id=str(user.org_id),
-            org_name=org.name,
-        ),
-    )
+    try:
+        await send_otp(body.email)
+    except SupabaseOtpError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc
+    return RegisterPendingResponse(email=body.email)
 
 
 @router.post("/verify-otp", response_model=TokenResponse)
