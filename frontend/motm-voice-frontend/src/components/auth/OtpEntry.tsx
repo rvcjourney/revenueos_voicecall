@@ -66,9 +66,9 @@ export function OtpEntry({
         <Input
           id="otp-code"
           inputMode="numeric"
-          maxLength={6}
+          maxLength={10}
           placeholder="123456"
-          className="text-center text-lg tracking-[0.5em]"
+          className="text-center text-lg tracking-[0.35em]"
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         />

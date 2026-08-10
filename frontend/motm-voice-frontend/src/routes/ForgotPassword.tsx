@@ -17,7 +17,7 @@ const emailSchema = z.object({
 type EmailValues = z.infer<typeof emailSchema>;
 
 const resetSchema = z.object({
-  code: z.string().min(6, "Enter the 6-digit code").max(6, "Enter the 6-digit code"),
+  code: z.string().min(6, "Enter the code from your email"),
   new_password: z.string().min(6, "Password must be at least 6 characters"),
 });
 type ResetValues = z.infer<typeof resetSchema>;
@@ -118,9 +118,9 @@ function ResetForm({ email, onDone }: { email: string; onDone: () => void }) {
         <Input
           id="rp-code"
           inputMode="numeric"
-          maxLength={6}
+          maxLength={10}
           placeholder="123456"
-          className="text-center text-lg tracking-[0.5em]"
+          className="text-center text-lg tracking-[0.35em]"
           {...register("code")}
         />
         {errors.code && <p className="text-xs text-destructive">{errors.code.message}</p>}
