@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth";
 import { useConcurrency, useOrgInfo } from "@/lib/hooks";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { initials, cn } from "@/lib/utils";
 
 export function TopBar() {
@@ -42,6 +43,7 @@ export function TopBar() {
         </span>
         <span className="hidden text-xs text-muted-foreground sm:block">{today}</span>
         <div className="hidden h-6 w-px bg-border sm:block" />
+        <ThemeToggle />
         <Avatar className="h-8 w-8">
           <AvatarFallback className="bg-[image:var(--gradient-primary)] text-primary-foreground">
             {initials(user?.full_name ?? "?")}

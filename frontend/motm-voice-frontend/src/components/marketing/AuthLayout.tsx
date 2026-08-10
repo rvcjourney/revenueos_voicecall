@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/shared/Logo";
 import { SoundWave } from "@/components/shared/SoundWave";
+import { ThemeToggle } from "@/components/shared/ThemeToggle";
 
 export function AuthLayout({
   title,
@@ -14,6 +15,9 @@ export function AuthLayout({
 }) {
   return (
     <div className="relative grid min-h-screen lg:grid-cols-2">
+      <div className="absolute right-4 top-4 z-10 sm:right-6">
+        <ThemeToggle />
+      </div>
       <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-card to-background p-10 lg:flex">
         <div className="dot-grid absolute inset-0 opacity-40" />
         <div className="relative">
