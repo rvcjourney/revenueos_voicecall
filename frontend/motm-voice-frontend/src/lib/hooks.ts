@@ -53,10 +53,17 @@ export function useBillingCurrent() {
 }
 
 export function useCheckout() {
-  const qc = useQueryClient();
+  // No onSuccess invalidation here on purpose: action:"new" means a real but
+  // still-UNPAID Subscription row was just created server-side (Razorpay
+  // requires that to hand back a subscription_id to open Checkout with) --
+  // refreshing billing-current here would make the page show that plan as
+  // "selected" before the customer has actually paid anything. Callers
+  // invalidate manually only for action:"change" (an in-place plan swap on
+  // an already-authorized mandate, which really did just take effect).
+  // The "new" case gets its refresh from useVerifyPayment below, once
+  // payment is genuinely confirmed.
   return useMutation({
     mutationFn: (planId: string) => billingApi.checkout(planId).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
   });
 }
 

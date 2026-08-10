@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Building2,
@@ -266,6 +267,7 @@ function NoPlanBilling() {
   const { user } = useAuth();
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
+  const qc = useQueryClient();
   const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
   const [paying, setPaying] = useState(false);
 
@@ -278,6 +280,10 @@ function NoPlanBilling() {
     try {
       const result = await checkout.mutateAsync(selectedPlan.id);
       if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        // Don't refresh billing-current yet -- a real but UNPAID Subscription
+        // row now exists just so Razorpay Checkout has something to
+        // authorize. Only the payment handler below (via useVerifyPayment)
+        // should make this page start showing it as the org's plan.
         await openRazorpayCheckout({
           key: result.razorpay_key_id,
           subscription_id: result.subscription_id,
@@ -295,6 +301,9 @@ function NoPlanBilling() {
           modal: { ondismiss: () => setPaying(false) },
         });
       } else {
+        // action:"change" completes synchronously server-side, so this one
+        // really is safe (and necessary) to reflect immediately.
+        await qc.invalidateQueries({ queryKey: ["billing-current"] });
         toast.success("Plan updated");
       }
     } catch (err) {
@@ -364,6 +373,7 @@ function ChangePlanDialog({
   const [paying, setPaying] = useState(false);
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
+  const qc = useQueryClient();
 
   async function confirm() {
     if (!selectedPlan) return;
@@ -371,6 +381,8 @@ function ChangePlanDialog({
     try {
       const result = await checkout.mutateAsync(selectedPlan.id);
       if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        // Don't refresh billing-current yet -- see NoPlanBilling's comment;
+        // useVerifyPayment below is what should reflect the new plan.
         await openRazorpayCheckout({
           key: result.razorpay_key_id,
           subscription_id: result.subscription_id,
@@ -389,6 +401,9 @@ function ChangePlanDialog({
           modal: { ondismiss: () => setPaying(false) },
         });
       } else {
+        // action:"change" completes synchronously server-side — safe to
+        // reflect immediately.
+        await qc.invalidateQueries({ queryKey: ["billing-current"] });
         toast.success("Plan updated");
         setOpen(false);
       }

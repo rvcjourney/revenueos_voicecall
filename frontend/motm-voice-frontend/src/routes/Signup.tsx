@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -153,6 +154,7 @@ function CreateOrgForm() {
   const navigate = useNavigate();
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
+  const qc = useQueryClient();
 
   const [serverError, setServerError] = useState<string | null>(null);
   const [emailTaken, setEmailTaken] = useState(false);
@@ -221,6 +223,10 @@ function CreateOrgForm() {
           },
         });
       } else {
+        // action:"change" completes synchronously server-side — safe to
+        // reflect immediately (in practice unreachable for a brand-new org,
+        // which never has an existing subscription to change).
+        await qc.invalidateQueries({ queryKey: ["billing-current"] });
         toast.success("Plan updated");
         navigate("/dashboard");
       }
