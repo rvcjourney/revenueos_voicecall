@@ -43,9 +43,22 @@ function formatPrice(priceMinor: number, currency: string) {
 }
 
 export default function Billing() {
+  const billing = useBillingCurrent();
+
+  // /billing/current 404s for any org with no Subscription row yet (never
+  // finished checkout, e.g. skipped it at signup) -- that's not a loading
+  // state, it never resolves, so show the plan picker directly instead of
+  // leaving the page stuck on skeletons forever.
+  if (billing.isError) {
+    return <NoPlanBilling />;
+  }
+
+  return <ActivePlanBilling billing={billing} />;
+}
+
+function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingCurrent> }) {
   const { user } = useAuth();
   const credits = useCreditUsage();
-  const billing = useBillingCurrent();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
   const creditsNear = pct >= CREDIT_WARNING_THRESHOLD_PCT;
 
@@ -243,6 +256,81 @@ export default function Billing() {
             These are the details typically required before charges can be processed. Billing email/address/Tax ID
             aren't collected yet — this section is a UI preview only for those.
           </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function NoPlanBilling() {
+  const { user } = useAuth();
+  const checkout = useCheckout();
+  const verifyPayment = useVerifyPayment();
+  const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
+  const [paying, setPaying] = useState(false);
+
+  async function startPayment() {
+    if (!selectedPlan) {
+      toast.error("Pick a plan first");
+      return;
+    }
+    setPaying(true);
+    try {
+      const result = await checkout.mutateAsync(selectedPlan.id);
+      if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
+        await openRazorpayCheckout({
+          key: result.razorpay_key_id,
+          subscription_id: result.subscription_id,
+          name: "QuickHowl",
+          description: `${result.plan_name} plan`,
+          prefill: { name: user?.full_name, email: user?.email },
+          theme: { color: "#2563eb" },
+          handler: async (response) => {
+            try {
+              await verifyPayment.mutateAsync(response);
+            } finally {
+              toast.success("Payment received — activating your account...");
+            }
+          },
+          modal: { ondismiss: () => setPaying(false) },
+        });
+      } else {
+        toast.success("Plan updated");
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't start checkout"));
+      setPaying(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Billing" description="Manage your plan, payment method, and invoices" />
+      <Card className="card-top-accent overflow-hidden">
+        <CardContent className="space-y-6 pt-8">
+          <div>
+            <p className="eyebrow flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-primary" /> Get started
+            </p>
+            <h2 className="mt-1.5 font-heading text-2xl font-semibold sm:text-3xl">
+              Choose a plan to activate your account
+            </h2>
+            <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+              You don't have an active subscription yet, so calls can't go out until you pick a plan and complete
+              payment. Your account and settings are otherwise all set up.
+            </p>
+          </div>
+          <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} />
+          <Button
+            variant="gradient"
+            size="lg"
+            className="w-full sm:w-auto"
+            onClick={startPayment}
+            disabled={!selectedPlan || paying}
+          >
+            {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+            Continue to payment
+          </Button>
         </CardContent>
       </Card>
     </div>
