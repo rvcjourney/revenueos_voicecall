@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import axios from "axios";
-import { Loader2, Mail } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { AuthLayout } from "@/components/marketing/AuthLayout";
 import { Button } from "@/components/ui/button";
@@ -155,7 +155,7 @@ function CreateOrgForm() {
   const verifyPayment = useVerifyPayment();
 
   const [serverError, setServerError] = useState<string | null>(null);
-  const [registrationClosed, setRegistrationClosed] = useState(false);
+  const [emailTaken, setEmailTaken] = useState(false);
   const [step, setStep] = useState<"form" | "otp" | "plan">("form");
   const [orgValues, setOrgValues] = useState<OrgValues | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
@@ -169,15 +169,17 @@ function CreateOrgForm() {
 
   async function onSubmit(values: OrgValues) {
     setServerError(null);
-    setRegistrationClosed(false);
+    setEmailTaken(false);
     try {
       await registerOrg(values);
       setOrgValues(values);
       setStep("otp");
       toast.success(`Check ${values.email} for a verification code.`);
     } catch (err) {
+      // /register's only 409 case is "this email already has an account" —
+      // show that directly instead of a generic error, with a way out.
       if (axios.isAxiosError(err) && err.response?.status === 409) {
-        setRegistrationClosed(true);
+        setEmailTaken(true);
         return;
       }
       setServerError(apiErrorMessage(err, "Couldn't create your organization."));
@@ -228,24 +230,6 @@ function CreateOrgForm() {
     }
   }
 
-  if (registrationClosed) {
-    return (
-      <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-5 text-center">
-        <Mail className="mx-auto h-8 w-8 text-primary" />
-        <div className="space-y-1">
-          <p className="text-sm font-medium">Registration is currently closed</p>
-          <p className="text-sm text-muted-foreground">
-            New organizations are being onboarded directly by our team right now. Contact your administrator, or reach
-            out and we'll get you set up.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => setRegistrationClosed(false)}>
-          Back to form
-        </Button>
-      </div>
-    );
-  }
-
   if (step === "otp" && orgValues) {
     return <OtpEntry email={orgValues.email} verifyOtp={verifyOtp} onVerified={onOtpVerified} />;
   }
@@ -277,6 +261,15 @@ function CreateOrgForm() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      {emailTaken && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          This email is already registered.{" "}
+          <Link to="/login" className="font-medium underline">
+            Log in
+          </Link>{" "}
+          instead — if you never finished verifying it, the login page will let you re-enter your code.
+        </div>
+      )}
       {serverError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {serverError}
