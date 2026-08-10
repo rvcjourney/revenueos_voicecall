@@ -15,9 +15,17 @@ in storage3/postgrest that aren't needed just for OTP. The exact request
 shape below was confirmed by extracting the `supabase-auth` wheel and reading
 _sync/gotrue_client.py + gotrue_base_api.py directly, not guessed.
 
-One manual setup step (Supabase dashboard, not code): Auth → Email Templates
-→ "Magic Link" template must include `{{ .Token }}` for Supabase to send a
-numeric code — otherwise it sends a clickable magic-link instead.
+Manual setup steps (Supabase dashboard, not code) — Auth → Email Templates:
+BOTH of these must include `{{ .Token }}`, or Supabase sends a clickable
+link instead of a numeric code:
+  - "Magic Link" — used when the email already exists (e.g. resend on login)
+  - "Confirm signup" — used the FIRST time an email is seen (e.g. new org
+    creation, since create_user=True below creates a fresh Supabase user).
+    Easy to miss: editing only "Magic Link" leaves brand-new signups still
+    getting the default link-based template, whose link redirects to
+    whatever Auth → URL Configuration → Site URL is set to (defaults to
+    http://localhost:3000 on a fresh Supabase project) — set that to the
+    production app URL too.
 """
 from __future__ import annotations
 
