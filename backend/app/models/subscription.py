@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -19,17 +19,26 @@ from app.models.base import SoftDeleteMixin, TimestampMixin
 
 class Subscription(Base, TimestampMixin, SoftDeleteMixin):
     """
-    Which org is on which plan. org_id is unique: one active subscription
-    row per org (soft-delete + insert a new row to record a plan change).
+    Which org is on which plan. org_id is unique among non-deleted rows only
+    (see alembic/versions/0027_subscriptions_partial_unique_org_id.py):
+    one active subscription row per org, soft-delete + insert a new row to
+    record a plan change.
     """
     __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index(
+            "ix_subscriptions_org_id_active_unique",
+            "org_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
     org_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     plan_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
