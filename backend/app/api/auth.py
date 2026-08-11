@@ -253,7 +253,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise AuthenticationError("Invalid email or password")
     if not user.is_active:
         raise AuthenticationError("Account is inactive. Contact your admin.")
-    if user.email_verified_at is None:
+    if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
         raise AuthenticationError("Please verify your email before logging in", code="EMAIL_NOT_VERIFIED")
 
     org = await db.get(Organization, user.org_id)

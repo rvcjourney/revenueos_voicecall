@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
+    # Temporary escape hatch: set to False to let /login through without a
+    # verified email (OTP still gets requested/sent everywhere as normal,
+    # this only stops login from blocking on it). Meant to be flipped back to
+    # True as soon as Supabase's email sending is reliable again — see
+    # app/api/auth.py's login() for the one place this is read.
+    REQUIRE_EMAIL_VERIFICATION: bool = True
+
     # ── Redis ──────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_PREFIX: str = "motm"
