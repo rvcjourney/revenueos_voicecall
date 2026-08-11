@@ -184,6 +184,14 @@ async def create_vobiz_inbound_trunk(
     Returns the trunk's id (used by assign_vobiz_number_to_trunk() below).
     Raises VobizTrunkCreateError on failure.
     """
+    # Vobiz's docs are explicit that inbound_destination must be the bare
+    # host ("xxx.sip.livekit.cloud"), not a "sip:" URI — a trunk created with
+    # the prefix silently routes nowhere (calls to the DID fail as "invalid
+    # number") even though everything else about the trunk looks correct.
+    # Stripped here so a misconfigured LIVEKIT_SIP_HOSTNAME env var can't
+    # reproduce that bug regardless of how the caller formats it.
+    clean_destination = inbound_destination.removeprefix("sip:")
+
     hdrs = _headers(auth_id, auth_token)
     try:
         async with http.post(
@@ -193,7 +201,7 @@ async def create_vobiz_inbound_trunk(
                 "name": f"motmvoice-inbound-{did.lstrip('+')}",
                 "trunk_direction": "inbound",
                 "transport": "tcp",
-                "inbound_destination": inbound_destination,
+                "inbound_destination": clean_destination,
             },
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
