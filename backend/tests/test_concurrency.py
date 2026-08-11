@@ -76,8 +76,11 @@ async def test_trunk_and_org_limits_enforced_independently(fake_redis):
 
 
 # ── Plan resolution (DB-backed) ───────────────────────────────────────────────
+# The cap is flat and uniform for every org — Plan.max_concurrent_calls is no
+# longer consulted, on purpose (business decision: same concurrency ceiling
+# regardless of plan tier).
 
-async def test_resolve_org_max_concurrent_from_active_plan(db, fake_redis):
+async def test_resolve_org_max_concurrent_ignores_plan_value(db, fake_redis):
     org = Organization(name="Plan Org", slug="plan-org")
     db.add(org)
     await db.flush()
@@ -89,7 +92,7 @@ async def test_resolve_org_max_concurrent_from_active_plan(db, fake_redis):
     db.add(Subscription(org_id=org.id, plan_id=plan.id, status="active"))
     await db.commit()
 
-    assert await resolve_org_max_concurrent(db, org.id) == 7
+    assert await resolve_org_max_concurrent(db, org.id) == DEFAULT_MAX_CONCURRENT_PER_ORG
 
 
 async def test_resolve_org_max_concurrent_falls_back_to_default_without_plan(db, fake_redis):

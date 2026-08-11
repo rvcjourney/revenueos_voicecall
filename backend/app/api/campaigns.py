@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.concurrency import get_current_usage
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import (
     NotFoundError,
@@ -395,6 +396,16 @@ async def launch_campaign(
         )
         if running_count >= 5:
             raise CampaignStateError("You have reached the limit of 5 running campaigns. Pause one before launching another.")
+
+    # Org-wide concurrency gate: reject the launch outright if the org is
+    # already at its concurrent-call cap (from other already-running
+    # campaigns), rather than starting this one and letting its calls queue
+    # silently behind the others.
+    usage = await get_current_usage(db, token.org_id)
+    if usage["in_use"] >= usage["max"]:
+        raise CampaignStateError(
+            f"{usage['max']} calls are already running for your organisation. Try again in some time."
+        )
 
     campaign.status = CampaignStatus.RUNNING
     campaign.started_at = datetime.now(timezone.utc)

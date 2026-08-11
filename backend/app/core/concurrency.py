@@ -12,11 +12,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.plan import Plan
-from app.models.subscription import Subscription
 
 # Same atomic incr-if-under-max pattern used for per-trunk slots
 # (app/workers/tasks/campaign.py's _LUA_ACQUIRE_SLOT).
@@ -32,8 +28,12 @@ return 0
 """
 
 _SLOT_KEY_TTL = 3600            # 1-hour safety TTL — prevents a stuck counter after a crash
-_MAX_CONCURRENT_CACHE_TTL = 60   # seconds a resolved plan limit is cached
-DEFAULT_MAX_CONCURRENT_PER_ORG = 10  # fallback when an org has no active subscription/plan
+
+# Flat cap for every org, regardless of plan — a deliberate business decision,
+# not a per-plan entitlement. Plan.max_concurrent_calls is intentionally no
+# longer consulted here (it still exists as an admin-editable field, but has
+# no effect on enforcement).
+DEFAULT_MAX_CONCURRENT_PER_ORG = 3
 
 # Hard cap, not plan-based: whoever launched a campaign (or placed a test call)
 # can only ever have ONE of their own calls in flight at a time, platform-wide
@@ -50,49 +50,14 @@ def org_queued_key(org_id: UUID) -> str:
     return f"motm:concurrency:queued:{org_id}"
 
 
-def _org_max_cache_key(org_id: UUID) -> str:
-    return f"motm:concurrency:max:{org_id}"
-
-
 async def resolve_org_max_concurrent(session: AsyncSession, org_id: UUID) -> int:
     """
-    The org's max_concurrent_calls, from its active subscription's plan.
-    Falls back to DEFAULT_MAX_CONCURRENT_PER_ORG if there's no active sub/plan.
-
-    Cached in Redis for _MAX_CONCURRENT_CACHE_TTL seconds since this is looked
-    up on every dial attempt and the plan rarely changes.
+    Every org's concurrent-call cap, flat and uniform regardless of plan (see
+    DEFAULT_MAX_CONCURRENT_PER_ORG). `session`/`org_id` are kept in the
+    signature so callers don't need to change even though this no longer
+    looks anything up.
     """
-    cache_key = _org_max_cache_key(org_id)
-    redis = None
-    try:
-        from app.core.redis import get_redis
-        redis = await get_redis()
-        cached = await redis.get(cache_key)
-        if cached is not None:
-            return int(cached)
-    except Exception:
-        redis = None
-
-    max_concurrent = DEFAULT_MAX_CONCURRENT_PER_ORG
-    sub = await session.scalar(
-        select(Subscription).where(
-            Subscription.org_id == org_id,
-            Subscription.deleted_at.is_(None),
-            Subscription.status.in_(("trialing", "active")),
-        )
-    )
-    if sub:
-        plan = await session.get(Plan, sub.plan_id)
-        if plan and plan.max_concurrent_calls:
-            max_concurrent = plan.max_concurrent_calls
-
-    if redis is not None:
-        try:
-            await redis.set(cache_key, max_concurrent, ex=_MAX_CONCURRENT_CACHE_TTL)
-        except Exception:
-            pass
-
-    return max_concurrent
+    return DEFAULT_MAX_CONCURRENT_PER_ORG
 
 
 async def acquire_org_slot(org_id: UUID, max_concurrent: int) -> bool:
