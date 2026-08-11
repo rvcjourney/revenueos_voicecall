@@ -43,6 +43,10 @@ class VobizDidNotOwnedError(VobizValidationError):
     """Credentials are valid, but `did` is not a phone number on this Vobiz account."""
 
 
+class VobizNumberNotActiveError(VobizValidationError):
+    """`did` is on the account but isn't live yet (blocked, not active, or pending Aadhaar verification)."""
+
+
 async def validate_vobiz_account_and_did(
     http: aiohttp.ClientSession,
     *,
@@ -95,6 +99,15 @@ async def validate_vobiz_account_and_did(
     for n in numbers:
         num = str(n.get("e164") or "").lstrip("+")
         if num and (num == norm_did or norm_did in num or num in norm_did):
+            if n.get("is_blocked"):
+                raise VobizNumberNotActiveError(f"{did} is blocked on this Vobiz account")
+            if n.get("status") and n["status"] != "active":
+                raise VobizNumberNotActiveError(f"{did} is not active yet on Vobiz (status: {n['status']})")
+            if n.get("aadhaar_verification_required") and not n.get("aadhaar_verified"):
+                raise VobizNumberNotActiveError(
+                    f"{did} requires Aadhaar verification on Vobiz before it can be used — "
+                    "complete verification in the Vobiz console, then try again"
+                )
             return
 
     raise VobizDidNotOwnedError(f"{did} is not a phone number on this Vobiz account")
@@ -239,16 +252,14 @@ async def unassign_vobiz_number(
     """Best-effort unassign on Vobiz — failures are logged, never raised, so tearing
     down inbound calling always succeeds locally even if Vobiz is unreachable.
 
-    NOTE: the exact path/response shape here is inferred from the sibling
-    /assign endpoint's naming convention (Vobiz's docs list an "unassign-number"
-    page but the exact request shape wasn't fetched) — verify against a real
-    account before relying on it, same as the other inbound-calling unknowns
-    flagged in the implementation plan.
+    Verified against Vobiz's OpenAPI spec (https://vobiz.ai/openapi.json):
+    there is no separate POST .../unassign endpoint — unassignment is
+    DELETE on the same .../{phone_number}/assign path.
     """
     hdrs = _headers(auth_id, auth_token)
     try:
-        async with http.post(
-            f"{_BASE}/Account/{auth_id}/numbers/{quote(did, safe='')}/unassign",
+        async with http.delete(
+            f"{_BASE}/Account/{auth_id}/numbers/{quote(did, safe='')}/assign",
             headers=hdrs,
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
