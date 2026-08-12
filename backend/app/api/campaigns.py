@@ -358,13 +358,24 @@ async def launch_campaign(
         )
 
     if campaign.status == CampaignStatus.RUNNING:
-        # Campaign is already RUNNING but dispatcher may have died — clear stale
-        # lock so the re-dispatched task can acquire it immediately.
+        # Campaign is already RUNNING but its dispatcher may have died — in
+        # that case the lock is gone (its live dispatcher refreshes it every
+        # loop; a dead one lets it expire within 5 min) and re-queuing is the
+        # right recovery. But if the dispatcher IS still alive and holding
+        # the lock, unconditionally deleting it (the old behavior) yanks the
+        # lock out from under it and starts a *second* dispatcher running
+        # alongside the first — doubling trunk/CPS/org-slot contention for no
+        # reason. Same "lock present = alive" check resume_stalled_campaigns
+        # already relies on, so only requeue when it's actually absent.
+        lock_key = f"motm:dispatcher:lock:{campaign_id}"
         try:
             from app.core.redis import get_redis
-            await (await get_redis()).delete(f"motm:dispatcher:lock:{campaign_id}")
+            r = await get_redis()
+            if await r.exists(lock_key):
+                await db.refresh(campaign)
+                return _to_out(campaign)  # dispatcher already running — nothing to do
         except Exception:
-            pass
+            pass  # Redis unreachable — fail open to the old always-requeue behavior
         run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
         await db.refresh(campaign)
         return _to_out(campaign)

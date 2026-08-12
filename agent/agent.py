@@ -1117,8 +1117,15 @@ class VoiceAgent(Agent):
                 getattr(getattr(resp, "usage", None), "completion_tokens", None),
             )
         except Exception as exc:
-            # outcome/summary keep their "not_interested"/"" defaults from above, so
-            # the report still posts — only extracted_data is lost here.
+            # A genuine classification failure used to silently fall back to
+            # the pre-try "not_interested" default -- indistinguishable from a
+            # confident real classification, so a Groq outage could quietly
+            # mislabel every affected call that day with no visible flag
+            # anywhere. "pending" is a real, already-monitored value instead:
+            # the backend's flag_stale_pending_calls beat task (10 min later)
+            # logs any COMPLETED call still sitting at outcome=pending, which
+            # this now reaches on purpose instead of by accident.
+            outcome = "pending"
             # raw is None  -> failed before/during the Groq API call itself (network,
             #                 auth, rate limit) -- never got a response to parse.
             # raw is set   -> Groq responded but json.loads/field access failed; raw_preview

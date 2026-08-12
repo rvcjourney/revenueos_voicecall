@@ -1079,7 +1079,18 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
 
 
 async def _reset_stale_dialing(campaign_id: str) -> None:
-    """Reset any DIALING contacts to PENDING on dispatcher start (crash recovery)."""
+    """
+    Reset any DIALING contacts to PENDING on dispatcher start (crash recovery).
+
+    Also closes out whatever Call row a crash left behind for those same
+    contacts. The Call row is created (status=INITIATED) *before* the contact
+    flips to DIALING (see the dispatch loop above), so if the worker dies in
+    that window the contact recovers and gets redialed here, but its earlier
+    Call row was never touched -- it used to sit at INITIATED forever, with no
+    ended_at, showing up in call history as a call that never resolves and
+    with no monitoring catching it (flag_stale_pending_calls only watches
+    outcome=PENDING at status=COMPLETED, not this status=INITIATED case).
+    """
     async with AsyncSessionLocal() as session:
         async with session.begin():
             result = await session.execute(
@@ -1089,9 +1100,29 @@ async def _reset_stale_dialing(campaign_id: str) -> None:
                     CampaignContact.status == ContactStatus.DIALING,
                 )
                 .values(status=ContactStatus.PENDING)
+                .returning(CampaignContact.id)
             )
-            if result.rowcount:
-                log.warning("reset_stale_dialing_contacts", campaign_id=campaign_id, count=result.rowcount)
+            reset_contact_ids = [row[0] for row in result.fetchall()]
+            if not reset_contact_ids:
+                return
+
+            log.warning("reset_stale_dialing_contacts", campaign_id=campaign_id, count=len(reset_contact_ids))
+
+            call_result = await session.execute(
+                update(Call)
+                .where(
+                    Call.contact_id.in_(reset_contact_ids),
+                    Call.status == CallStatus.INITIATED,
+                    Call.ended_at.is_(None),
+                )
+                .values(
+                    status=CallStatus.FAILED,
+                    ended_at=datetime.now(timezone.utc),
+                    error_message="Worker crashed before this call finished — contact was automatically retried.",
+                )
+            )
+            if call_result.rowcount:
+                log.warning("closed_orphaned_call_rows", campaign_id=campaign_id, count=call_result.rowcount)
 
 
 async def _run_campaign_async(campaign_id: str) -> None:
