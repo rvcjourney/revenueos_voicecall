@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.sip import SipTrunk
 
 # Same atomic incr-if-under-max pattern used for per-trunk slots
 # (app/workers/tasks/campaign.py's _LUA_ACQUIRE_SLOT).
@@ -29,10 +32,16 @@ return 0
 
 _SLOT_KEY_TTL = 3600            # 1-hour safety TTL — prevents a stuck counter after a crash
 
-# Flat cap for every org, regardless of plan — a deliberate business decision,
-# not a per-plan entitlement. Plan.max_concurrent_calls is intentionally no
-# longer consulted here (it still exists as an admin-editable field, but has
-# no effect on enforcement).
+# Per-number allowance, not a flat per-org cap — a deliberate business
+# decision, not a per-plan entitlement. Plan.max_concurrent_calls is
+# intentionally no longer consulted here (it still exists as an
+# admin-editable field, but has no effect on enforcement). An org with one
+# connected number gets exactly this many concurrent calls, same as always;
+# an org with N active numbers gets N times this, since each additional
+# number is a genuinely separate Vobiz account/line with its own capacity
+# (see resolve_org_max_concurrent below) — not raising what a single-number
+# org could already safely do, only unlocking real capacity an org has
+# actually paid for by connecting more numbers.
 DEFAULT_MAX_CONCURRENT_PER_ORG = 3
 
 # Hard cap, not plan-based: whoever launched a campaign (or placed a test call)
@@ -52,12 +61,27 @@ def org_queued_key(org_id: UUID) -> str:
 
 async def resolve_org_max_concurrent(session: AsyncSession, org_id: UUID) -> int:
     """
-    Every org's concurrent-call cap, flat and uniform regardless of plan (see
-    DEFAULT_MAX_CONCURRENT_PER_ORG). `session`/`org_id` are kept in the
-    signature so callers don't need to change even though this no longer
-    looks anything up.
+    Concurrent-call cap for the org, scaled by how many phone numbers it has
+    actually connected and verified (SipTrunk.is_active) — an org with 2+
+    numbers can run that many more calls (and campaigns) at once instead of
+    sharing the same flat pool as an org with a single number, since each
+    additional number is its own independent Vobiz account/line. A
+    single-number org's cap is unchanged from before this scaled (still
+    exactly DEFAULT_MAX_CONCURRENT_PER_ORG) — this only unlocks capacity for
+    orgs that connected more numbers, it never raises anyone's existing cap.
+    The real ceiling on what any one number can push through stays
+    independently enforced by the per-trunk slot cap and per-trunk CPS
+    limiter in app/workers/tasks/campaign.py, so this can't overcommit a
+    single number beyond what it already safely handles on its own.
     """
-    return DEFAULT_MAX_CONCURRENT_PER_ORG
+    active_trunks = await session.scalar(
+        select(func.count()).where(
+            SipTrunk.org_id == org_id,
+            SipTrunk.is_active.is_(True),
+            SipTrunk.deleted_at.is_(None),
+        )
+    )
+    return DEFAULT_MAX_CONCURRENT_PER_ORG * max(1, active_trunks or 0)
 
 
 async def acquire_org_slot(org_id: UUID, max_concurrent: int) -> bool:

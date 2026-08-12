@@ -145,10 +145,18 @@ async def _release_trunk_slot(livekit_trunk_id: str) -> None:
         pass  # best-effort
 
 
-# ── Global CPS (Calls Per Second) rate limiter ────────────────────────────────
+# ── Per-trunk CPS (Calls Per Second) rate limiter ──────────────────────────────
+# Scoped per LiveKit trunk (== one org's one connected Vobiz account/number),
+# not shared across the whole platform. Orgs connect their own independent
+# Vobiz account (connect_vobiz, app/api/sip_trunks.py) with its own account-
+# level CPS allowance -- a single platform-wide bucket meant one customer's
+# dial rate could throttle a completely unrelated customer's Vobiz account
+# for no real reason. Each trunk still gets the same conservative 1-call/sec
+# ceiling that was previously applied platform-wide, so no individual
+# customer is dialed any faster than before -- this only removes the
+# cross-customer interference.
 
-_CPS_LIMIT = 1       # max new calls started per second (matches Vobiz plan)
-_CPS_KEY = "motm:cps:window"
+_CPS_LIMIT = 1       # max new calls started per second, per phone number/Vobiz account
 
 # Atomically increment a 1-second counter. Returns 1 if under limit, 0 if at limit.
 _LUA_ACQUIRE_CPS = """
@@ -162,18 +170,23 @@ return 0
 """
 
 
-async def _acquire_cps_slot() -> None:
-    """Block until the global CPS limit allows a new call to start (max 1 per second)."""
+def _cps_key(livekit_trunk_id: str) -> str:
+    return f"motm:cps:window:{livekit_trunk_id}"
+
+
+async def _acquire_cps_slot(livekit_trunk_id: str) -> None:
+    """Block until this phone number's own CPS limit allows a new call to start (max 1/sec)."""
     try:
         from app.core.redis import get_redis
         r = await get_redis()
+        key = _cps_key(livekit_trunk_id)
         while True:
-            result = await r.eval(_LUA_ACQUIRE_CPS, 1, _CPS_KEY, _CPS_LIMIT)
+            result = await r.eval(_LUA_ACQUIRE_CPS, 1, key, _CPS_LIMIT)
             if result:
                 return
             await asyncio.sleep(0.1)
     except Exception as exc:
-        log.error("cps_slot_redis_fail_open", error=str(exc))
+        log.error("cps_slot_redis_fail_open", trunk_id=livekit_trunk_id, error=str(exc))
         return  # fail open — don't block calls if Redis is down
 
 
@@ -773,8 +786,9 @@ async def _run_one_call_body(
             return
 
         try:
-            # Respect global CPS limit — at most 1 new call per second across all campaigns
-            await _acquire_cps_slot()
+            # Respect this trunk's own CPS limit — at most 1 new call per second
+            # per phone number, independent of every other org/trunk.
+            await _acquire_cps_slot(livekit_trunk_id)
 
             place_result = await _place_call(
                 http,

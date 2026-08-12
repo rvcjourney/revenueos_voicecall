@@ -61,7 +61,7 @@ services:
       - motm
     command: >
       celery -A app.workers.celery_app worker
-      --concurrency 10
+      --concurrency 20
       --loglevel info
       --queues calls,campaigns,exports,default
     depends_on:
@@ -82,7 +82,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          # Raised alongside --concurrency 10->20 above: Celery's default pool
+          # is prefork (one real OS process per concurrency slot, not a
+          # lightweight async task), so doubling concurrency roughly doubles
+          # this container's worst-case memory footprint. 3g assumes the VPS
+          # has real headroom beyond every other service's own limit in this
+          # file -- check `docker stats` after deploying, and dial concurrency
+          # back down if this container is ever memory-pressured in practice.
+          memory: 3g
           cpus: "2.0"
 
   # ── Celery Beat (scheduled tasks) ────────────────────────────────────────────
