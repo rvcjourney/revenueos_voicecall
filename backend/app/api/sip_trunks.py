@@ -142,12 +142,13 @@ def _to_out(trunk: SipTrunk) -> TrunkOut:
     hangup_webhook_url = None
     if settings.PUBLIC_BASE_URL:
         token = sign_vobiz_webhook_token(trunk.id)
-        # Vobiz's hangup callback isn't registered automatically anywhere in
-        # this codebase (unlike the recording webhook — see connect_vobiz
-        # below) — it's set once per Vobiz account/DID directly in Vobiz's
-        # own dashboard. This is shown here so whoever configures it there
-        # can copy the exact per-trunk-scoped URL instead of the old
-        # unscoped one.
+        # Not needed for anything connected via connect_vobiz below — Vobiz
+        # delivers both call-admission (Hangup) and recording.completed
+        # events to the single webhook_url registered at trunk-creation time,
+        # and app/api/webhooks.py's /vobiz/recording already handles both.
+        # This is only useful as a fallback for a trunk whose webhook_url was
+        # set some other way and needs pointing at Vobiz's hangup events
+        # directly.
         hangup_webhook_url = f"{settings.PUBLIC_BASE_URL}/webhooks/vobiz/hangup?tid={trunk.id}&wt={token}"
 
     return TrunkOut(
