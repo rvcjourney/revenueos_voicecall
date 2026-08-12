@@ -21,9 +21,14 @@ WORKDIR /app
 
 # libpq5: runtime PostgreSQL client library (asyncpg needs it)
 # curl: used by the HEALTHCHECK
+# postgresql-client: provides pg_dump, used by the worker/beat containers for
+# the daily database backup task (app/workers/tasks/backup.py) — not needed
+# by the api container, but the same image is used for all three, so it's
+# installed here rather than maintained as a second Dockerfile.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled packages from builder

@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,10 +27,12 @@ from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
 from app.schemas.auth import (
+    AccessTokenResponse,
     ForgotPasswordRequest,
     LoginRequest,
     MemberRegisterRequest,
     ProfileUpdateRequest,
+    RefreshRequest,
     RegisterPendingResponse,
     RegisterRequest,
     ResendOtpRequest,
@@ -276,6 +279,51 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             org_name=org.name if org else "",
         ),
     )
+
+
+@router.post("/refresh", response_model=AccessTokenResponse)
+async def refresh_access_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Exchanges a still-valid refresh token for a new access token.
+
+    Access tokens are deliberately short-lived (settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+    currently 15 minutes) and refresh tokens were already being issued and
+    stored by the frontend at login/verify-otp — but until this endpoint
+    existed, nothing ever redeemed one. Every user was being force-logged-out
+    on the 15-minute timer with no way to silently renew a session.
+    """
+    try:
+        payload = decode_token(body.refresh_token)
+    except InvalidTokenError:
+        raise AuthenticationError("Invalid or expired refresh token")
+
+    if payload.get("type") != "refresh":
+        raise AuthenticationError("Not a refresh token")
+
+    # Same Redis blocklist get_current_user checks for access tokens — lets a
+    # refresh token be revoked (e.g. logout) without waiting out its full
+    # 7-day expiry. Fails open on Redis errors, same tradeoff as elsewhere.
+    jti = payload.get("jti")
+    if jti:
+        try:
+            from app.core.redis import get_redis
+            r = await get_redis()
+            if await r.exists(f"motm:auth:blocklist:{jti}"):
+                raise AuthenticationError("Token has been revoked")
+        except AuthenticationError:
+            raise
+        except Exception:
+            pass
+
+    try:
+        user = await db.get(User, UUID(payload["sub"]))
+    except (KeyError, ValueError):
+        raise AuthenticationError("Invalid refresh token")
+    if not user or user.deleted_at or not user.is_active:
+        raise AuthenticationError("Account no longer active")
+
+    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
+    return AccessTokenResponse(access_token=access_token)
 
 
 @router.post("/logout", status_code=204)

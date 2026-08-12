@@ -6,13 +6,14 @@ low (matches the number of simultaneous campaigns, not simultaneous calls —
 calls within a campaign are sequential).
 """
 from celery import Celery
+from celery.schedules import crontab
 from app.config import settings
 
 celery_app = Celery(
     "motmvoice",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.tasks.campaign", "app.workers.tasks.billing"],
+    include=["app.workers.tasks.campaign", "app.workers.tasks.billing", "app.workers.tasks.backup"],
 )
 
 celery_app.conf.update(
@@ -56,6 +57,14 @@ celery_app.conf.update(
         "flag-stale-pending-calls": {
             "task": "app.workers.tasks.campaign.flag_stale_pending_calls",
             "schedule": 300.0,
+        },
+        # Daily at 02:17 UTC (quiet hour, avoids the top-of-hour pile-up with
+        # every other cron on the box): pg_dump the database to object storage
+        # (+ an offsite bucket if OFFSITE_BACKUP_* is configured). See
+        # app/workers/tasks/backup.py.
+        "run-database-backup": {
+            "task": "app.workers.tasks.backup.run_database_backup",
+            "schedule": crontab(minute=17, hour=2),
         },
     },
 )

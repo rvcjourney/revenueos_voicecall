@@ -14,12 +14,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
-from app.core.security import verify_webhook_signature
+from app.core.deps import require_agent_webhook_signature
 from app.database import get_db
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus
 from app.models.inbound_agent import InboundAgentTemplate
@@ -47,16 +47,7 @@ class InboundStartResponse(BaseModel):
     max_call_duration_seconds: int
 
 
-async def _require_valid_signature(
-    request: Request,
-    x_webhook_signature: str | None = Header(None),
-) -> None:
-    body = await request.body()
-    if not x_webhook_signature or not verify_webhook_signature(body, x_webhook_signature):
-        raise HTTPException(status_code=401, detail="Invalid or missing signature")
-
-
-@router.post("/inbound/start", response_model=InboundStartResponse, dependencies=[Depends(_require_valid_signature)])
+@router.post("/inbound/start", response_model=InboundStartResponse, dependencies=[Depends(require_agent_webhook_signature)])
 async def start_inbound_call(
     body: InboundStartRequest,
     db: AsyncSession = Depends(get_db),

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import timedelta, timezone
 from uuid import UUID
 
+from urllib.parse import urlparse
+
 import aiohttp
 import httpx
 import structlog
@@ -10,17 +12,37 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import TokenPayload, get_current_user
+from app.core.deps import TokenPayload, get_current_user, require_agent_webhook_signature
 from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus, CallTranscript
+from app.models.dnc import DNCReason, DoNotCallEntry
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+def _is_trusted_vobiz_host(url: str) -> bool:
+    """
+    Only ever fetch/store recording URLs that actually point at Vobiz's own
+    media domain (e.g. media.vobiz.ai) — recording_url is set from an
+    unauthenticated-by-Vobiz-design webhook body, so without this check an
+    attacker could plant an arbitrary URL there. When it's later proxy-fetched
+    server-side (see proxy_recording below), the org's real Vobiz API
+    credentials are sent along with the request — fetching an attacker-chosen
+    host would leak them. Vobiz recordings are documented as served from
+    media.vobiz.ai (see app/core/vobiz.py); any *.vobiz.ai host is accepted.
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return bool(host) and (host == "vobiz.ai" or host.endswith(".vobiz.ai"))
 
 
 def _to_out(c: Call) -> CallOut:
@@ -100,7 +122,11 @@ class AgentReportIn(BaseModel):
     extracted_data: dict = {}
 
 
-@router.post("/{call_id}/agent-report", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/{call_id}/agent-report",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_agent_webhook_signature)],
+)
 async def agent_report(
     call_id: UUID,
     body: AgentReportIn,
@@ -165,6 +191,24 @@ async def agent_report(
             update(Campaign)
             .where(Campaign.id == call_row.campaign_id)
             .values(interested_count=Campaign.interested_count + 1)
+        )
+
+    # A customer explicitly asking not to be called again must actually stop
+    # future dials, not just get labeled — the dispatcher already checks
+    # DoNotCallEntry before every call (app/workers/tasks/campaign.py), this is
+    # the only thing that was missing: nothing ever populated it from here.
+    # on_conflict_do_nothing because (org_id, phone_number) is unique and the
+    # same number may already be on the list.
+    if outcome == "do_not_call" and call_row:
+        await db.execute(
+            pg_insert(DoNotCallEntry)
+            .values(
+                org_id=call_row.org_id,
+                phone_number=call_row.phone_number,
+                reason=DNCReason.USER_REQUEST,
+                source_call_id=call_row.id,
+            )
+            .on_conflict_do_nothing(index_elements=["org_id", "phone_number"])
         )
 
     if body.transcript:
@@ -277,6 +321,15 @@ async def proxy_recording(
     if not call or not call.recording_url:
         raise NotFoundError("Recording not found")
 
+    if not _is_trusted_vobiz_host(call.recording_url):
+        # Should be unreachable — the webhook that sets recording_url validates
+        # the same host allowlist before storing it — but this is the point
+        # that would actually leak the org's Vobiz credentials to whatever host
+        # is in the URL, so it gets its own independent check rather than
+        # trusting that nothing upstream ever let a bad value through.
+        log.error("recording_untrusted_host", call_id=str(call_id), recording_url=call.recording_url)
+        raise NotFoundError("Recording not found")
+
     from app.core.vobiz import resolve_vobiz_credentials, resolve_vobiz_credentials_by_recording_url
 
     vobiz_creds = await resolve_vobiz_credentials_by_recording_url(
@@ -287,7 +340,7 @@ async def proxy_recording(
     vobiz_auth_id, vobiz_auth_token = vobiz_creds
 
     try:
-        async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             vobiz = await client.get(
                 call.recording_url,
                 headers={

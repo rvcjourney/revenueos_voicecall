@@ -905,12 +905,17 @@ class VoiceAgent(Agent):
         import httpx
 
         url = f"{self._backend_url}/api/calls/{self._call_id}/agent-report"
+        body = json.dumps(payload).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": _sign_webhook_body(body),
+        }
         delay = 1.0
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
                 async with httpx.AsyncClient(timeout=10.0) as http:
-                    resp = await http.post(url, json=payload)
+                    resp = await http.post(url, content=body, headers=headers)
                     # A 4xx/5xx from the backend was previously indistinguishable from
                     # success here (no status check) — the loop would return on the
                     # first attempt and silently drop the report on e.g. a 500 during

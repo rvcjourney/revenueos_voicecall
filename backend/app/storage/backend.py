@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import io
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import boto3
@@ -139,6 +140,20 @@ class StorageBackend:
             functools.partial(self._client.delete_object, Bucket=bucket, Key=key)
         )
         log.debug("storage_delete_ok", bucket=bucket, key=key)
+
+    async def list_keys_older_than(self, bucket: str, prefix: str, cutoff: datetime) -> list[str]:
+        """Keys under `prefix` last modified before `cutoff` (UTC) — used to prune old
+        backups (see app/workers/tasks/backup.py) without growing storage forever."""
+        def _list() -> list[str]:
+            keys: list[str] = []
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    if obj["LastModified"] < cutoff:
+                        keys.append(obj["Key"])
+            return keys
+
+        return await asyncio.to_thread(_list)
 
     async def exists(self, bucket: str, key: str) -> bool:
         try:

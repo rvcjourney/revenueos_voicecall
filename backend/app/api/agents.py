@@ -446,6 +446,15 @@ class TryNowRequest(BaseModel):
     phone_number: str
 
 
+# Free calls cost real money (Vobiz/LiveKit/Groq/ElevenLabs usage) and place a
+# real call to a real person with no paying-customer relationship behind it —
+# unlike campaign dialing, nothing here is rate-limited by credits at all, so
+# this is the only thing standing between "free demo feature" and "unlimited
+# free outbound dialing for anyone who can self-register." 10/day is generous
+# for an actual demo user, not for abuse.
+_TRY_NOW_DAILY_LIMIT = 10
+
+
 @router.post("/try-now", response_model=TestCallResponse, status_code=202)
 async def try_now(
     body: TryNowRequest,
@@ -461,6 +470,25 @@ async def try_now(
     phone = body.phone_number.strip().replace(" ", "").replace("-", "")
     if not phone.startswith("+"):
         phone = "+91" + phone.lstrip("0")
+
+    # This bypasses campaign dialing entirely, so it must independently check
+    # the DNC lists the dispatcher checks — otherwise "try now" is a free way
+    # to call a number that has explicitly opted out (legal exposure, not
+    # just abuse).
+    from app.workers.tasks.campaign import _is_dnc_blocked
+
+    if await _is_dnc_blocked(db, token.org_id, phone):
+        raise AppValidationError("This number is on a Do Not Call list and can't be dialed", errors=[])
+
+    from app.core.redis import get_redis
+
+    r = await get_redis()
+    daily_key = f"motm:try-now:daily:{token.org_id}:{datetime.now(timezone.utc):%Y-%m-%d}"
+    daily_count = await r.incr(daily_key)
+    if daily_count == 1:
+        await r.expire(daily_key, 86400)
+    if daily_count > _TRY_NOW_DAILY_LIMIT:
+        raise QuotaExceededError(f"Free demo call limit reached ({_TRY_NOW_DAILY_LIMIT}/day) — try again tomorrow")
 
     # Same "one call in flight per admin, platform-wide" cap test calls use —
     # still reasonable here even with no credit cost, since it's the same

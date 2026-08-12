@@ -15,13 +15,25 @@ Run from the agent/ directory (or wherever FAILED_REPORTS_PATH points):
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import sys
+import time
 from pathlib import Path
 
 import httpx
 
-from config import BACKEND_INTERNAL_URL, FAILED_REPORTS_PATH
+from config import AGENT_WEBHOOK_SECRET, BACKEND_INTERNAL_URL, FAILED_REPORTS_PATH
+
+
+def _sign_webhook_body(body: bytes) -> str:
+    """Same HMAC-SHA256 scheme as agent.py's _sign_webhook_body / app/core/security.py
+    on the backend — /agent-report now requires this on every request."""
+    ts = int(time.time())
+    signed = f"{ts}.".encode() + body
+    mac = hmac.new(AGENT_WEBHOOK_SECRET.encode(), signed, hashlib.sha256).hexdigest()
+    return f"t={ts},v1={mac}"
 
 
 async def replay() -> None:
@@ -57,8 +69,14 @@ async def replay() -> None:
                 continue
 
             try:
+                body = json.dumps(payload).encode()
                 resp = await http.post(
-                    f"{BACKEND_INTERNAL_URL}/api/calls/{call_id}/agent-report", json=payload
+                    f"{BACKEND_INTERNAL_URL}/api/calls/{call_id}/agent-report",
+                    content=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Webhook-Signature": _sign_webhook_body(body),
+                    },
                 )
                 resp.raise_for_status()
                 print("→ ok")

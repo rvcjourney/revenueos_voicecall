@@ -76,6 +76,15 @@ class TokenResponse(BaseModel):
     user: UserOut
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class AccessTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
 class RegisterPendingResponse(BaseModel):
     """register()'s response — no session yet, email must be verified via
     POST /verify-otp first (that's what actually issues a TokenResponse)."""

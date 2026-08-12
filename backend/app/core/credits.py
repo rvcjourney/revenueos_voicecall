@@ -137,7 +137,18 @@ async def record_call_credits(
     """
     minutes = minutes_for_duration(duration_seconds)
 
-    org = await db.get(Organization, org_id)
+    # SELECT ... FOR UPDATE, not db.get(): an org can have several calls
+    # finalizing in separate transactions/sessions around the same moment
+    # (see app/core/concurrency.py's per-org concurrent-call cap). Without
+    # locking the row here, two finalizations racing on the same
+    # credits_used_this_period read-modify-write can silently lose one call's
+    # minutes -- the org is undercharged and no error is ever raised. This
+    # blocks concurrent finalizations for the same org until each commits,
+    # the same way _next_pending_batch already serializes contact claims with
+    # with_for_update() elsewhere in this codebase.
+    org = await db.scalar(
+        select(Organization).where(Organization.id == org_id).with_for_update()
+    )
     if org is None:
         return {
             "minutes_billed": minutes,

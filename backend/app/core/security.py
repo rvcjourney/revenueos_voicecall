@@ -13,6 +13,7 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 import bcrypt
 import jwt as pyjwt
@@ -190,3 +191,23 @@ def verify_webhook_signature(
     ).hexdigest()
 
     return hmac.compare_digest(expected_mac, provided_mac)
+
+
+# ── Vobiz webhook tokens ──────────────────────────────────────────────────────
+# Vobiz's own webhooks carry no signature of their own (unlike Razorpay's), so a
+# per-trunk token is embedded in the webhook URL we register with Vobiz at
+# trunk-creation time and re-checked on every inbound call. Deterministic from
+# trunk_id + AGENT_WEBHOOK_SECRET so no extra DB column/lookup is needed to
+# verify it — the same value is just recomputed and compared.
+
+def sign_vobiz_webhook_token(trunk_id: UUID) -> str:
+    mac = hmac.new(
+        settings.AGENT_WEBHOOK_SECRET.encode(),
+        f"vobiz-webhook:{trunk_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return mac[:32]
+
+
+def verify_vobiz_webhook_token(trunk_id: UUID, token: str) -> bool:
+    return hmac.compare_digest(sign_vobiz_webhook_token(trunk_id), token)

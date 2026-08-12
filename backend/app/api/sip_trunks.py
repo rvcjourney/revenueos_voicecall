@@ -43,10 +43,12 @@ from livekit.api.twirp_client import TwirpError
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from app.config import settings
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
+from app.core.security import sign_vobiz_webhook_token
 from app.core.vobiz import (
     VobizValidationError,
     assign_vobiz_number_to_trunk,
@@ -99,6 +101,7 @@ class TrunkOut(BaseModel):
     created_at: datetime
     inbound_enabled: bool
     inbound_agent_template_id: str | None = None
+    hangup_webhook_url: str | None = None
 
 
 class InboundSetupBody(BaseModel):
@@ -136,6 +139,17 @@ class TestTrunkResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _to_out(trunk: SipTrunk) -> TrunkOut:
+    hangup_webhook_url = None
+    if settings.PUBLIC_BASE_URL:
+        token = sign_vobiz_webhook_token(trunk.id)
+        # Vobiz's hangup callback isn't registered automatically anywhere in
+        # this codebase (unlike the recording webhook — see connect_vobiz
+        # below) — it's set once per Vobiz account/DID directly in Vobiz's
+        # own dashboard. This is shown here so whoever configures it there
+        # can copy the exact per-trunk-scoped URL instead of the old
+        # unscoped one.
+        hangup_webhook_url = f"{settings.PUBLIC_BASE_URL}/webhooks/vobiz/hangup?tid={trunk.id}&wt={token}"
+
     return TrunkOut(
         id=str(trunk.id),
         name=trunk.name,
@@ -149,6 +163,7 @@ def _to_out(trunk: SipTrunk) -> TrunkOut:
         created_at=trunk.created_at,
         inbound_enabled=trunk.inbound_enabled,
         inbound_agent_template_id=str(trunk.inbound_agent_template_id) if trunk.inbound_agent_template_id else None,
+        hangup_webhook_url=hangup_webhook_url,
     )
 
 
@@ -297,6 +312,14 @@ async def connect_vobiz(
     if not settings.PUBLIC_BASE_URL:
         raise HTTPException(status_code=503, detail="PUBLIC_BASE_URL is not configured on this server")
 
+    # Generated up front (not left to SipTrunk's default) so it can be embedded
+    # in the webhook_url below *before* the trunk row exists — Vobiz needs the
+    # final URL at trunk-creation time, and the token in it is what lets
+    # app/api/webhooks.py verify a recording callback actually belongs to this
+    # trunk/org instead of matching by phone number alone across every org.
+    trunk_id = uuid7()
+    webhook_token = sign_vobiz_webhook_token(trunk_id)
+
     # 2. Create a dedicated outbound trunk on the org's own Vobiz account, with
     #    recording + the recording webhook pre-enabled in the same request.
     try:
@@ -306,7 +329,7 @@ async def connect_vobiz(
                 auth_id=body.auth_id,
                 auth_token=body.auth_token,
                 did=did,
-                webhook_url=f"{settings.PUBLIC_BASE_URL}/webhooks/vobiz/recording",
+                webhook_url=f"{settings.PUBLIC_BASE_URL}/webhooks/vobiz/recording?tid={trunk_id}&wt={webhook_token}",
             )
     except VobizValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -343,6 +366,7 @@ async def connect_vobiz(
     # working number. Defaulting an untested trunk is exactly how a
     # campaign ends up trying to call through a number that doesn't work.
     trunk = SipTrunk(
+        id=trunk_id,
         org_id=token.org_id,
         name=f"Vobiz {did}",
         livekit_trunk_id=trunk_info.sip_trunk_id,

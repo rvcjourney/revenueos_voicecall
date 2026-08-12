@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from app.config import settings
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token, hash_password, verify_vobiz_webhook_token
 from app.core.vobiz import VobizAuthError, VobizDidNotOwnedError
 from app.models.sip import SipTrunk
 from app.models.user import Organization, User, UserRole
@@ -111,9 +111,16 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
     assert body["status"] == "pending_test"
     assert body["did"] == "+912212345678"
 
-    # The Vobiz trunk-create call should carry our webhook URL, built from PUBLIC_BASE_URL
+    # The Vobiz trunk-create call should carry our webhook URL, built from
+    # PUBLIC_BASE_URL, with a per-trunk tid/wt token so app/api/webhooks.py can
+    # verify + scope the callback instead of trusting an unauthenticated POST.
     mock_create_trunk.assert_awaited_once()
-    assert mock_create_trunk.call_args.kwargs["webhook_url"] == "https://test.example.com/webhooks/vobiz/recording"
+    webhook_url = mock_create_trunk.call_args.kwargs["webhook_url"]
+    assert webhook_url.startswith("https://test.example.com/webhooks/vobiz/recording?tid=")
+    assert f"tid={body['trunk_id']}" in webhook_url
+    assert "&wt=" in webhook_url
+    wt = webhook_url.split("&wt=", 1)[1]
+    assert verify_vobiz_webhook_token(UUID(body["trunk_id"]), wt)
 
     trunk = await db.get(SipTrunk, UUID(body["trunk_id"]))
     assert trunk is not None

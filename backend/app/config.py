@@ -22,6 +22,7 @@ _SECRET_FIELDS = frozenset({
     "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
+    "OFFSITE_BACKUP_SECRET_KEY",
 })
 
 
@@ -160,6 +161,24 @@ class Settings(BaseSettings):
     BUCKET_BACKUPS: str = "motm-backups"
     BUCKET_VOICE_CONSENT: str = "motm-voice-consent"
     EXPORT_URL_EXPIRY_SECONDS: int = 600
+
+    # ── Offsite database backups ─────────────────────────────────────────────
+    # BUCKET_BACKUPS above (via StorageBackend) lives on the SAME disk as every
+    # other bucket -- when STORAGE_BACKEND=minio (the production default, see
+    # docker-compose.yml) that's this VPS's own disk, so it protects against a
+    # bad migration or accidental delete, but not against the VPS/disk itself
+    # failing. These settings point pg_dump's upload at a genuinely separate,
+    # off-VPS S3-compatible bucket (AWS S3 / Backblaze B2 / Cloudflare R2 /
+    # Wasabi all work) -- see run_database_backup in
+    # app/workers/tasks/backup.py. Left blank, offsite upload is a no-op
+    # (local-only backup still runs) so this is safe to deploy before it's
+    # configured, but real disaster-recovery is not in place until it is.
+    OFFSITE_BACKUP_ENDPOINT_URL: str = ""   # e.g. https://s3.us-west-004.backblazeb2.com — blank disables offsite backup
+    OFFSITE_BACKUP_ACCESS_KEY: str = ""
+    OFFSITE_BACKUP_SECRET_KEY: str = ""
+    OFFSITE_BACKUP_BUCKET: str = ""
+    OFFSITE_BACKUP_REGION: str = "us-east-1"
+    BACKUP_RETENTION_DAYS: int = 14
 
     # ── Celery ────────────────────────────────────────────────────────────────
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"

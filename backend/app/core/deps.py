@@ -6,14 +6,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, Header, Request
 from jwt.exceptions import InvalidTokenError
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AuthenticationError, PermissionDeniedError
-from app.core.security import decode_token
+from app.core.security import decode_token, verify_webhook_signature
 from app.database import get_db
 from app.models.platform_admin import PlatformAdmin
 
@@ -105,3 +105,18 @@ async def require_platform_admin(
         raise AuthenticationError("Platform admin not found or inactive")
 
     return admin
+
+
+async def require_agent_webhook_signature(
+    request: Request,
+    x_webhook_signature: str | None = Header(None),
+) -> None:
+    """
+    Verifies the X-Webhook-Signature HMAC header on internal endpoints called
+    only by the voice agent process (agent/agent.py), never by tenant users or
+    the frontend. Shared by app/api/agent_internal.py and the agent-report
+    endpoint in app/api/calls.py.
+    """
+    body = await request.body()
+    if not x_webhook_signature or not verify_webhook_signature(body, x_webhook_signature):
+        raise AuthenticationError("Invalid or missing webhook signature")

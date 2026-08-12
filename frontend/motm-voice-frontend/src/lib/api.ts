@@ -54,13 +54,63 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+// Access tokens expire every 15 minutes (backend: ACCESS_TOKEN_EXPIRE_MINUTES).
+// A refresh token is already issued and stored at login, but until POST
+// /api/auth/refresh existed on the backend, nothing ever redeemed it — every
+// user was silently kicked to the login screen on that timer. This exchanges
+// it for a new access token once per 401 and transparently retries the
+// original request; a plain `axios.post` (not the `api` instance) is used for
+// the network call itself so a failed refresh can't recursively re-enter this
+// same interceptor.
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken) throw new Error("No refresh token stored");
+  const res = await axios.post<{ access_token: string }>(`${API_BASE_URL}/api/auth/refresh`, {
+    refresh_token: refreshToken,
+  });
+  localStorage.setItem(TOKEN_KEY, res.data.access_token);
+  return res.data.access_token;
+}
+
+// Endpoints that can legitimately 401 for reasons that have nothing to do
+// with an expired access token (bad password, expired/invalid refresh token
+// itself) — retrying these through the refresh flow would be wrong or
+// recursive, so they're excluded from the auto-retry-after-refresh below.
+const _NO_REFRESH_RETRY = ["/api/auth/login", "/api/auth/refresh", "/api/auth/register", "/api/auth/verify-otp"];
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined;
+    const url: string = original?.url ?? "";
+    const skipRetry = _NO_REFRESH_RETRY.some((p) => url.includes(p));
+
+    if (error.response?.status === 401 && original && !original._retried && !skipRetry) {
+      original._retried = true;
+      try {
+        refreshPromise ??= refreshAccessToken().finally(() => {
+          refreshPromise = null;
+        });
+        const newToken = await refreshPromise;
+        original.headers = original.headers ?? {};
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
+      } catch {
+        clearSession();
+        return Promise.reject(error);
+      }
+    }
+
     if (error.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      clearSession();
     }
     return Promise.reject(error);
   }
