@@ -194,7 +194,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          # Was 2g -- live docker stats on the deployed VPS showed ~1.27GB used
+          # (63%) at idle/baseline (this container keeps STT/TTS/VAD clients
+          # loaded even with no active call), leaving little room to grow into
+          # more simultaneous live calls without risking an OOM kill mid-call.
+          # 4g on a 32GB-RAM VPS with ~9.5GB already committed elsewhere still
+          # leaves large headroom for the host OS/Docker itself.
+          memory: 4g
           cpus: "6.0"
 
   # ── Redis ────────────────────────────────────────────────────────────────────
