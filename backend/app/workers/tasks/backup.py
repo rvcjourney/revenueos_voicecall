@@ -23,7 +23,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import structlog
 
@@ -44,14 +44,21 @@ def _pg_dump_to_file(dest_path: Path) -> None:
     flags instead. The password goes through PGPASSWORD, not argv — argv is
     visible to anything reading this process's command line (e.g. another
     unix user running `ps aux` on the same VPS).
+
+    urlsplit()'s .username/.password are NOT percent-decoded (confirmed:
+    urlsplit("postgresql://u:%25%29%26p@host/db").password ==
+    "%25%29%26p", the literal encoded string, not "%)&p") -- Supabase
+    connection strings routinely contain URL-reserved characters in the
+    password (%, &, +, ) etc.), so without unquote() here pg_dump would
+    authenticate with the wrong password and fail every single run.
     """
     parsed = urlsplit(settings.DATABASE_URL.replace("+asyncpg", ""))
-    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+    env = {**os.environ, "PGPASSWORD": unquote(parsed.password) if parsed.password else ""}
     cmd = [
         "pg_dump",
         "-h", parsed.hostname or "localhost",
         "-p", str(parsed.port or 5432),
-        "-U", parsed.username or "postgres",
+        "-U", unquote(parsed.username) if parsed.username else "postgres",
         "-d", (parsed.path or "/postgres").lstrip("/"),
         "-Fc",  # custom format: compressed, restorable with pg_restore, supports selective restore
         "-f", str(dest_path),
