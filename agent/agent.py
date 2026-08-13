@@ -1512,11 +1512,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # even evaluated). 0.35s is still comfortably above VAD's own 0.20s
                                       # onset requirement (prewarm() below), so it still filters clicks/
                                       # breaths shorter than a real word.
-                "min_words":    1,    # was 2 -- required two full recognized words before an interruption
-                                      # registered, so a single-word interruption ("nahi", "ruko") never
-                                      # crossed the bar and the agent talked over the customer until they
-                                      # said a second word. 1 word is the minimum that still filters pure
-                                      # noise (STT must recognize an actual word, not just sound).
+                "min_words":    0,    # was 1 -- requiring even one recognized word meant waiting on STT
+                                      # to transcribe it (real latency on top of min_duration above),
+                                      # which is what made interruptions feel like they only landed after
+                                      # the agent finished its sentence. 0 disables the word-recognition
+                                      # gate entirely: min_duration's 0.35s of sustained VAD-detected
+                                      # speech is now the only bar, so the agent stops on raw voice
+                                      # activity alone -- true human-conversation-style barge-in, at the
+                                      # cost of occasionally reacting to a loud breath/cough/background
+                                      # noise VAD mistakes for speech (no longer filtered by a real word).
                 "false_interruption_timeout": None,  # SDK default (2.0) PAUSES the agent's audio on a
                                       # detected interruption and silently RESUMES it from where it left
                                       # off if a full turn doesn't confirm within 2s — audibly identical to
