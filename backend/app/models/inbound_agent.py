@@ -57,8 +57,11 @@ class InboundAgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin
     )
 
     # ── LLM configuration ─────────────────────────────────────────────────────
+    # Platform-wide: "qwen/qwen3.6-27b" is the only allowed value (enforced by
+    # InboundAgentCreate/InboundAgentUpdate's Literal type in
+    # app/schemas/inbound_agent.py).
     llm_model: Mapped[str] = mapped_column(
-        String(100), nullable=False, server_default="llama-3.1-8b-instant"
+        String(100), nullable=False, server_default="qwen/qwen3.6-27b"
     )
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")
     max_call_duration_seconds: Mapped[int] = mapped_column(

@@ -53,7 +53,7 @@ SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL           = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
 GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
 
 # ── Agent behaviour ───────────────────────────────────────────────────────────
