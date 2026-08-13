@@ -65,8 +65,13 @@ logger = structlog.get_logger("voice-agent")
 # ── Constants ─────────────────────────────────────────────────────────────────
 _LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
 
-# Larger first chunk = more context per TTS call = smoother prosody across chunks.
-_CHUNK_LENGTH_SCHEDULE = [120, 200, 280, 360]
+# Smallest schedule ElevenLabs allows (floor is 50/chunk): once a chunk's audio
+# starts playing it can't be recalled, so a caller's interruption can only take
+# effect at the next chunk boundary. Large chunks (this was [120, 200, 280, 360])
+# meant that boundary could be a full sentence away, so an interruption only cut
+# the agent off after it finished speaking — this shrinks that window to a few
+# words at most, at the cost of very slightly more segmented prosody between chunks.
+_CHUNK_LENGTH_SCHEDULE = [50, 90, 120, 150]
 
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
