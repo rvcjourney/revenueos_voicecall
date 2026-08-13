@@ -462,13 +462,23 @@ _VOICEMAIL_RE = re.compile(
     r"please leave (a |your )?message"
     r"|leave (a |your )?message after (the )?(beep|tone)"
     r"|not available to take your call"
+    r"|(person|number) you (are|were) trying to reach (is|are) not available"
     r"|(this |the )?(mailbox|inbox) (is full|has not been set up)"
     r"|this mailbox"
-    r"|record (your |a )?message (after|at) the (beep|tone)"
+    r"|record (your |a )?message"  # was ...(after|at) the (beep|tone) -- too narrow,
+                                   # missed real greetings where "at the tone" comes
+                                   # BEFORE "record your message", not immediately after
     r"|recording will (begin|start)"
     r"|after the (beep|tone)"
+    r"|at the (beep|tone)"
     r"|reached (my |the )?(voicemail|voice mail)"
+    r"|forwarded to (voice ?mail|voice mail box)"  # distinct from a live-person call
+                                   # forward -- _FORWARDING_RE's generic "call...forward"
+                                   # pattern would otherwise catch this first and miss
+                                   # tagging it as voicemail specifically
     r"|voicemail (service|box)"
+    r"|(you may|please) (now )?hang up"  # near-exclusively an automated-message phrase
+    r"|when (you have|you're) finished recording"
     r")\b",
     re.IGNORECASE | re.UNICODE,
 )
