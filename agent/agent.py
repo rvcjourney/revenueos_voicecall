@@ -854,7 +854,7 @@ class VoiceAgent(Agent):
             if _VOICEMAIL_RE.search(text):
                 logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
                 self._ending = True
-                _safe_task(self._silent_hangup(), "voicemail-hangup")
+                _safe_task(self._silent_hangup(outcome_override="voicemail"), "voicemail-hangup")
                 return
 
             # Call-forwarding announcement detected (not the actual person) — hang up silently
@@ -944,8 +944,13 @@ class VoiceAgent(Agent):
         _persist_failed_report(self._call_id, payload, last_exc)
         raise last_exc
 
-    async def _post_call_report(self) -> None:
-        """Classify outcome with Groq and POST to backend. Called once after every call."""
+    async def _post_call_report(self, *, outcome_override: str | None = None) -> None:
+        """Classify outcome with Groq and POST to backend. Called once after every call.
+
+        outcome_override: when the caller already KNOWS the outcome with certainty
+        (e.g. deterministic voicemail-phrase detection), skip the transcript-based
+        classifier entirely and report this value directly — see _send_report.
+        """
         if not self._call_id or not self._backend_url:
             logger.warning(
                 "post_call_report_skipped | call_id=%r backend_url=%r — nothing to report to "
@@ -957,13 +962,13 @@ class VoiceAgent(Agent):
             return
         self._reported = True
         try:
-            await asyncio.wait_for(self._send_report(), timeout=15.0)
+            await asyncio.wait_for(self._send_report(outcome_override=outcome_override), timeout=15.0)
         except asyncio.TimeoutError:
             logger.error("post_call_report timed out — backend may be unreachable at %s", self._backend_url)
         except Exception as exc:
             logger.error("post_call_report failed: %s", exc)
 
-    async def _send_report(self) -> None:
+    async def _send_report(self, *, outcome_override: str | None = None) -> None:
         import json as _json
 
         # Try to get full conversation (user + agent) from session history
@@ -1001,9 +1006,21 @@ class VoiceAgent(Agent):
         if not full_transcript:
             full_transcript = [{"role": "user", "text": t} for t in self._user_messages]
 
-        if not full_transcript:
+        if not full_transcript and not outcome_override:
             logger.info("post_call_report_skipped | call=%s reason=no_conversation_captured", self._call_id)
             return  # nothing was said by either side; leave outcome as PENDING
+
+        # A deterministic detector (voicemail phrasing, etc.) already knows the real
+        # outcome with certainty -- skip the word-count gate and the LLM classifier
+        # entirely rather than letting a voicemail greeting get misread as a normal
+        # (dis)interested customer response.
+        if outcome_override:
+            summary = f"Call ended automatically: {outcome_override.replace('_', ' ')} detected."
+            await self._post_agent_report({
+                "outcome": outcome_override, "summary": summary, "transcript": full_transcript,
+            })
+            logger.info("post_call_report_sent | call=%s outcome=%s (override)", self._call_id, outcome_override)
+            return
 
         # Build text for Groq — show both sides when available
         transcript_text = "\n".join(
@@ -1177,9 +1194,9 @@ class VoiceAgent(Agent):
         await self._post_call_report()
         await self._disconnect()
 
-    async def _silent_hangup(self) -> None:
+    async def _silent_hangup(self, *, outcome_override: str | None = None) -> None:
         """Hang up without a farewell (voicemail, bot, or prolonged silence)."""
-        await self._post_call_report()
+        await self._post_call_report(outcome_override=outcome_override)
         await self._disconnect()
 
     async def _silence_watchdog(self) -> None:

@@ -271,18 +271,20 @@ async def _next_pending_batch(session, campaign_id, limit: int) -> list[Campaign
 
 
 async def _next_retry_batch(session, campaign_id, retry_after_minutes: int, limit: int) -> list[CampaignContact]:
-    """Return up to `limit` NO_ANSWER or QUEUE_TIMEOUT contacts past their retry delay.
+    """Return up to `limit` QUEUE_TIMEOUT contacts past their retry delay.
 
-    QUEUE_TIMEOUT contacts (never dialed — org was at its plan's concurrency cap)
-    are folded into the same retry pass as NO_ANSWER so a saturated org never
-    needs a second dedicated sweep.
+    QUEUE_TIMEOUT contacts (never dialed at all — org was at its plan's
+    concurrency cap) still get picked up here; this is a delayed FIRST attempt,
+    not a redial of an answered-then-lost call, so it's unrelated to the
+    no-answer retry behavior that's disabled platform-wide (see _finalize:
+    a NO_ANSWER contact is now always terminal, never re-enters this query).
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=retry_after_minutes)
     result = await session.execute(
         select(CampaignContact)
         .where(
             CampaignContact.campaign_id == campaign_id,
-            CampaignContact.status.in_((ContactStatus.NO_ANSWER, ContactStatus.QUEUE_TIMEOUT)),
+            CampaignContact.status == ContactStatus.QUEUE_TIMEOUT,
             CampaignContact.last_attempted_at <= cutoff,
         )
         .order_by(CampaignContact.last_attempted_at)
@@ -494,11 +496,10 @@ async def _finalize(
     if place_result == "no_answer":
         call_status = CallStatus.NO_ANSWER
         call_outcome = CallOutcome.NO_ANSWER  # phone not picked up
-        contact_status = (
-            ContactStatus.NO_ANSWER
-            if (contact.attempt_count + 1) < campaign.max_retries
-            else ContactStatus.FAILED
-        )
+        # Automatic retries are disabled platform-wide: a no-answer is always
+        # terminal (FAILED) on the first attempt, regardless of campaign.max_retries.
+        # _next_retry_batch below is now unreachable for NO_ANSWER as a result.
+        contact_status = ContactStatus.FAILED
     elif place_result == "failed":
         call_status = CallStatus.FAILED
         call_outcome = CallOutcome.PENDING
