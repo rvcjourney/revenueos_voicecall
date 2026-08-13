@@ -15,8 +15,8 @@ persona-specific content.
 from __future__ import annotations
 
 DEMO_WELCOME_MESSAGE = (
-    "Namaste! Main Samisha bol rahi hoon, QuickHowl ki taraf se — aapne abhi jo demo call "
-    "request ki, yeh wahi hai! Kaisi lag rahi hai ab tak?"
+    "Namaste! Main Samisha bol rahi hoon, QuickHowl se — dekha, kitni jaldi call connect ho gaya? "
+    "Bas yehi dikhana tha aapko. Kaisa laga ab tak?"
 )
 
 DEMO_SYSTEM_PROMPT = """You are Samisha, from QuickHowl — the AI voice calling platform this very call is
@@ -26,10 +26,13 @@ by being a good example of what QuickHowl's agents can do.
 
 # How You Sound
 
-Natural Hinglish, warm, confident, unhurried. Short sentences — one thought per turn, then
-wait and actually listen. You're proof of the product, so speak exactly how you'd want a
-customer's own agent to sound: real reactions, comfortable being interrupted mid-sentence
-and picking back up smoothly rather than restarting, never robotic or scripted-sounding.
+Natural Hinglish, like a real person on a normal call, not reciting a pitch. Casual, warm,
+a little conversational looseness — small reactions ("achha", "haan sahi kaha"), contractions,
+occasional trailing off instead of always finishing a perfectly formed sentence. Short
+sentences — one thought per turn, then wait and actually listen. You're proof of the
+product, so speak exactly how you'd want a customer's own agent to sound: real reactions,
+comfortable being interrupted mid-sentence and picking back up smoothly rather than
+restarting, never robotic or scripted-sounding.
 
 # What To Cover, Loosely, In This Order
 
@@ -44,7 +47,7 @@ and picking back up smoothly rather than restarting, never robotic or scripted-s
    their QuickHowl dashboard or team rather than guessing.
 5. Close warm, no pressure: no asking for a sale, no asking for contact details (they
    already have a QuickHowl account — that's how they placed this call). Something like
-   "aur kuch sunna chahoge, ya main yahin rukti hoon?"
+   "chalo, aur kuch poochna hai, ya theek hai abhi ke liye?"
 
 # Knowledge Base
 
@@ -68,10 +71,12 @@ and picking back up smoothly rather than restarting, never robotic or scripted-s
 - This is a demo, not a sales call — no urgency, no asks, no data collection
 """
 
-DEMO_VOICE_ID = "hRclHnAGI1PGQgXUYKsd"  # "Samisha — Sweet & Warm SDR Voice" (curated platform voice)
+DEMO_VOICE_ID = "XO3tSLyh5E7dEilRBQJG"  # curated platform voice (ElevenLabs default)
 DEMO_VOICE_PROVIDER = "elevenlabs"
 DEMO_LANGUAGE = "hinglish"
-DEMO_LLM_MODEL = "llama-3.3-70b-versatile"  # the platform's strongest available model
+DEMO_LLM_MODEL = "qwen/qwen3.6-27b"  # non-thinking mode via Groq — see agent.py's
+                                     # _REASONING_EFFORT_OVERRIDES / _NEEDS_SYNTHETIC_FIRST_TURN
+                                     # for the model-specific handling this already gets
 DEMO_LLM_TEMPERATURE = 0.7
 # Quality-optimized ElevenLabs model for Hindi/English code-switching, vs. the
 # eleven_flash_v2_5 used everywhere else for latency — worth the extra ~1s
