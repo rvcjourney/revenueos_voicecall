@@ -1453,7 +1453,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model               = SARVAM_MODEL,
             speaker             = voice_id,
             speech_sample_rate  = SARVAM_SAMPLE_RATE,
-            pace                = 1.10,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
+            pace                = 1.0,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
             temperature         = 0.6,    # Sarvam's own default — lowest that still sounds natural; higher caused tone drift between turns
         )
         logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s pace=1.10 temp=0.6)", SARVAM_MODEL, voice_id, sarvam_language)
