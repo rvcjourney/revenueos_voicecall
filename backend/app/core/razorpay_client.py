@@ -57,16 +57,28 @@ def get_client() -> razorpay.Client:
 
 async def sync_plan_to_razorpay(plan: Plan) -> str:
     """
-    Returns plan.razorpay_plan_id if already set (Razorpay plans are immutable,
-    so an existing id is always still valid for its original price). Creates a
+    Returns plan.razorpay_plan_id if already set AND still valid under the
+    currently-configured Razorpay keys (verified with a fetch) -- Razorpay
+    plans are immutable within a given account/mode, but a cached id from a
+    different one (e.g. after switching from test-mode to live-mode keys)
+    silently no longer exists even though the DB still has it. Creates a
     fresh Razorpay Plan otherwise. Caller is responsible for persisting the
     returned id onto `plan.razorpay_plan_id` and committing.
     """
+    client = get_client()
+
     if plan.razorpay_plan_id:
-        return plan.razorpay_plan_id
+        try:
+            await asyncio.to_thread(client.plan.fetch, plan.razorpay_plan_id)
+            return plan.razorpay_plan_id
+        except Exception as exc:
+            log.warning(
+                "razorpay_cached_plan_id_invalid_recreating",
+                plan_id=str(plan.id), razorpay_plan_id=plan.razorpay_plan_id, error=str(exc),
+            )
+            # fall through and create a fresh one below
 
     effective_price = plan.discount_price_minor if plan.discount_price_minor is not None else plan.price_minor
-    client = get_client()
     try:
         result = await asyncio.to_thread(
             client.plan.create,

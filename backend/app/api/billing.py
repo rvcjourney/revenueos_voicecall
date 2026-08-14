@@ -104,7 +104,11 @@ async def checkout(
 
     try:
         razorpay_plan_id = await sync_plan_to_razorpay(plan)
-        if not plan.razorpay_plan_id:
+        # Not just "was empty" -- sync_plan_to_razorpay can also return a freshly
+        # recreated id when the previously-cached one turned out to be stale
+        # (e.g. a test-mode id that no longer exists under live-mode keys), and
+        # that refreshed id must overwrite the stale one in the DB too.
+        if plan.razorpay_plan_id != razorpay_plan_id:
             plan.razorpay_plan_id = razorpay_plan_id
             await db.commit()
     except RazorpayError as exc:
