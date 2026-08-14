@@ -1465,9 +1465,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
             voice_settings        = elevenlabs.VoiceSettings(
-                stability         = 0.85,  # high = consistent tone across all chunks, no high/low shifts
-                similarity_boost  = 0.85,
-                style             = 0.0,   # zero expressiveness = no tonal variation between chunks
+                stability         = 0.4,  # high = consistent tone across all chunks, no high/low shifts
+                similarity_boost  = 0.8,
+                style             = 0.3,   # zero expressiveness = no tonal variation between chunks
                 use_speaker_boost = True,
             ),
         )
