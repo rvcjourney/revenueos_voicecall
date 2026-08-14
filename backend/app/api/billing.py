@@ -116,15 +116,19 @@ async def checkout(
     try:
         if sub and sub.provider == "razorpay" and sub.status in _ACTIVE_RAZORPAY_STATUSES:
             # Already has a mandate authorized — try to change the plan in
-            # place, no new Checkout/authorization needed. Razorpay only
-            # allows this for card-paid subscriptions though: UPI/eMandate
-            # subscriptions reject it outright ("subscriptions cannot be
-            # updated when payment mode is upi") — confirmed against a real
-            # account, and documented as a hard platform restriction, not
-            # something we can work around via a different API call. Since
-            # UPI is the dominant payment method for this org's customers,
-            # fall back to the same cancel-and-recreate flow a first-time
-            # subscriber goes through instead of failing the upgrade.
+            # place, no new Checkout/authorization needed. Two known reasons
+            # this in-place update can legitimately fail, both handled by
+            # falling back to the same cancel-and-recreate flow a first-time
+            # subscriber goes through instead of failing the upgrade outright:
+            #   - UPI/eMandate subscriptions reject it ("cannot be updated
+            #     when payment mode is upi") — confirmed against a real
+            #     account, a hard platform restriction, not workaroundable.
+            #   - "the id provided is invalid or could not be found" — the
+            #     stored provider_subscription_id doesn't exist under the
+            #     currently-configured Razorpay keys (e.g. after switching
+            #     from test-mode to live-mode keys, subscriptions created
+            #     under the old keys are gone as far as the new ones are
+            #     concerned).
             try:
                 await razorpay_update_subscription_plan(sub.provider_subscription_id, razorpay_plan_id)
                 sub.plan_id = plan.id
@@ -136,7 +140,13 @@ async def checkout(
                     currency=plan.currency,
                 )
             except RazorpayError as exc:
-                if "cannot be updated when payment mode is" not in str(exc).lower():
+                exc_str = str(exc).lower()
+                _needs_fresh_subscription = (
+                    "cannot be updated when payment mode is" in exc_str
+                    or "id provided is invalid" in exc_str
+                    or "could not be found" in exc_str
+                )
+                if not _needs_fresh_subscription:
                     raise
                 log.info(
                     "razorpay_plan_change_requires_new_subscription",
