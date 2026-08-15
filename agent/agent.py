@@ -1573,6 +1573,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
     )
 
+    def _on_user_state_changed(ev) -> None:
+        # Brackets the part of the latency budget that "Turn N" / TTS-ttfb logs
+        # don't show: old_state->new_state fires the instant VAD+turn_detection
+        # decide the customer stopped talking, i.e. BEFORE the 0.9s-3.0s
+        # endpointing wait that runs before "Turn N" is even logged. Diffing
+        # this timestamp against the next "Turn N" log gives the real
+        # customer-stopped-talking -> turn-committed delay; diffing it against
+        # the next TTS ttfb log gives the full customer-perceived gap.
+        if ev.new_state == "listening":
+            logger.info(
+                "User stopped speaking (endpointing wait starts now) | turn %d",
+                voice_agent._turn_count,
+            )
+
+    session.on("user_state_changed", _on_user_state_changed)
+
     def _on_speech_created(ev) -> None:
         # Proves whether turn_handling.interruption (above) is actually cutting
         # the agent off mid-sentence, rather than inferring it indirectly from
