@@ -16,6 +16,7 @@ import app.workers.tasks.campaign as campaign_module
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import (
     DEFAULT_CREDITS_PER_MONTH,
+    has_credits_remaining,
     minutes_for_duration,
     record_call_credits,
     reset_credit_period_if_stale,
@@ -119,6 +120,30 @@ async def test_record_call_credits_unknown_org_is_safe_noop(db):
     result = await record_call_credits(db, org_id=uuid.uuid4(), duration_seconds=120)
     assert result["minutes_billed"] == 2
     assert result["credits_used_this_period"] == 0
+
+
+# ── has_credits_remaining: hard stop, no grace overage window ─────────────
+
+async def test_has_credits_remaining_true_below_allotment(db):
+    org = await _make_org(db, credits_per_month=100)
+    org.credits_used_this_period = 99
+    await db.commit()
+    assert await has_credits_remaining(db, org.id) is True
+
+
+async def test_has_credits_remaining_false_exactly_at_allotment(db):
+    """Hard stop at 100% -- no 20% grace window past the limit."""
+    org = await _make_org(db, credits_per_month=100)
+    org.credits_used_this_period = 100
+    await db.commit()
+    assert await has_credits_remaining(db, org.id) is False
+
+
+async def test_has_credits_remaining_false_when_over_allotment(db):
+    org = await _make_org(db, credits_per_month=100)
+    org.credits_used_this_period = 119  # previously still under the old 20% grace ceiling
+    await db.commit()
+    assert await has_credits_remaining(db, org.id) is False
 
 
 # ── Monthly reset ──────────────────────────────────────────────────────────
