@@ -26,6 +26,7 @@ from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.rate_limit import enforce_rate_limit
 from app.core.razorpay_client import (
     RazorpayError,
     cancel_subscription as razorpay_cancel_subscription,
@@ -107,6 +108,11 @@ async def checkout(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    # Keyed by org, not IP -- these are already admin-authenticated, so the
+    # realistic risk is a compromised/malicious account hammering Razorpay's
+    # API through us, not anonymous abuse.
+    await enforce_rate_limit("billing-checkout", str(token.org_id), limit=10, window_seconds=3600)
+
     plan = await db.get(Plan, body.plan_id)
     if not plan or not plan.is_active:
         raise NotFoundError("Plan not found")
@@ -251,6 +257,8 @@ async def verify_payment(
     Confirms the Checkout handler's signature for immediate UI feedback only.
     Does NOT activate the org or subscription -- the webhook does that.
     """
+    await enforce_rate_limit("billing-verify-payment", str(token.org_id), limit=20, window_seconds=3600)
+
     try:
         verify_subscription_payment_signature(
             razorpay_subscription_id=body.razorpay_subscription_id,
@@ -268,6 +276,8 @@ async def cancel(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_rate_limit("billing-cancel", str(token.org_id), limit=5, window_seconds=3600)
+
     sub = await _active_subscription(db, token.org_id)
     if not sub or sub.provider != "razorpay" or not sub.provider_subscription_id:
         raise NotFoundError("No Razorpay subscription to cancel")
