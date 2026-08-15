@@ -53,6 +53,21 @@ async def dashboard_stats(
 
     pickup_rate = round((answered / calls_today * 100), 1) if calls_today else 0
 
+    # All-time totals for the dashboard header -- a real, unrestricted COUNT
+    # over the same call_filter used everywhere else on this page (org-wide
+    # for admins, own campaigns only for members). Previously the header
+    # sourced these from GET /api/admin/stats, which sums Campaign.completed_calls/
+    # interested_count across non-deleted users' campaigns only -- silently
+    # excluding inbound calls, Try Now/demo calls, and campaigns whose creator
+    # was later removed from the org, so it drifted from Call History's real
+    # total (which counts every Call row directly) the more of those an org had.
+    all_time_row = (await db.execute(
+        select(
+            func.count(Call.id).label("total_calls"),
+            func.count(Call.id).filter(Call.outcome == "interested").label("total_interested"),
+        ).where(*call_filter)
+    )).one()
+
     # ── Calls over last 7 days ─────────────────────────────────────────────────
     daily_rows = (await db.execute(
         select(
@@ -123,6 +138,8 @@ async def dashboard_stats(
             "avg_duration_seconds": int(avg_duration) if avg_duration else 0,
             "pickup_rate": pickup_rate,
         },
+        "total_calls": all_time_row.total_calls,
+        "total_interested": all_time_row.total_interested,
         "calls_last_7_days": calls_last_7_days,
         "outcome_breakdown": outcome_breakdown,
         "active_campaigns": [

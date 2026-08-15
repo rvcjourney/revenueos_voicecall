@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth";
-import { useAdminStats, useCalls, useConcurrency, useCreditUsage, useDashboard, useOrgInfo } from "@/lib/hooks";
+import { useCalls, useConcurrency, useCreditUsage, useDashboard, useOrgInfo } from "@/lib/hooks";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { QuotaConcurrencyCard } from "@/components/dashboard/QuotaConcurrencyCard";
@@ -16,7 +16,6 @@ export default function Dashboard() {
   const orgInfo = useOrgInfo();
   const credits = useCreditUsage();
   const concurrency = useConcurrency();
-  const adminStats = useAdminStats();
   const recentCalls = useCalls({ limit: 5 });
 
   const today = new Date().toLocaleDateString(undefined, {
@@ -32,15 +31,15 @@ export default function Dashboard() {
         title={`Welcome back, ${user?.full_name?.split(" ")[0] ?? "there"} 👋`}
         description={today}
         actions={
-          isAdmin && adminStats.data ? (
+          isAdmin && dashboard.data ? (
             <div className="flex gap-6 text-right">
               <div>
-                <p className="font-heading text-2xl font-semibold">{adminStats.data.totals.total_calls.toLocaleString()}</p>
+                <p className="font-heading text-2xl font-semibold">{dashboard.data.total_calls.toLocaleString()}</p>
                 <p className="text-xs text-muted-foreground">Total calls (all time)</p>
               </div>
               <div>
                 <p className="font-heading text-2xl font-semibold text-success">
-                  {adminStats.data.totals.total_interested.toLocaleString()}
+                  {dashboard.data.total_interested.toLocaleString()}
                 </p>
                 <p className="text-xs text-muted-foreground">Interested leads</p>
               </div>

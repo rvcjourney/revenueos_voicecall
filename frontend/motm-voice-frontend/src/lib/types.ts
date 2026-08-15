@@ -287,6 +287,8 @@ export interface DashboardStats {
     avg_duration_seconds: number;
     pickup_rate: number;
   };
+  total_calls: number;
+  total_interested: number;
   calls_last_7_days: { day: string; calls: number; interested: number }[];
   outcome_breakdown: { name: string; value: number; color: string }[];
   active_campaigns: {
