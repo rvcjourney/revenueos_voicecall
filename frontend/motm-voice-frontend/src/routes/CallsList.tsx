@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Clock, Filter, Heart, IndianRupee, Phone, Search, X } from "lucide-react";
+import { Clock, Filter, Heart, Phone, Search, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -57,8 +57,7 @@ export default function CallsList() {
     const avgDuration = withDuration.length
       ? Math.round(withDuration.reduce((sum, c) => sum + (callDurationSeconds(c) ?? 0), 0) / withDuration.length)
       : 0;
-    const totalCost = list.reduce((sum, c) => sum + (c.cost_inr ?? 0), 0);
-    return { total: list.length, interested, avgDuration, totalCost };
+    return { total: list.length, interested, avgDuration };
   }, [calls.data]);
 
   const hasFilters = campaignId !== "all" || outcome !== "all" || search.trim().length > 0;
@@ -73,7 +72,7 @@ export default function CallsList() {
     <div className="space-y-6">
       <PageHeader title="Call History" description={`${calls.data?.length ?? 0} total calls`} />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard icon={Phone} label="Total calls" value={stats.total} loading={calls.isLoading} />
         <StatCard icon={Heart} label="Interested" value={stats.interested} loading={calls.isLoading} tone="success" />
         <StatCard
@@ -82,13 +81,6 @@ export default function CallsList() {
           value={calls.isLoading ? undefined : formatDuration(stats.avgDuration)}
           loading={calls.isLoading}
           tone="info"
-        />
-        <StatCard
-          icon={IndianRupee}
-          label="Total cost"
-          value={calls.isLoading ? undefined : `₹${stats.totalCost.toFixed(2)}`}
-          loading={calls.isLoading}
-          tone="warning"
         />
       </div>
 
