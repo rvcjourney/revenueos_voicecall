@@ -1465,8 +1465,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
             voice_settings        = elevenlabs.VoiceSettings(
-                stability         = 0.6,  # high = consistent tone across all chunks, no high/low shifts
-                similarity_boost  = 0.8,
+                stability         = 0.5,  # high = consistent tone across all chunks, no high/low shifts
+                similarity_boost  = 0.75,
                 style             = 0.3,   # zero expressiveness = no tonal variation between chunks
                 use_speaker_boost = True,
             ),
@@ -1556,6 +1556,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # transcribed speech before triggering, so a second false-positive
                                       # safety net isn't needed — disabling it (None) makes every detected
                                       # interruption cut the agent off for good, immediately.
+            },
+            preemptive_generation={
+                "preemptive_tts": True,  # SDK default False. LLM text-generation already starts
+                                      # speculatively before the turn is confirmed (enabled=True is
+                                      # the SDK default and was never overridden) -- this makes TTS
+                                      # synthesis start on that speculative text too, instead of
+                                      # waiting for turn confirmation before synthesis even begins.
+                                      # If the guess is wrong (customer kept talking / interrupted),
+                                      # the SDK cleanly cancels the in-flight TTS task
+                                      # (agent_activity.py: cancel_and_wait) before anything is
+                                      # played -- no audio artifact, just an occasionally-wasted TTS
+                                      # synthesis call on a discarded guess.
             },
         ),
         tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
