@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     # ── ElevenLabs TTS ────────────────────────────────────────────────────────
     ELEVENLABS_API_KEY: str = Field(...)
     ELEVENLABS_VOICE_ID: str = "9BWtsMINqrJLrRacOk9x"
-    ELEVENLABS_MODEL_ID: str = "eleven_flash_v2_5"
+    ELEVENLABS_MODEL_ID: str = "eleven_turbo_v2_5"
 
     # ── Groq LLM ──────────────────────────────────────────────────────────────
     GROQ_API_KEY: str = Field(...)

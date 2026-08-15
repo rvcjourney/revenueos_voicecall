@@ -268,7 +268,7 @@ Edit `agent/config.py` to change the agent's personality and behaviour:
 | `AGENT_WELCOME_MESSAGE` | First thing the agent says when the call connects |
 | `GROQ_MODEL` | LLM model (`llama-3.3-70b-versatile` for best quality) |
 | `ELEVENLABS_VOICE_ID` | Voice character |
-| `ELEVENLABS_MODEL_ID` | TTS model (`eleven_flash_v2_5` for lowest latency) |
+| `ELEVENLABS_MODEL_ID` | TTS model (`eleven_turbo_v2_5` — default, balances latency and naturalness; `eleven_flash_v2_5` for lowest latency, `eleven_multilingual_v2` for highest quality) |
 
 ### ElevenLabs voice recommendations
 

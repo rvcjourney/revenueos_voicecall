@@ -79,6 +79,6 @@ DEMO_LLM_MODEL = "qwen/qwen3.6-27b"  # non-thinking mode via Groq — see agent.
                                      # for the model-specific handling this already gets
 DEMO_LLM_TEMPERATURE = 0.7
 # Quality-optimized ElevenLabs model for Hindi/English code-switching, vs. the
-# eleven_flash_v2_5 used everywhere else for latency — worth the extra ~1s
+# eleven_turbo_v2_5 used everywhere else for latency — worth the extra time
 # here since this call is the first impression, not a high-volume campaign.
 DEMO_TTS_MODEL_ID = "eleven_multilingual_v2"
