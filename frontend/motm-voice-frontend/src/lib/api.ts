@@ -9,8 +9,8 @@ import type {
   AgentTemplate,
   ApprovedAccess,
   BillingCurrent,
-  Call,
   CallDetail,
+  CallListResponse,
   Campaign,
   CampaignContact,
   CampaignCreate,
@@ -274,7 +274,7 @@ export const foldersApi = {
 // ── Calls ────────────────────────────────────────────────────────────────
 export const callsApi = {
   list: (params?: { campaign_id?: string; outcome?: string; limit?: number; offset?: number }) =>
-    api.get<ListResponse<Call> | Call[]>("/api/calls", { params }),
+    api.get<CallListResponse>("/api/calls", { params }),
   get: (id: string) => api.get<CallDetail>(`/api/calls/${id}`),
   fetchRecording: (id: string) =>
     api.post<{ found: boolean; recording_url?: string }>(`/api/calls/${id}/fetch-recording`),

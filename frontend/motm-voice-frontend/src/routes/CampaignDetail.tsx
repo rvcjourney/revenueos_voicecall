@@ -317,7 +317,8 @@ function CallsTab({ campaignId }: { campaignId: string }) {
 
   if (calls.isLoading) return <Skeleton className="h-64 w-full" />;
   if (calls.isError) return <ErrorBanner error={calls.error} onRetry={() => calls.refetch()} />;
-  if (!calls.data || calls.data.length === 0) {
+  const rows = calls.data?.items ?? [];
+  if (rows.length === 0) {
     return <EmptyState icon={Phone} title="No calls yet" description="Calls will appear here once this campaign starts dialing." />;
   }
 
@@ -335,7 +336,7 @@ function CallsTab({ campaignId }: { campaignId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {calls.data.map((row) => (
+            {rows.map((row) => (
               <TableRow key={row.id}>
                 <TableCell className="font-mono text-xs">{row.phone_number}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{formatDateTime(row.started_at)}</TableCell>

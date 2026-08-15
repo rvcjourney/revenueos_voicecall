@@ -225,6 +225,16 @@ export interface Call {
   created_at: string;
 }
 
+export interface CallListResponse {
+  items: Call[];
+  total: number;
+  // Aggregates over the whole filtered result set (not just `items`, which is
+  // capped at the request's `limit`) -- use these for summary stats, never
+  // items.length/items.filter(...).
+  interested_count: number;
+  avg_duration_seconds: number;
+}
+
 export interface CallDetail extends Call {
   extracted_data: Record<string, unknown>;
   error_message: string | null;

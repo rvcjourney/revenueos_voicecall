@@ -94,20 +94,38 @@ async def list_calls(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(Call).where(Call.org_id == token.org_id)
+    filters = [Call.org_id == token.org_id]
     if campaign_id:
-        q = q.where(Call.campaign_id == campaign_id)
+        filters.append(Call.campaign_id == campaign_id)
     if outcome:
-        q = q.where(Call.outcome == outcome)
+        filters.append(Call.outcome == outcome)
 
-    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    # Aggregates over the whole filtered set, not just the page `rows` below
+    # ends up with (capped at `limit`) -- the frontend's summary stat cards
+    # (Call History) previously computed these client-side from just the
+    # fetched page, which silently capped "Total calls"/"Interested"/
+    # "Avg. duration" at whatever the first `limit` (max 200) rows happened
+    # to contain instead of the org's real totals.
+    agg = (await db.execute(
+        select(
+            func.count(Call.id).label("total"),
+            func.count(Call.id).filter(Call.outcome == "interested").label("interested"),
+            func.avg(Call.duration_seconds).filter(Call.duration_seconds > 0).label("avg_duration"),
+        ).where(*filters)
+    )).one()
+
     rows = (
         await db.execute(
-            q.order_by(Call.created_at.desc()).limit(limit).offset(offset)
+            select(Call).where(*filters).order_by(Call.created_at.desc()).limit(limit).offset(offset)
         )
     ).scalars().all()
 
-    return CallListResponse(items=[_to_out(r) for r in rows], total=total)
+    return CallListResponse(
+        items=[_to_out(r) for r in rows],
+        total=agg.total,
+        interested_count=agg.interested,
+        avg_duration_seconds=round(agg.avg_duration) if agg.avg_duration else 0,
+    )
 
 
 class AgentReportIn(BaseModel):

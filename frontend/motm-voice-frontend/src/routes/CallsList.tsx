@@ -44,21 +44,24 @@ export default function CallsList() {
     return map;
   }, [campaigns.data]);
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return calls.data ?? [];
-    const q = search.trim();
-    return (calls.data ?? []).filter((c) => c.phone_number.includes(q));
-  }, [calls.data, search]);
+  const items = calls.data?.items ?? [];
 
-  const stats = useMemo(() => {
-    const list = calls.data ?? [];
-    const interested = list.filter((c) => c.outcome === "interested").length;
-    const withDuration = list.filter((c) => (callDurationSeconds(c) ?? 0) > 0);
-    const avgDuration = withDuration.length
-      ? Math.round(withDuration.reduce((sum, c) => sum + (callDurationSeconds(c) ?? 0), 0) / withDuration.length)
-      : 0;
-    return { total: list.length, interested, avgDuration };
-  }, [calls.data]);
+  const filtered = useMemo(() => {
+    if (!search.trim()) return items;
+    const q = search.trim();
+    return items.filter((c) => c.phone_number.includes(q));
+  }, [items, search]);
+
+  // These come from the backend as aggregates over the org's whole filtered
+  // result set, not items.length/items.filter(...) -- `items` above is only
+  // the current page (capped at `limit`), so computing stats from it alone
+  // silently undercounts once an org has more calls than that.
+  const stats = {
+    total: calls.data?.total ?? 0,
+    interested: calls.data?.interested_count ?? 0,
+    avgDuration: calls.data?.avg_duration_seconds ?? 0,
+  };
+  const moreThanLoaded = stats.total > items.length;
 
   const hasFilters = campaignId !== "all" || outcome !== "all" || search.trim().length > 0;
 
@@ -70,7 +73,7 @@ export default function CallsList() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Call History" description={`${calls.data?.length ?? 0} total calls`} />
+      <PageHeader title="Call History" description={`${stats.total} total calls`} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard icon={Phone} label="Total calls" value={stats.total} loading={calls.isLoading} />
@@ -134,7 +137,8 @@ export default function CallsList() {
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
             <p className="text-sm font-semibold">All calls</p>
             <p className="text-xs text-muted-foreground">
-              Showing {filtered.length} of {calls.data?.length ?? 0}
+              Showing {filtered.length} of {items.length} loaded
+              {moreThanLoaded ? ` (${stats.total} total — narrow with filters to see more)` : ""}
             </p>
           </div>
           <CardContent className="overflow-x-auto p-0">

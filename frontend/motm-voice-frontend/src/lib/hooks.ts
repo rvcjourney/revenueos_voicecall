@@ -186,7 +186,7 @@ export function useUploadContacts() {
 export function useCalls(params?: { campaign_id?: string; outcome?: string; limit?: number; offset?: number }) {
   return useQuery({
     queryKey: ["calls", params],
-    queryFn: () => callsApi.list(params).then((r) => unwrapList(r.data)),
+    queryFn: () => callsApi.list(params).then((r) => r.data),
     refetchInterval: 15_000,
   });
 }

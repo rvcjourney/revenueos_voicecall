@@ -39,3 +39,8 @@ class CallDetail(CallOut):
 class CallListResponse(BaseModel):
     items: list[CallOut]
     total: int
+    # Aggregates over the full filtered result set (org_id + campaign_id/outcome
+    # filters), not just the returned page -- `items` is capped at `limit`
+    # (max 200), so summary stats must come from here, not len(items)/items.
+    interested_count: int
+    avg_duration_seconds: int

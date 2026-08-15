@@ -59,7 +59,7 @@ export default function Dashboard() {
         <div className="grid gap-6 lg:grid-cols-2">
           <ActiveCampaignsCard campaigns={dashboard.data?.active_campaigns} loading={dashboard.isLoading} />
           <RecentCallsCard
-            calls={recentCalls.data}
+            calls={recentCalls.data?.items}
             isLoading={recentCalls.isLoading}
             isError={recentCalls.isError}
             error={recentCalls.error}
