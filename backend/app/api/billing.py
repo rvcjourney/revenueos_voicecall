@@ -179,6 +179,13 @@ async def checkout(
                     "cannot be updated when payment mode is" in exc_str
                     or "id provided is invalid" in exc_str
                     or "could not be found" in exc_str
+                    # Our own DB still has status="active" (that's what got us into
+                    # this branch), but Razorpay's actual state disagrees -- seen live
+                    # on a subscription left over from before a test/live-mode key
+                    # switch, where our webhook never got a corresponding status
+                    # update. Same fallback as the other two cases: stop trusting the
+                    # stale subscription and get the customer a fresh one.
+                    or "not in authenticated or active state" in exc_str
                 )
                 if not _needs_fresh_subscription:
                     raise

@@ -258,6 +258,41 @@ async def test_checkout_in_place_plan_change_blends_credits_immediately(client, 
     assert 2000 < sub.prorated_credits_override < 3000
 
 
+async def test_checkout_falls_back_to_new_subscription_when_razorpay_state_stale(client, db):
+    """Live incident: our DB had status='active' (so we tried the in-place
+    update), but Razorpay's actual subscription state disagreed -- a
+    subscription left over from before a test/live-mode key switch, whose
+    webhook update never landed. Should fall back the same way the UPI case
+    does, not surface a raw 409 to the customer."""
+    old_plan = await _make_plan(db, name="Starter")
+    new_plan = await _make_plan(db, name="Professional", price_minor=1_499_900)
+    org, _user, token = await _make_org_with_subscription(
+        db, old_plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_stale_state", "status": "active"}
+    )
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new123")), \
+         patch("app.api.billing.razorpay_update_subscription_plan", new=AsyncMock(
+             side_effect=RazorpayError("Can't update subscription when subscription is not in Authenticated or Active state")
+         )), \
+         patch("app.api.billing.razorpay_cancel_subscription", new=AsyncMock(return_value={"status": "cancelled"})), \
+         patch("app.api.billing.razorpay_create_subscription", new=AsyncMock(
+             return_value={"id": "sub_fresh", "status": "created"}
+         )):
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(new_plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["action"] == "new"
+    assert body["subscription_id"] == "sub_fresh"
+
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.plan_id == old_plan.id  # unchanged -- new payment not confirmed yet
+    assert sub.pending_plan_id == new_plan.id
+
+
 async def test_checkout_rejects_custom_pricing_plan(client, db):
     plan = await _make_plan(db, name="Business", is_custom_pricing=True)
     org = Organization(name="Org", slug=f"org-{uuid.uuid4().hex[:8]}")
