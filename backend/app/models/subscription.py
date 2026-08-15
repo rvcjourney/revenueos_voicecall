@@ -57,6 +57,19 @@ class Subscription(Base, TimestampMixin, SoftDeleteMixin):
     provider_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provider_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Set by POST /billing/checkout when a plan change needs a fresh Razorpay
+    # Checkout authorization (new subscriber, or an existing one whose
+    # in-place update isn't possible -- see app/api/billing.py). plan_id is
+    # deliberately NOT updated until the Razorpay webhook confirms payment
+    # actually succeeded (subscription.authenticated/activated/charged ->
+    # app/api/webhooks.py:_promote_pending_plan) -- previously plan_id was
+    # written here immediately, so cancelling or failing the Checkout modal
+    # still left the org showing (and billed against) a plan it never paid
+    # for.
+    pending_plan_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Set when a plan change happens mid-billing-period: a time-weighted blend of
     # the old and new plan's credits_per_month for the remainder of the current
     # period only (see app/core/billing.py:compute_blended_monthly_credits).

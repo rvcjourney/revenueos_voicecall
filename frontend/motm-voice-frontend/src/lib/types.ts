@@ -339,6 +339,19 @@ export interface CheckoutResponse {
   currency: string;
 }
 
+export interface Invoice {
+  id: string;
+  amount_minor: number;
+  currency: string;
+  status: string;
+  issued_at: string | null;
+  hosted_url: string | null;
+}
+
+export interface InvoiceList {
+  invoices: Invoice[];
+}
+
 export interface VerifyPaymentRequest {
   razorpay_payment_id: string;
   razorpay_subscription_id: string;

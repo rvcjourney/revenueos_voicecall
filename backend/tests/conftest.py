@@ -50,8 +50,20 @@ async def db(db_engine):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def client(db):
-    """HTTP client with get_db overridden to use the test session."""
+async def client(db, fake_redis):
+    """
+    HTTP client with get_db overridden to use the test session.
+
+    Also pulls in fake_redis (isolated per test function) rather than letting
+    requests hit a real shared Redis -- endpoints now call things like
+    app/core/rate_limit.py's fixed-window counters on every request (login,
+    register, etc.), and without per-test isolation those counters would
+    accumulate across every test in the run against one real Redis instance,
+    eventually tripping rate limits inside tests that have nothing to do with
+    rate limiting. A test that also declares `fake_redis` in its own
+    signature gets this exact same instance back (pytest caches fixtures per
+    test call), so nothing that already relied on that pattern changes.
+    """
     async def _override_get_db():
         yield db
 

@@ -49,6 +49,66 @@ async def test_register_requires_phone(client):
     assert resp.status_code == 422
 
 
+async def test_register_rejects_empty_password(client):
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "No Pw",
+            "company_name": f"NoPwCo {uuid.uuid4().hex[:6]}",
+            "email": f"nopw-{uuid.uuid4().hex[:8]}@example.com",
+            "password": "",
+            "phone": "+919876543210",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_login_rate_limited_per_account(client, db, fake_redis):
+    user = await _make_verified_user(db, password="correct-horse-battery")
+
+    for _ in range(8):
+        resp = await client.post(
+            "/api/auth/login", json={"email": user.email, "password": "wrong-password"}
+        )
+        assert resp.status_code == 401
+
+    # 9th attempt against the same account from the same source is blocked
+    # outright, even with the correct password -- the point is to stop
+    # brute-forcing, not just to fail wrong guesses.
+    resp = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse-battery"}
+    )
+    assert resp.status_code == 429
+
+
+async def test_register_rate_limited_per_ip(client, fake_redis):
+    with patch("app.api.auth.send_otp", new_callable=AsyncMock):
+        for _ in range(5):
+            resp = await client.post(
+                "/api/auth/register",
+                json={
+                    "full_name": "Spam",
+                    "company_name": f"SpamCo {uuid.uuid4().hex[:6]}",
+                    "email": f"spam-{uuid.uuid4().hex[:8]}@example.com",
+                    "password": "password123",
+                    "phone": "+919876543210",
+                },
+            )
+            assert resp.status_code == 201
+
+        resp = await client.post(
+            "/api/auth/register",
+            json={
+                "full_name": "Spam",
+                "company_name": f"SpamCo {uuid.uuid4().hex[:6]}",
+                "email": f"spam-{uuid.uuid4().hex[:8]}@example.com",
+                "password": "password123",
+                "phone": "+919876543210",
+            },
+        )
+        assert resp.status_code == 429
+
+
 async def test_login_blocked_before_email_verified(client, db):
     email = f"unverified-{uuid.uuid4().hex[:8]}@example.com"
     with patch("app.api.auth.send_otp", new_callable=AsyncMock):

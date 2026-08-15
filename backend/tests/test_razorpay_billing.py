@@ -191,6 +191,73 @@ async def test_checkout_upi_subscription_falls_back_to_new_subscription(client, 
     assert sub.status == "created"
 
 
+async def test_checkout_new_subscription_does_not_change_plan_before_payment(client, db):
+    """Regression test: plan_id must NOT change until the Razorpay webhook
+    confirms payment -- previously it was written here immediately, so
+    cancelling/failing the Checkout modal still left the org on a plan it
+    never paid for."""
+    old_plan = await _make_plan(db, name="Starter", credits_per_month=500)
+    new_plan = await _make_plan(db, name="Professional", credits_per_month=2000, price_minor=1_499_900)
+    org, _user, token = await _make_org_with_subscription(
+        db, old_plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_old", "status": "active"}
+    )
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new123")), \
+         patch("app.api.billing.razorpay_update_subscription_plan", new=AsyncMock(
+             side_effect=RazorpayError("subscriptions cannot be updated when payment mode is upi")
+         )), \
+         patch("app.api.billing.razorpay_cancel_subscription", new=AsyncMock(return_value={"status": "cancelled"})), \
+         patch("app.api.billing.razorpay_create_subscription", new=AsyncMock(
+             return_value={"id": "sub_new", "status": "created"}
+         )):
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(new_plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 201
+
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.plan_id == old_plan.id          # unchanged -- payment not confirmed yet
+    assert sub.pending_plan_id == new_plan.id  # queued instead
+
+    current = await client.get("/api/billing/current", headers={"Authorization": f"Bearer {token}"})
+    assert current.json()["plan"]["name"] == "Starter"  # still shows the paid-for plan
+
+
+async def test_checkout_in_place_plan_change_blends_credits_immediately(client, db):
+    """The in-place update path (existing card mandate, no Checkout modal
+    shown) genuinely completes synchronously, so applying it immediately is
+    correct -- but it should blend remaining-period credits like the
+    superadmin manual plan-change path does, not just switch to the new
+    plan's fresh allotment."""
+    old_plan = await _make_plan(db, name="Starter", credits_per_month=1000)
+    new_plan = await _make_plan(db, name="Professional", credits_per_month=4000, price_minor=1_499_900)
+    org, _user, token = await _make_org_with_subscription(
+        db, old_plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_existing", "status": "active"}
+    )
+    from datetime import datetime, timedelta, timezone
+    org.last_credit_reset_at = datetime.now(timezone.utc) - timedelta(days=15)  # halfway through the period
+    org.credits_used_this_period = 100
+    await db.commit()
+
+    with patch("app.api.billing.sync_plan_to_razorpay", new=AsyncMock(return_value="plan_new123")), \
+         patch("app.api.billing.razorpay_update_subscription_plan", new=AsyncMock(
+             return_value={"id": "sub_existing", "status": "active"}
+         )):
+        resp = await client.post(
+            "/api/billing/checkout",
+            json={"plan_id": str(new_plan.id)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 201
+
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.plan_id == new_plan.id
+    # ~15 days at 1000/mo + ~15 days at 4000/mo, not just a flat 4000
+    assert 2000 < sub.prorated_credits_override < 3000
+
+
 async def test_checkout_rejects_custom_pricing_plan(client, db):
     plan = await _make_plan(db, name="Business", is_custom_pricing=True)
     org = Organization(name="Org", slug=f"org-{uuid.uuid4().hex[:8]}")
@@ -268,6 +335,48 @@ async def test_cancel_subscription(client, db):
     assert resp.status_code == 200
 
 
+# ── Invoices ─────────────────────────────────────────────────────────────
+
+async def test_list_invoices_returns_empty_without_razorpay_subscription(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(db, plan)  # no provider set
+
+    resp = await client.get("/api/billing/invoices", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json()["invoices"] == []
+
+
+async def test_list_invoices_returns_razorpay_invoices(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_inv_test", "status": "active"}
+    )
+
+    with patch("app.api.billing.list_subscription_invoices", new=AsyncMock(return_value=[
+        {"id": "inv_2", "amount": 149900, "currency": "INR", "status": "paid", "issued_at": 1700100000, "short_url": "https://rzp.io/i/2"},
+        {"id": "inv_1", "amount": 149900, "currency": "INR", "status": "paid", "issued_at": 1700000000, "short_url": "https://rzp.io/i/1"},
+    ])):
+        resp = await client.get("/api/billing/invoices", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    invoices = resp.json()["invoices"]
+    assert len(invoices) == 2
+    assert invoices[0]["id"] == "inv_2"  # newest first
+    assert invoices[0]["amount_minor"] == 149900
+    assert invoices[0]["hosted_url"] == "https://rzp.io/i/2"
+
+
+async def test_list_invoices_returns_empty_on_razorpay_error(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_inv_err", "status": "active"}
+    )
+
+    with patch("app.api.billing.list_subscription_invoices", new=AsyncMock(side_effect=RazorpayError("boom"))):
+        resp = await client.get("/api/billing/invoices", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json()["invoices"] == []
+
+
 # ── Webhook ──────────────────────────────────────────────────────────────
 
 async def test_webhook_rejects_bad_signature(client, db):
@@ -338,6 +447,42 @@ async def test_webhook_subscription_charged_activates_org_and_resets_credits(cli
     assert sub.provider_customer_id == "cust_xyz"
     assert sub.current_period_start is not None
     assert sub.current_period_end is not None
+
+
+async def test_webhook_promotes_pending_plan_on_authenticated_with_blended_credits(client, db):
+    """Once the webhook confirms payment for a plan change queued via
+    pending_plan_id, plan_id should move over and credits should blend --
+    mirroring test_checkout_in_place_plan_change_blends_credits_immediately
+    but for the fresh-subscription/Checkout-modal path."""
+    old_plan = await _make_plan(db, name="Starter", credits_per_month=1000)
+    new_plan = await _make_plan(db, name="Professional", credits_per_month=4000)
+    org, _user, _token = await _make_org_with_subscription(
+        db, old_plan,
+        sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_pending_promo", "status": "created"},
+    )
+    from datetime import datetime, timedelta, timezone
+    org.is_active = False
+    org.last_credit_reset_at = datetime.now(timezone.utc) - timedelta(days=15)
+    org.credits_used_this_period = 100
+    await db.commit()
+
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+    sub.pending_plan_id = new_plan.id
+    await db.commit()
+
+    payload = _webhook_payload("subscription.authenticated", "sub_pending_promo")
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    await db.refresh(sub)
+    assert sub.plan_id == new_plan.id
+    assert sub.pending_plan_id is None
+    assert 2000 < sub.prorated_credits_override < 3000
 
 
 async def test_webhook_subscription_halted_suspends_org(client, db):

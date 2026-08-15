@@ -23,12 +23,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.credits import reset_credit_period
+from app.core.billing import compute_blended_monthly_credits
+from app.core.credits import reset_credit_period, reset_credit_period_if_stale
 from app.core.razorpay_client import RazorpayError, verify_webhook_signature
 from app.core.security import verify_vobiz_webhook_token
 from app.database import get_db
 from app.models.audit_log import AuditLog
 from app.models.call import Call
+from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization
 
@@ -217,6 +219,41 @@ async def vobiz_hangup_webhook(
 # on its own -- a bad/missing signature is rejected with 401 here, which is
 # the one legitimate case for this router to not return 200.
 
+async def _promote_pending_plan(db: AsyncSession, sub: Subscription, org: Organization | None) -> None:
+    """
+    Applies a plan change queued by POST /billing/checkout (app/api/billing.py)
+    once payment for it is actually confirmed -- called from the
+    authenticated/activated/charged branches below. No-op if there's nothing
+    pending (the normal case for every event that isn't a plan-change payment).
+
+    Blends the remaining period's credits the same way the superadmin manual
+    plan-change path does (app/api/platform.py), instead of the org just
+    getting the new plan's fresh allotment and losing whatever of the old
+    plan's it hadn't used yet this period.
+    """
+    if sub.pending_plan_id is None or sub.pending_plan_id == sub.plan_id:
+        sub.pending_plan_id = None
+        return
+
+    new_plan = await db.get(Plan, sub.pending_plan_id)
+    if new_plan is None:
+        sub.pending_plan_id = None
+        return
+
+    if org is not None:
+        await reset_credit_period_if_stale(db, org)
+        old_plan = await db.get(Plan, sub.plan_id)
+        sub.prorated_credits_override = compute_blended_monthly_credits(
+            old_plan_credits=old_plan.credits_per_month if old_plan else new_plan.credits_per_month,
+            new_plan_credits=new_plan.credits_per_month,
+            period_start=org.last_credit_reset_at,
+            now=datetime.now(timezone.utc),
+        )
+
+    sub.plan_id = new_plan.id
+    sub.pending_plan_id = None
+
+
 @router.post("/razorpay", include_in_schema=False)
 async def razorpay_webhook(
     request: Request,
@@ -268,11 +305,13 @@ async def razorpay_webhook(
             sub.status = "authenticated"
             if org:
                 org.is_active = True
+                await _promote_pending_plan(db, sub, org)
 
         elif event == "subscription.activated":
             sub.status = "active"
             if org:
                 org.is_active = True
+                await _promote_pending_plan(db, sub, org)
 
         elif event == "subscription.charged":
             sub.status = "active"
@@ -280,7 +319,15 @@ async def razorpay_webhook(
             sub.current_period_end = _unix_to_datetime(sub_entity.get("current_end"))
             if org:
                 org.is_active = True
-                await reset_credit_period(db, org)
+                if sub.pending_plan_id is not None:
+                    # A plan-change payment can land as "charged" without an
+                    # "authenticated" firing first for some payment methods --
+                    # promote it here too rather than doing a full period reset
+                    # that would wipe the blended credit override this same
+                    # event should be setting.
+                    await _promote_pending_plan(db, sub, org)
+                else:
+                    await reset_credit_period(db, org)
 
         elif event in ("subscription.halted", "subscription.cancelled"):
             sub.status = "cancelled" if event == "subscription.cancelled" else "halted"

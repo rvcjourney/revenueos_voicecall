@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError as AppValidationError
+from app.core.rate_limit import client_ip, enforce_rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -47,7 +48,12 @@ _bearer_optional = HTTPBearer(auto_error=False)
 
 
 @router.post("/register", response_model=RegisterPendingResponse, status_code=201)
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    await enforce_rate_limit("register", client_ip(request), limit=5, window_seconds=3600)
+
+    if len(body.password) < 6:
+        raise AppValidationError("Password must be at least 6 characters", errors=[])
+
     existing = await db.scalar(select(User.id).where(User.email == body.email))
     if existing:
         raise ConflictError("Email already registered")
@@ -96,7 +102,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/register-member", response_model=RegisterPendingResponse, status_code=201)
-async def register_member(body: MemberRegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register_member(body: MemberRegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """
     Sales team member self-registers using the 8-char org code shown on the
     admin Users page. Creates a MEMBER-role account inside that org.
@@ -106,6 +112,8 @@ async def register_member(body: MemberRegisterRequest, db: AsyncSession = Depend
     through, so /login's `email_verified_at is None` check applies uniformly
     to every account instead of only ones created via /register.
     """
+    await enforce_rate_limit("register-member", client_ip(request), limit=5, window_seconds=3600)
+
     # Find org by code prefix (first 8 hex chars of org UUID without dashes)
     code = body.org_code.strip().lower().replace("-", "")
     if len(code) < 8:
@@ -210,9 +218,11 @@ async def resend_otp(body: ResendOtpRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/forgot-password", status_code=204)
-async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def forgot_password(body: ForgotPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Always 204 regardless of whether the email exists, to avoid leaking
     which addresses have accounts. Only actually sends an OTP if one does."""
+    await enforce_rate_limit("forgot-password", f"{client_ip(request)}:{body.email}", limit=5, window_seconds=3600)
+
     user = await db.scalar(select(User.id).where(User.email == body.email, User.deleted_at.is_(None)))
     if not user:
         return
@@ -226,7 +236,11 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
 
 
 @router.post("/reset-password", status_code=204)
-async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def reset_password(body: ResetPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Also caps how many OTP codes can be guessed against one email from one
+    # source -- reset-password is the endpoint that actually redeems the code.
+    await enforce_rate_limit("reset-password", f"{client_ip(request)}:{body.email}", limit=10, window_seconds=3600)
+
     user = await db.scalar(select(User).where(User.email == body.email, User.deleted_at.is_(None)))
     if not user:
         raise NotFoundError("No account found for that email")
@@ -246,7 +260,14 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Two separate windows: a per-account cap (stops brute-forcing one
+    # specific email's password) and a coarser per-IP cap (stops one source
+    # spraying many emails). Checked before touching the DB/password hash.
+    ip = client_ip(request)
+    await enforce_rate_limit("login-ip", ip, limit=30, window_seconds=600)
+    await enforce_rate_limit("login-account", f"{ip}:{body.email}", limit=8, window_seconds=600)
+
     result = await db.execute(
         select(User).where(User.email == body.email, User.deleted_at.is_(None))
     )

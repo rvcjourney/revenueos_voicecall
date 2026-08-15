@@ -23,6 +23,7 @@ import type {
   DncEntry,
   InboundAgent,
   InboundAgentCreate,
+  InvoiceList,
   ListResponse,
   LoginResponse,
   OrgInfo,
@@ -302,6 +303,7 @@ export const billingApi = {
   verifyPayment: (data: VerifyPaymentRequest) =>
     api.post<{ verified: boolean }>("/api/billing/verify-payment", data),
   cancel: () => api.post<{ status: string }>("/api/billing/cancel"),
+  invoices: () => api.get<InvoiceList>("/api/billing/invoices"),
 };
 
 // ── Voice cloning ────────────────────────────────────────────────────────

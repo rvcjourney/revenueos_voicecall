@@ -36,3 +36,16 @@ class VerifyPaymentResponse(BaseModel):
 
 class CancelSubscriptionResponse(BaseModel):
     status: str
+
+
+class InvoiceOut(BaseModel):
+    id: str
+    amount_minor: int
+    currency: str
+    status: str
+    issued_at: str | None = None  # ISO 8601, or null if Razorpay hasn't issued it yet
+    hosted_url: str | None = None  # Razorpay-hosted page to view/download the invoice
+
+
+class InvoiceListOut(BaseModel):
+    invoices: list[InvoiceOut]

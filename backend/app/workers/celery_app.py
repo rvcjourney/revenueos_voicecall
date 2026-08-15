@@ -66,5 +66,11 @@ celery_app.conf.update(
             "task": "app.workers.tasks.backup.run_database_backup",
             "schedule": crontab(minute=17, hour=2),
         },
+        # Offset an hour after the DB backup above so the two I/O-heavy tasks
+        # don't overlap. No-op until OFFSITE_BACKUP_* is configured.
+        "sync-storage-offsite": {
+            "task": "app.workers.tasks.backup.sync_storage_offsite",
+            "schedule": crontab(minute=0, hour=3),
+        },
     },
 )

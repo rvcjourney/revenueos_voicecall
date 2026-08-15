@@ -25,6 +25,7 @@ from app.core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     QuotaExceededError,
+    RateLimitedError,
     StorageError,
     ValidationError as AppValidationError,
     WebhookAuthError,
@@ -211,6 +212,13 @@ def _register_exception_handlers(app: FastAPI) -> None:
     async def quota_handler(request: Request, exc: QuotaExceededError) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(RateLimitedError)
+    async def rate_limited_handler(request: Request, exc: RateLimitedError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content={"detail": exc.message, "code": exc.code},
         )
 

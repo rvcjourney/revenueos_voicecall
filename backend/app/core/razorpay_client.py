@@ -152,6 +152,24 @@ async def fetch_subscription(subscription_id: str) -> dict:
         raise RazorpayError(f"Could not fetch Razorpay subscription: {exc}")
 
 
+async def list_subscription_invoices(subscription_id: str) -> list[dict]:
+    """
+    Invoices Razorpay auto-generates per billing cycle for a subscription.
+    `subscription_id` as a filter on GET /invoices is Razorpay's documented
+    way to list a subscription's invoice history (Invoices API); each item
+    carries id/amount/currency/status/issued_at/short_url (Razorpay-hosted
+    page the customer can view/download the invoice from) -- not yet spot-
+    checked against a live account, unlike the other calls in this module.
+    """
+    client = get_client()
+    try:
+        result = await asyncio.to_thread(client.invoice.all, {"subscription_id": subscription_id})
+    except Exception as exc:
+        log.error("razorpay_invoice_list_failed", subscription_id=subscription_id, error=str(exc))
+        raise RazorpayError(f"Could not fetch invoices: {exc}")
+    return result.get("items", [])
+
+
 def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
     """
     Raises RazorpayError on a bad/missing signature; returns True on success.

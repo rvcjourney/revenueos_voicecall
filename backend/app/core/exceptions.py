@@ -85,3 +85,9 @@ class StorageError(AppError):
     """HTTP 502 — object storage operation failed."""
     code = "STORAGE_ERROR"
     message = "A storage operation failed."
+
+
+class RateLimitedError(AppError):
+    """HTTP 429 — too many requests to a rate-limited endpoint (app/core/rate_limit.py)."""
+    code = "RATE_LIMITED"
+    message = "Too many attempts. Please wait a bit and try again."

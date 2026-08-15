@@ -15,17 +15,22 @@ the webhook is a genuine server-to-server call Razorpay signs independently
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import structlog
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing import compute_blended_monthly_credits
+from app.core.credits import reset_credit_period_if_stale
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.razorpay_client import (
     RazorpayError,
     cancel_subscription as razorpay_cancel_subscription,
     create_subscription as razorpay_create_subscription,
+    list_subscription_invoices,
     sync_plan_to_razorpay,
     update_subscription_plan as razorpay_update_subscription_plan,
     verify_subscription_payment_signature,
@@ -39,6 +44,8 @@ from app.schemas.billing import (
     CancelSubscriptionResponse,
     CheckoutRequest,
     CheckoutResponse,
+    InvoiceListOut,
+    InvoiceOut,
     VerifyPaymentRequest,
     VerifyPaymentResponse,
 )
@@ -49,6 +56,10 @@ log = structlog.get_logger(__name__)
 router = APIRouter()
 
 _ACTIVE_RAZORPAY_STATUSES = ("created", "authenticated", "active", "pending")
+
+
+def _unix_to_iso(value: int | None) -> str | None:
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat() if value else None
 
 
 async def _active_subscription(db: AsyncSession, org_id) -> Subscription | None:
@@ -135,6 +146,25 @@ async def checkout(
             #     concerned).
             try:
                 await razorpay_update_subscription_plan(sub.provider_subscription_id, razorpay_plan_id)
+                # This call itself is Razorpay's confirmation -- schedule_change_at:
+                # "now" charges the existing mandate synchronously, no separate
+                # Checkout/authorization step the customer could cancel out of
+                # (unlike the fresh-subscription branch below), so it's safe to
+                # apply the plan change immediately. Blend the remaining period's
+                # credits the same way the superadmin manual plan-change path
+                # does (app/api/platform.py) instead of just switching straight
+                # to the new plan's fresh allotment and losing whatever of the
+                # old plan's the org hadn't used yet this period.
+                org = await db.get(Organization, token.org_id)
+                if org:
+                    await reset_credit_period_if_stale(db, org)
+                    old_plan = await db.get(Plan, sub.plan_id)
+                    sub.prorated_credits_override = compute_blended_monthly_credits(
+                        old_plan_credits=old_plan.credits_per_month if old_plan else plan.credits_per_month,
+                        new_plan_credits=plan.credits_per_month,
+                        period_start=org.last_credit_reset_at,
+                        now=datetime.now(timezone.utc),
+                    )
                 sub.plan_id = plan.id
                 await db.commit()
                 return CheckoutResponse(
@@ -172,7 +202,15 @@ async def checkout(
         raise ConflictError(str(exc))
 
     if sub:
-        sub.plan_id = plan.id
+        # plan_id deliberately stays on the OLD (already-paid-for) plan here --
+        # this subscription isn't authorized yet, the customer is about to see
+        # the Razorpay Checkout modal and can still cancel or fail the payment.
+        # pending_plan_id records the target plan; the webhook promotes it to
+        # plan_id (with blended credit proration) only once payment actually
+        # confirms (_promote_pending_plan in app/api/webhooks.py). This was the
+        # actual bug: plan_id used to be overwritten right here, before the
+        # customer had even seen the payment screen.
+        sub.pending_plan_id = plan.id
         sub.provider = "razorpay"
         sub.provider_subscription_id = razorpay_sub["id"]
         sub.status = razorpay_sub["status"]
@@ -235,3 +273,42 @@ async def cancel(
     sub.status = result["status"]
     await db.commit()
     return CancelSubscriptionResponse(status=sub.status)
+
+
+@router.get("/invoices", response_model=InvoiceListOut)
+async def list_invoices(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Past invoices for the org's Razorpay subscription, fetched live from
+    Razorpay rather than mirrored into our own DB -- Razorpay already is the
+    source of truth for what was actually charged, and mirroring would mean
+    another thing to keep in sync via webhooks we don't currently handle
+    (invoice.paid etc.). Empty list (not an error) if there's no Razorpay
+    subscription yet, or if the Razorpay call itself fails -- an invoice
+    history that's temporarily unavailable shouldn't break the billing page.
+    """
+    sub = await _active_subscription(db, token.org_id)
+    if not sub or sub.provider != "razorpay" or not sub.provider_subscription_id:
+        return InvoiceListOut(invoices=[])
+
+    try:
+        raw_invoices = await list_subscription_invoices(sub.provider_subscription_id)
+    except RazorpayError as exc:
+        log.warning("billing_invoice_list_failed", org_id=str(token.org_id), error=str(exc))
+        return InvoiceListOut(invoices=[])
+
+    invoices = [
+        InvoiceOut(
+            id=inv["id"],
+            amount_minor=inv.get("amount") or 0,
+            currency=inv.get("currency") or "INR",
+            status=inv.get("status") or "unknown",
+            issued_at=_unix_to_iso(inv.get("issued_at")),
+            hosted_url=inv.get("short_url"),
+        )
+        for inv in raw_invoices
+    ]
+    invoices.sort(key=lambda i: i.issued_at or "", reverse=True)
+    return InvoiceListOut(invoices=invoices)

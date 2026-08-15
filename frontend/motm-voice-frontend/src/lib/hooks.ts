@@ -52,6 +52,10 @@ export function useBillingCurrent() {
   return useQuery({ queryKey: ["billing-current"], queryFn: () => billingApi.current().then((r) => r.data) });
 }
 
+export function useInvoices() {
+  return useQuery({ queryKey: ["billing-invoices"], queryFn: () => billingApi.invoices().then((r) => r.data.invoices) });
+}
+
 export function useCheckout() {
   // No onSuccess invalidation here on purpose: action:"new" means a real but
   // still-UNPAID Subscription row was just created server-side (Razorpay
