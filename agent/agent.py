@@ -19,7 +19,7 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, TurnHandlingOptions
+from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import RoomOptions
 from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
@@ -850,7 +850,7 @@ class VoiceAgent(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         if self._ending:
-            return
+            raise StopResponse()
 
         text = (getattr(new_message, "text_content", "") or "").strip()
         self._turn_count += 1
@@ -865,27 +865,27 @@ class VoiceAgent(Agent):
                 logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
                 self._ending = True
                 _safe_task(self._silent_hangup(outcome_override="voicemail"), "voicemail-hangup")
-                return
+                raise StopResponse()
 
             # Call-forwarding announcement detected (not the actual person) — hang up silently
             if _FORWARDING_RE.search(text):
                 logger.info("Call forwarding announcement detected at turn %d — silent hangup", self._turn_count)
                 self._ending = True
                 _safe_task(self._silent_hangup(), "forwarding-hangup")
-                return
+                raise StopResponse()
 
             # IVR / automated bot detected — hang up silently
             if _BOT_IVR_RE.search(text):
                 logger.info("IVR/bot detected at turn %d — silent hangup", self._turn_count)
                 self._ending = True
                 _safe_task(self._silent_hangup(), "bot-hangup")
-                return
+                raise StopResponse()
 
         # Only allow hangup-by-keyword after at least 6 customer turns (agent needs time to pitch)
         if self._turn_count >= 6 and _HANGUP_RE.search(text):
             self._ending = True
             _safe_task(self._do_hangup(), "hangup-from-keyword")
-            return
+            raise StopResponse()
 
     async def _report_system_failure(self, error_text: str) -> None:
         """The TTS pipeline itself failed before the agent ever spoke — the call
