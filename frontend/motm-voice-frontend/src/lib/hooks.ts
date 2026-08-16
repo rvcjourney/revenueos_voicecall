@@ -16,7 +16,7 @@ import {
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
+import type { AgentCreate, BillingAddress, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -78,6 +78,22 @@ export function useVerifyPayment() {
       billingApi.verifyPayment(data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-current"] }),
   });
+}
+
+export function useBillingAddress() {
+  return useQuery({ queryKey: ["billing-address"], queryFn: () => billingApi.address().then((r) => r.data) });
+}
+
+export function useSaveBillingAddress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: BillingAddress) => billingApi.saveAddress(data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["billing-address"] }),
+  });
+}
+
+export function useTaxInvoices() {
+  return useQuery({ queryKey: ["tax-invoices"], queryFn: () => billingApi.taxInvoices().then((r) => r.data.invoices) });
 }
 
 // ── Folders ──────────────────────────────────────────────────────────────

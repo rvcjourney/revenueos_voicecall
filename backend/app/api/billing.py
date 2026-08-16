@@ -16,9 +16,10 @@ the webhook is a genuine server-to-server call Razorpay signs independently
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,15 +39,21 @@ from app.core.razorpay_client import (
 )
 from app.config import settings
 from app.database import get_db
+from app.models.invoice import Invoice
 from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization
+from app.storage.backend import get_storage
 from app.schemas.billing import (
+    BillingAddressIn,
+    BillingAddressOut,
     CancelSubscriptionResponse,
     CheckoutRequest,
     CheckoutResponse,
     InvoiceListOut,
     InvoiceOut,
+    TaxInvoiceListOut,
+    TaxInvoiceOut,
     VerifyPaymentRequest,
     VerifyPaymentResponse,
 )
@@ -118,6 +125,14 @@ async def checkout(
         raise NotFoundError("Plan not found")
     if plan.is_custom_pricing:
         raise ConflictError("This plan has custom pricing — contact sales instead of checking out")
+
+    org_for_billing_check = await db.get(Organization, token.org_id)
+    if not org_for_billing_check or not org_for_billing_check.billing_state:
+        # Needed to decide CGST+SGST vs IGST on the GST tax invoice generated
+        # once payment confirms (app/core/invoicing.py) -- Indian GST law
+        # bases that on the customer's own state, so it must be collected
+        # before money changes hands, not guessed at afterward.
+        raise ConflictError("Add your billing address before checking out (PUT /billing/address)")
 
     try:
         razorpay_plan_id = await sync_plan_to_razorpay(plan)
@@ -329,3 +344,95 @@ async def list_invoices(
     ]
     invoices.sort(key=lambda i: i.issued_at or "", reverse=True)
     return InvoiceListOut(invoices=invoices)
+
+
+@router.get("/address", response_model=BillingAddressOut)
+async def get_billing_address(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+    return BillingAddressOut(
+        address_line=org.billing_address_line,
+        city=org.billing_city,
+        state=org.billing_state,
+        pincode=org.billing_pincode,
+        gstin=org.billing_gstin,
+    )
+
+
+@router.put("/address", response_model=BillingAddressOut)
+async def save_billing_address(
+    body: BillingAddressIn,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+
+    org.billing_address_line = body.address_line
+    org.billing_city = body.city
+    org.billing_state = body.state
+    org.billing_pincode = body.pincode
+    org.billing_gstin = body.gstin
+    await db.commit()
+
+    return BillingAddressOut(
+        address_line=org.billing_address_line,
+        city=org.billing_city,
+        state=org.billing_state,
+        pincode=org.billing_pincode,
+        gstin=org.billing_gstin,
+    )
+
+
+@router.get("/tax-invoices", response_model=TaxInvoiceListOut)
+async def list_tax_invoices(
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    QuickHowl's own generated GST tax invoices (app/core/invoicing.py) --
+    distinct from GET /invoices above, which shows Razorpay's own
+    auto-generated ones. One of these exists per successful charge from the
+    point the org's billing address was on file onward; earlier charges (or
+    orgs that haven't set an address yet) simply have none here yet.
+    """
+    result = await db.execute(
+        select(Invoice).where(Invoice.org_id == token.org_id).order_by(Invoice.issued_at.desc())
+    )
+    rows = result.scalars().all()
+    return TaxInvoiceListOut(
+        invoices=[
+            TaxInvoiceOut(
+                id=str(inv.id),
+                invoice_number=inv.invoice_number,
+                plan_name=inv.plan_name,
+                total_minor=inv.total_minor,
+                currency=inv.currency,
+                issued_at=inv.issued_at.isoformat(),
+            )
+            for inv in rows
+        ]
+    )
+
+
+@router.get("/tax-invoices/{invoice_id}/pdf")
+async def download_tax_invoice(
+    invoice_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    invoice = await db.get(Invoice, invoice_id)
+    if not invoice or invoice.org_id != token.org_id:
+        raise NotFoundError("Invoice not found")
+
+    data = await get_storage().download(settings.BUCKET_INVOICES, invoice.storage_key)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_number}.pdf"'},
+    )

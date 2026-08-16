@@ -18,24 +18,60 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { PlanPicker } from "@/components/billing/PlanPicker";
+import { BillingAddressForm } from "@/components/billing/BillingAddressForm";
 import { CREDIT_WARNING_THRESHOLD_PCT } from "@/components/dashboard/QuotaConcurrencyCard";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
-import { apiErrorMessage } from "@/lib/api";
-import { useBillingCurrent, useCheckout, useCreditUsage, useInvoices, useVerifyPayment } from "@/lib/hooks";
+import { apiErrorMessage, billingApi } from "@/lib/api";
+import {
+  useBillingAddress,
+  useBillingCurrent,
+  useCheckout,
+  useCreditUsage,
+  useInvoices,
+  useTaxInvoices,
+  useVerifyPayment,
+} from "@/lib/hooks";
 import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
 import type { PublicPlan } from "@/lib/types";
 
-function notImplemented(action: string) {
-  toast.info(`${action} isn't connected yet — this is a UI preview only.`);
+function triggerPdfDownload(bytes: BlobPart, filename: string) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+// The GST tax invoice for a payment isn't generated synchronously in the
+// verify-payment response -- it happens once Razorpay's subscription.charged
+// webhook lands (app/api/webhooks.py), usually within a few seconds but not
+// guaranteed instant. Polls briefly and downloads it the moment it appears;
+// gives up quietly after ~16s (it's still there in Tax invoices whenever it
+// does land -- this is a nice-to-have, not something worth blocking on).
+async function pollAndAutoDownloadInvoice(countBefore: number) {
+  for (let i = 0; i < 8; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const res = await billingApi.taxInvoices();
+      const invoices = res.data.invoices;
+      if (invoices.length > countBefore) {
+        const latest = invoices[0];
+        const pdfResp = await billingApi.downloadTaxInvoice(latest.id);
+        triggerPdfDownload(pdfResp.data, `${latest.invoice_number}.pdf`);
+        return;
+      }
+    } catch {
+      // keep polling — the invoice is still browsable later in Tax invoices either way
+    }
+  }
 }
 
 function formatPrice(priceMinor: number, currency: string) {
@@ -61,6 +97,7 @@ export default function Billing() {
 function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingCurrent> }) {
   const { user } = useAuth();
   const credits = useCreditUsage();
+  const billingAddress = useBillingAddress();
   const pct = credits.data ? Math.min((credits.data.used / Math.max(credits.data.allotted, 1)) * 100, 100) : 0;
   const creditsNear = pct >= CREDIT_WARNING_THRESHOLD_PCT;
 
@@ -198,39 +235,9 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <Building2 className="h-4 w-4 text-muted-foreground" /> Billing details
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Billing email</Label>
-              <Input placeholder="billing@yourcompany.com" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Company / organization name</Label>
-              <Input placeholder="Acme Corp" />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Billing address</Label>
-              <Input placeholder="Street address, city, state, ZIP" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Tax ID / GSTIN</Label>
-              <Input placeholder="Optional" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Billing currency</Label>
-              <Input value="INR" disabled />
-            </div>
-          </div>
-          <Button variant="gradient" size="sm" onClick={() => notImplemented("Saving billing details")}>
-            Save details
-          </Button>
-        </CardContent>
-      </Card>
+      <BillingDetailsCard />
 
+      <TaxInvoiceHistoryCard />
       <InvoiceHistoryCard />
 
       <Card>
@@ -241,13 +248,13 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
           <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
             <ChecklistItem done={orgActive} label="Payment method on file" />
             <ChecklistItem done={false} label="Billing email confirmed" />
-            <ChecklistItem done={false} label="Billing address" />
+            <ChecklistItem done={!!billingAddress.data?.state} label="Billing address" />
             <ChecklistItem done label="Organization verified" />
-            <ChecklistItem done={false} label="Tax ID (if applicable)" />
+            <ChecklistItem done={!!billingAddress.data?.gstin} label="Tax ID (if applicable)" />
           </div>
           <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            These are the details typically required before charges can be processed. Billing email/address/Tax ID
-            aren't collected yet — this section is a UI preview only for those.
+            These are the details typically required before charges can be processed. Billing email confirmation
+            isn't tracked yet — everything else here reflects your real account state.
           </p>
         </CardContent>
       </Card>
@@ -261,6 +268,83 @@ function invoiceStatusVariant(status: string): "success" | "warning" | "destruct
   return "destructive";
 }
 
+function BillingDetailsCard() {
+  const billingAddress = useBillingAddress();
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Building2 className="h-4 w-4 text-muted-foreground" /> Billing details
+        </p>
+        {billingAddress.isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : (
+          <BillingAddressForm onSaved={() => billingAddress.refetch()} initial={billingAddress.data} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TaxInvoiceHistoryCard() {
+  const taxInvoices = useTaxInvoices();
+
+  async function download(id: string, invoiceNumber: string) {
+    try {
+      const resp = await billingApi.downloadTaxInvoice(id);
+      triggerPdfDownload(resp.data, `${invoiceNumber}.pdf`);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't download invoice"));
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Receipt className="h-4 w-4 text-muted-foreground" /> Tax invoices
+        </p>
+
+        {taxInvoices.isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        ) : !taxInvoices.data || taxInvoices.data.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+            No tax invoices yet — one appears here after your first successful charge.
+          </div>
+        ) : (
+          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
+            {taxInvoices.data.map((inv) => (
+              <div key={inv.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="text-muted-foreground">
+                    {new Date(inv.issued_at).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">{inv.invoice_number}</span>
+                  <span className="font-medium">{formatPrice(inv.total_minor, inv.currency)}</span>
+                </div>
+                <button
+                  onClick={() => download(inv.id, inv.invoice_number)}
+                  className="flex items-center gap-1 text-primary hover:underline"
+                >
+                  Download <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function InvoiceHistoryCard() {
   const invoices = useInvoices();
 
@@ -268,7 +352,7 @@ function InvoiceHistoryCard() {
     <Card>
       <CardContent className="space-y-4 pt-6">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <Receipt className="h-4 w-4 text-muted-foreground" /> Invoice history
+          <Receipt className="h-4 w-4 text-muted-foreground" /> Payment history (Razorpay)
         </p>
 
         {invoices.isLoading ? (
@@ -323,6 +407,7 @@ function NoPlanBilling() {
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
   const qc = useQueryClient();
+  const billingAddress = useBillingAddress();
   const [selectedPlan, setSelectedPlan] = useState<PublicPlan | null>(null);
   const [paying, setPaying] = useState(false);
 
@@ -333,6 +418,7 @@ function NoPlanBilling() {
     }
     setPaying(true);
     try {
+      const invoiceCountBefore = (await billingApi.taxInvoices()).data.invoices.length;
       const result = await checkout.mutateAsync(selectedPlan.id);
       if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
         // Don't refresh billing-current yet -- a real but UNPAID Subscription
@@ -351,15 +437,19 @@ function NoPlanBilling() {
               await verifyPayment.mutateAsync(response);
             } finally {
               toast.success("Payment received — activating your account...");
+              void pollAndAutoDownloadInvoice(invoiceCountBefore);
             }
           },
           modal: { ondismiss: () => setPaying(false) },
         });
       } else {
         // action:"change" completes synchronously server-side, so this one
-        // really is safe (and necessary) to reflect immediately.
+        // really is safe (and necessary) to reflect immediately. The charge
+        // itself already happened too (schedule_change_at:"now") -- the tax
+        // invoice just may not have landed from the webhook yet.
         await qc.invalidateQueries({ queryKey: ["billing-current"] });
         toast.success("Plan updated");
+        void pollAndAutoDownloadInvoice(invoiceCountBefore);
       }
     } catch (err) {
       toast.error(apiErrorMessage(err, "Couldn't start checkout"));
@@ -385,16 +475,20 @@ function NoPlanBilling() {
             </p>
           </div>
           <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} />
-          <Button
-            variant="gradient"
-            size="lg"
-            className="w-full sm:w-auto"
-            onClick={startPayment}
-            disabled={!selectedPlan || paying}
-          >
-            {paying && <Loader2 className="h-4 w-4 animate-spin" />}
-            Continue to payment
-          </Button>
+          {!billingAddress.isLoading && !billingAddress.data?.state ? (
+            <BillingAddressForm onSaved={() => billingAddress.refetch()} />
+          ) : (
+            <Button
+              variant="gradient"
+              size="lg"
+              className="w-full sm:w-auto"
+              onClick={startPayment}
+              disabled={!selectedPlan || paying}
+            >
+              {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+              Continue to payment
+            </Button>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -429,11 +523,13 @@ function ChangePlanDialog({
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
   const qc = useQueryClient();
+  const billingAddress = useBillingAddress();
 
   async function confirm() {
     if (!selectedPlan) return;
     setPaying(true);
     try {
+      const invoiceCountBefore = (await billingApi.taxInvoices()).data.invoices.length;
       const result = await checkout.mutateAsync(selectedPlan.id);
       if (result.action === "new" && result.subscription_id && result.razorpay_key_id) {
         // Don't refresh billing-current yet -- see NoPlanBilling's comment;
@@ -451,16 +547,20 @@ function ChangePlanDialog({
             } finally {
               toast.success("Payment received — your plan is updating");
               setOpen(false);
+              void pollAndAutoDownloadInvoice(invoiceCountBefore);
             }
           },
           modal: { ondismiss: () => setPaying(false) },
         });
       } else {
         // action:"change" completes synchronously server-side — safe to
-        // reflect immediately.
+        // reflect immediately. The charge already happened too
+        // (schedule_change_at:"now") -- the tax invoice just may not have
+        // landed from the webhook yet.
         await qc.invalidateQueries({ queryKey: ["billing-current"] });
         toast.success("Plan updated");
         setOpen(false);
+        void pollAndAutoDownloadInvoice(invoiceCountBefore);
       }
     } catch (err) {
       toast.error(apiErrorMessage(err, "Couldn't start checkout"));
@@ -481,8 +581,15 @@ function ChangePlanDialog({
           <DialogTitle>Choose a plan</DialogTitle>
         </DialogHeader>
         <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} excludePlanId={currentPlanId} />
+        {!billingAddress.isLoading && !billingAddress.data?.state && (
+          <BillingAddressForm onSaved={() => billingAddress.refetch()} />
+        )}
         <DialogFooter>
-          <Button variant="gradient" onClick={confirm} disabled={!selectedPlan || paying}>
+          <Button
+            variant="gradient"
+            onClick={confirm}
+            disabled={!selectedPlan || paying || !billingAddress.data?.state}
+          >
             {paying && <Loader2 className="h-4 w-4 animate-spin" />}
             Continue to payment
           </Button>

@@ -49,3 +49,32 @@ class InvoiceOut(BaseModel):
 
 class InvoiceListOut(BaseModel):
     invoices: list[InvoiceOut]
+
+
+class BillingAddressIn(BaseModel):
+    address_line: str | None = None
+    city: str | None = None
+    state: str  # required -- decides CGST+SGST vs IGST on generated tax invoices
+    pincode: str | None = None
+    gstin: str | None = None  # optional -- the org's own GSTIN, for their input tax credit
+
+
+class BillingAddressOut(BaseModel):
+    address_line: str | None = None
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    gstin: str | None = None
+
+
+class TaxInvoiceOut(BaseModel):
+    id: str
+    invoice_number: str
+    plan_name: str
+    total_minor: int
+    currency: str
+    issued_at: str  # ISO 8601
+
+
+class TaxInvoiceListOut(BaseModel):
+    invoices: list[TaxInvoiceOut]

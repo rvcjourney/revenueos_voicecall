@@ -17,6 +17,7 @@ from app.core.razorpay_client import RazorpayError
 from app.core.security import create_access_token, create_platform_token, hash_password
 from app.models.agent import AgentTemplate, VoiceProvider
 from app.models.campaign import Campaign
+from app.models.invoice import Invoice
 from app.models.plan import Plan
 from app.models.platform_admin import PlatformAdmin
 from app.models.subscription import Subscription
@@ -40,7 +41,12 @@ async def _make_plan(db, **overrides) -> Plan:
 
 
 async def _make_org_with_subscription(db, plan: Plan, *, sub_overrides: dict | None = None) -> tuple[Organization, User, str]:
-    org = Organization(name=f"Org {uuid.uuid4().hex[:6]}", slug=f"org-{uuid.uuid4().hex[:8]}")
+    # billing_state defaults set here (not blank) so the many existing tests
+    # using this helper -- which aren't testing the billing-address feature at
+    # all -- don't trip the "billing address required before checkout" gate
+    # added in app/api/billing.py:checkout(). Tests that specifically exercise
+    # that gate build an Organization directly instead of via this helper.
+    org = Organization(name=f"Org {uuid.uuid4().hex[:6]}", slug=f"org-{uuid.uuid4().hex[:8]}", billing_state="Maharashtra")
     db.add(org)
     await db.flush()
 
@@ -76,14 +82,21 @@ async def _make_platform_admin(db) -> tuple[PlatformAdmin, str]:
     return admin, create_platform_token(str(admin.id))
 
 
-def _webhook_payload(event: str, subscription_id: str, **entity_overrides) -> dict:
+def _webhook_payload(
+    event: str, subscription_id: str, *, payment_entity: dict | None = None, **entity_overrides
+) -> dict:
     entity = {"id": subscription_id, "status": "active"}
     entity.update(entity_overrides)
+    payload_inner: dict = {"subscription": {"entity": entity}}
+    contains = ["subscription"]
+    if payment_entity is not None:
+        payload_inner["payment"] = {"entity": payment_entity}
+        contains.append("payment")
     return {
         "entity": "event",
         "event": event,
-        "contains": ["subscription"],
-        "payload": {"subscription": {"entity": entity}},
+        "contains": contains,
+        "payload": payload_inner,
         "created_at": 1700000000,
     }
 
@@ -92,7 +105,7 @@ def _webhook_payload(event: str, subscription_id: str, **entity_overrides) -> di
 
 async def test_checkout_creates_new_subscription(client, db):
     plan = await _make_plan(db, name="Starter")
-    org = Organization(name="New Org", slug=f"org-{uuid.uuid4().hex[:8]}")
+    org = Organization(name="New Org", slug=f"org-{uuid.uuid4().hex[:8]}", billing_state="Maharashtra")
     db.add(org)
     await db.flush()
     user = User(
@@ -688,3 +701,223 @@ async def test_sync_plan_to_razorpay_gst_applies_to_discount_price(db):
     # 399_900 * 1.18 = 471_882 -- GST applies to the discounted price actually
     # charged, not the crossed-out list price.
     assert call_kwargs["item"]["amount"] == 471_882
+
+
+# ── GST tax invoices ─────────────────────────────────────────────────────
+
+def _fake_storage() -> MagicMock:
+    """Stand-in for app.storage.backend.get_storage() -- no real MinIO in tests."""
+    storage = MagicMock()
+    storage.upload = AsyncMock(return_value="fake-key")
+    storage.download = AsyncMock(return_value=b"%PDF-1.4 fake pdf bytes")
+    return storage
+
+
+def test_amount_in_words_matches_reference_invoice():
+    from app.core.invoicing import amount_in_words
+
+    assert amount_in_words(23_600) == "Indian Rupees Twenty Three Thousand Six Hundred Only"
+    assert amount_in_words(0) == "Indian Rupees Zero Only"
+    assert amount_in_words(1) == "Indian Rupees One Only"
+    assert amount_in_words(100_000) == "Indian Rupees One Lakh Only"
+    assert amount_in_words(1_234_567) == "Indian Rupees Twelve Lakh Thirty Four Thousand Five Hundred Sixty Seven Only"
+
+
+async def test_generate_invoice_intra_state_splits_cgst_sgst(db):
+    from app.core.invoicing import generate_invoice_for_charge
+
+    plan = await _make_plan(db, name="Starter", credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(db, plan)
+    org.billing_state = "Maharashtra"  # same as SELLER_STATE
+    await db.commit()
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+
+    with patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        invoice = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_intra_1",
+        )
+    await db.commit()
+
+    assert invoice is not None
+    assert invoice.igst_minor == 0
+    assert invoice.cgst_minor == invoice.sgst_minor
+    assert invoice.cgst_minor + invoice.sgst_minor == invoice.total_minor - invoice.subtotal_minor
+    assert invoice.total_minor == 589_882
+    assert invoice.invoice_number.startswith("INV-")
+    assert invoice.place_of_supply == "Maharashtra (27)"
+
+
+async def test_generate_invoice_inter_state_uses_igst(db):
+    from app.core.invoicing import generate_invoice_for_charge
+
+    plan = await _make_plan(db, name="Starter", credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(db, plan)
+    org.billing_state = "Karnataka"  # different from SELLER_STATE (Maharashtra)
+    await db.commit()
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+
+    with patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        invoice = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_inter_1",
+        )
+    await db.commit()
+
+    assert invoice is not None
+    assert invoice.cgst_minor == 0
+    assert invoice.sgst_minor == 0
+    assert invoice.igst_minor == invoice.total_minor - invoice.subtotal_minor
+    assert invoice.place_of_supply == "Karnataka (29)"
+
+
+async def test_generate_invoice_skipped_without_billing_state(db):
+    from app.core.invoicing import generate_invoice_for_charge
+
+    plan = await _make_plan(db, name="Starter", credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(db, plan)
+    org.billing_state = None  # override the helper's default -- this test exercises the missing-address path
+    await db.commit()
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+
+    with patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        invoice = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_no_state",
+        )
+
+    assert invoice is None
+
+
+async def test_generate_invoice_idempotent_on_same_payment(db):
+    from app.core.invoicing import generate_invoice_for_charge
+
+    plan = await _make_plan(db, name="Starter", credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(db, plan)
+    org.billing_state = "Maharashtra"
+    await db.commit()
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+
+    with patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        first = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_retry_1",
+        )
+        await db.commit()
+        second = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_retry_1",
+        )
+
+    assert first.id == second.id
+    assert first.invoice_number == second.invoice_number
+
+
+async def test_webhook_subscription_charged_generates_tax_invoice(client, db):
+    plan = await _make_plan(db, credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_gst_charge", "status": "created"}
+    )
+    org.billing_state = "Maharashtra"
+    await db.commit()
+
+    payload = _webhook_payload(
+        "subscription.charged", "sub_gst_charge",
+        current_start=1700000000, current_end=1702592000,
+        payment_entity={"id": "pay_webhook_gst_1", "amount": 589_882},
+    )
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True), \
+         patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        resp = await client.post(
+            "/webhooks/razorpay",
+            content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert resp.status_code == 200
+
+    invoice = await db.scalar(select(Invoice).where(Invoice.razorpay_payment_id == "pay_webhook_gst_1"))
+    assert invoice is not None
+    assert invoice.org_id == org.id
+    assert invoice.total_minor == 589_882
+
+
+async def test_checkout_blocked_without_billing_address(client, db):
+    plan = await _make_plan(db, name="Starter")
+    org = Organization(name="No Address Org", slug=f"org-{uuid.uuid4().hex[:8]}")
+    db.add(org)
+    await db.flush()
+    user = User(
+        org_id=org.id, email=f"admin-{uuid.uuid4().hex[:8]}@acme.test",
+        hashed_password=hash_password("admin-pw-123"),
+        full_name="Acme Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+
+    resp = await client.post(
+        "/api/billing/checkout",
+        json={"plan_id": str(plan.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 409
+    assert "billing address" in resp.json()["detail"].lower()
+
+
+async def test_save_and_get_billing_address(client, db):
+    plan = await _make_plan(db)
+    _org, _user, token = await _make_org_with_subscription(db, plan)
+
+    resp = await client.put(
+        "/api/billing/address",
+        json={"address_line": "221B Baker Street", "city": "Pune", "state": "Maharashtra", "pincode": "411001", "gstin": None},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "Maharashtra"
+
+    resp = await client.get("/api/billing/address", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["city"] == "Pune"
+    assert body["pincode"] == "411001"
+
+
+async def test_list_and_download_tax_invoices(client, db):
+    plan = await _make_plan(db, credits_per_month=500)
+    org, _user, token = await _make_org_with_subscription(db, plan)
+    org.billing_state = "Maharashtra"
+    await db.commit()
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+
+    from app.core.invoicing import generate_invoice_for_charge
+    with patch("app.core.invoicing.get_storage", return_value=_fake_storage()):
+        invoice = await generate_invoice_for_charge(
+            db, org=org, sub=sub, plan=plan,
+            amount_minor=589_882, razorpay_payment_id="pay_listable_1",
+        )
+        await db.commit()
+
+    resp = await client.get("/api/billing/tax-invoices", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    body = resp.json()["invoices"]
+    assert len(body) == 1
+    assert body[0]["invoice_number"] == invoice.invoice_number
+
+    with patch("app.api.billing.get_storage", return_value=_fake_storage()):
+        pdf_resp = await client.get(
+            f"/api/billing/tax-invoices/{invoice.id}/pdf",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"] == "application/pdf"
+
+    # A different org can't download it
+    _other_org, _other_user, other_token = await _make_org_with_subscription(db, plan)
+    forbidden_resp = await client.get(
+        f"/api/billing/tax-invoices/{invoice.id}/pdf",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert forbidden_resp.status_code == 404

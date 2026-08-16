@@ -13,10 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanPicker } from "@/components/billing/PlanPicker";
+import { BillingAddressForm } from "@/components/billing/BillingAddressForm";
 import { OtpEntry } from "@/components/auth/OtpEntry";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
-import { useCheckout, useVerifyPayment } from "@/lib/hooks";
+import { useBillingAddress, useCheckout, useVerifyPayment } from "@/lib/hooks";
 import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
 import type { PublicPlan } from "@/lib/types";
 
@@ -155,6 +156,7 @@ function CreateOrgForm() {
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
   const qc = useQueryClient();
+  const billingAddress = useBillingAddress();
 
   const [serverError, setServerError] = useState<string | null>(null);
   const [emailTaken, setEmailTaken] = useState(false);
@@ -248,16 +250,20 @@ function CreateOrgForm() {
           Billing.
         </p>
         <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} />
-        <Button
-          variant="gradient"
-          className="w-full"
-          size="lg"
-          onClick={startPayment}
-          disabled={!selectedPlan || paying}
-        >
-          {paying && <Loader2 className="h-4 w-4 animate-spin" />}
-          Continue to payment
-        </Button>
+        {!billingAddress.isLoading && !billingAddress.data?.state ? (
+          <BillingAddressForm onSaved={() => billingAddress.refetch()} />
+        ) : (
+          <Button
+            variant="gradient"
+            className="w-full"
+            size="lg"
+            onClick={startPayment}
+            disabled={!selectedPlan || paying}
+          >
+            {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+            Continue to payment
+          </Button>
+        )}
         <Button variant="ghost" className="w-full" onClick={() => navigate("/dashboard")}>
           Skip for now
         </Button>

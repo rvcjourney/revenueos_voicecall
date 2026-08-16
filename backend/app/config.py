@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     BUCKET_TRANSCRIPTS: str = "motm-transcripts"
     BUCKET_BACKUPS: str = "motm-backups"
     BUCKET_VOICE_CONSENT: str = "motm-voice-consent"
+    BUCKET_INVOICES: str = "motm-invoices"
     EXPORT_URL_EXPIRY_SECONDS: int = 600
 
     # ── Offsite database backups ─────────────────────────────────────────────

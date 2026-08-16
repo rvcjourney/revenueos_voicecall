@@ -100,6 +100,19 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     # both must be true for ElevenLabs to be usable (see app/core/plan_features.py).
     elevenlabs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
+    # ── GST tax-invoice billing details ─────────────────────────────────────
+    # Collected via PUT /billing/address (app/api/billing.py) before checkout
+    # is allowed — billing_state is what app/core/invoicing.py uses to decide
+    # CGST+SGST (customer in the same state we're registered in) vs IGST
+    # (any other state), which Indian GST law bases on the customer's state,
+    # not ours. billing_gstin is optional — a B2B customer's own GSTIN,
+    # printed on the invoice so they can claim input tax credit.
+    billing_address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    billing_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    billing_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    billing_pincode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billing_gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     # Relationships
     users: Mapped[list["User"]] = relationship(
         "User", back_populates="organization", foreign_keys="User.org_id"

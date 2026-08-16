@@ -14,17 +14,18 @@ predate this and still have a webhook_url pointed at it directly.
 """
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period, reset_credit_period_if_stale
+from app.core.invoicing import generate_invoice_for_charge
 from app.core.razorpay_client import RazorpayError, verify_webhook_signature
 from app.core.security import verify_vobiz_webhook_token
 from app.database import get_db
@@ -32,9 +33,9 @@ from app.models.audit_log import AuditLog
 from app.models.call import Call
 from app.models.plan import Plan
 from app.models.subscription import Subscription
-from app.models.user import Organization
+from app.models.user import Organization, User, UserRole
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 router = APIRouter()
 
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -328,6 +329,42 @@ async def razorpay_webhook(
                     await _promote_pending_plan(db, sub, org)
                 else:
                     await reset_credit_period(db, org)
+
+                # Generate QuickHowl's own GST tax invoice for this charge.
+                # "contains": ["subscription", "payment"] on this event per
+                # Razorpay's docs -- payment.entity carries the actual amount
+                # charged and the payment id an invoice must reference.
+                # Wrapped in its own SAVEPOINT so a PDF/storage failure here
+                # can never roll back the org-activation work above -- a
+                # missing invoice is a support ticket, not a reason to leave
+                # a paying customer's account suspended.
+                payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+                charged_amount = payment_entity.get("amount")
+                razorpay_payment_id = payment_entity.get("id")
+                if charged_amount and razorpay_payment_id:
+                    try:
+                        async with db.begin_nested():
+                            plan = await db.get(Plan, sub.plan_id)
+                            admin_email = await db.scalar(
+                                select(User.email)
+                                .where(User.org_id == org.id, User.role == UserRole.ADMIN, User.deleted_at.is_(None))
+                                .limit(1)
+                            )
+                            if plan:
+                                await generate_invoice_for_charge(
+                                    db,
+                                    org=org,
+                                    sub=sub,
+                                    plan=plan,
+                                    amount_minor=charged_amount,
+                                    razorpay_payment_id=razorpay_payment_id,
+                                    customer_email=admin_email,
+                                )
+                    except Exception:
+                        log.exception(
+                            "invoice_generation_failed",
+                            org_id=str(org.id), razorpay_payment_id=razorpay_payment_id,
+                        )
 
         elif event in ("subscription.halted", "subscription.cancelled"):
             sub.status = "cancelled" if event == "subscription.cancelled" else "halted"

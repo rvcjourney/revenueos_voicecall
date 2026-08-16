@@ -21,6 +21,7 @@ import type {
   CreditUsage,
   DashboardStats,
   DncEntry,
+  BillingAddress,
   InboundAgent,
   InboundAgentCreate,
   InvoiceList,
@@ -37,6 +38,7 @@ import type {
   SipTrunk,
   VerifyPaymentRequest,
   SipTrunkAssignment,
+  TaxInvoiceList,
   TrunkCapacity,
   User,
 } from "./types";
@@ -304,6 +306,11 @@ export const billingApi = {
     api.post<{ verified: boolean }>("/api/billing/verify-payment", data),
   cancel: () => api.post<{ status: string }>("/api/billing/cancel"),
   invoices: () => api.get<InvoiceList>("/api/billing/invoices"),
+  address: () => api.get<BillingAddress>("/api/billing/address"),
+  saveAddress: (data: BillingAddress) => api.put<BillingAddress>("/api/billing/address", data),
+  taxInvoices: () => api.get<TaxInvoiceList>("/api/billing/tax-invoices"),
+  downloadTaxInvoice: (invoiceId: string) =>
+    api.get(`/api/billing/tax-invoices/${invoiceId}/pdf`, { responseType: "blob" }),
 };
 
 // ── Voice cloning ────────────────────────────────────────────────────────

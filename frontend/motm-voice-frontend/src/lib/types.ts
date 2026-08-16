@@ -370,6 +370,27 @@ export interface VerifyPaymentRequest {
   razorpay_signature: string;
 }
 
+export interface BillingAddress {
+  address_line: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  gstin: string | null;
+}
+
+export interface TaxInvoice {
+  id: string;
+  invoice_number: string;
+  plan_name: string;
+  total_minor: number;
+  currency: string;
+  issued_at: string;
+}
+
+export interface TaxInvoiceList {
+  invoices: TaxInvoice[];
+}
+
 export interface AdminUser {
   id: string;
   email: string;

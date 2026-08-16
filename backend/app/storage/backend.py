@@ -5,12 +5,13 @@ Both backends use the same boto3 S3 API since MinIO is S3-compatible.
 Sync boto3 calls are run in a thread pool via asyncio.to_thread so the
 event loop is never blocked.
 
-Five buckets are created on startup if they don't exist:
+Six buckets are created on startup if they don't exist:
   motm-recordings    — call recordings (set by LiveKit egress, URL stored in DB)
   motm-exports       — generated Excel export files
   motm-transcripts   — raw transcript JSON blobs
   motm-backups       — database backup archives
   motm-voice-consent — voice-cloning audio samples + consent videos (pending review)
+  motm-invoices      — generated GST tax invoice PDFs (app/core/invoicing.py)
 """
 from __future__ import annotations
 
@@ -60,6 +61,7 @@ class StorageBackend:
             settings.BUCKET_TRANSCRIPTS,
             settings.BUCKET_BACKUPS,
             settings.BUCKET_VOICE_CONSENT,
+            settings.BUCKET_INVOICES,
         ]
 
     async def ensure_buckets(self) -> None:

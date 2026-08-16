@@ -46,6 +46,13 @@ livekit-api>=0.8.0
 # ── Payments (Razorpay) ────────────────────────────────────────────────────────
 razorpay==2.0.1
 
+# ── GST tax invoice PDF generation (app/core/invoicing.py) ─────────────────────
+# xhtml2pdf is pure Python (reportlab-based) -- no apt-get system deps, unlike
+# weasyprint (needs cairo/pango) -- deliberately avoided given how much Docker
+# build pain this project has already hit from other apt-installed steps.
+xhtml2pdf==0.2.17
+jinja2==3.1.6
+
 # ── Utilities ──────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1
 certifi==2024.12.14
