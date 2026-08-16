@@ -12,6 +12,12 @@ function formatPrice(priceMinor: number, currency: string) {
   );
 }
 
+// Must match GST_RATE in backend/app/core/razorpay_client.py -- that's what
+// actually gets charged (baked into the Razorpay Plan resource at checkout).
+// This is purely so the price shown here isn't a surprise once Razorpay's
+// own checkout modal opens with the real, GST-inclusive amount.
+const GST_RATE = 0.18;
+
 export function PlanPicker({
   selectedPlanId,
   onSelect,
@@ -41,6 +47,7 @@ export function PlanPicker({
       {selectable.map((plan) => {
         const selected = plan.id === selectedPlanId;
         const effectivePrice = plan.discount_price_minor ?? plan.price_minor;
+        const priceWithGst = Math.round(effectivePrice * (1 + GST_RATE));
         return (
           <Card
             key={plan.id}
@@ -61,9 +68,10 @@ export function PlanPicker({
               {selected && <Check className="h-4 w-4 text-primary" />}
             </div>
             <p className="mt-1.5 font-heading text-xl font-semibold">
-              {formatPrice(effectivePrice, plan.currency)}
+              {formatPrice(priceWithGst, plan.currency)}
               <span className="text-xs font-normal text-muted-foreground">/mo</span>
             </p>
+            <p className="text-xs text-muted-foreground">incl. 18% GST</p>
             <p className="text-xs text-muted-foreground">{plan.credits_per_month.toLocaleString()} min/month</p>
           </Card>
         );

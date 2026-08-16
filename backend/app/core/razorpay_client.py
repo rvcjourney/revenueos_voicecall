@@ -44,6 +44,13 @@ log = structlog.get_logger(__name__)
 # requires a finite total_count; we recreate/extend well before ever reaching it.
 SUBSCRIPTION_TOTAL_COUNT = 100
 
+# GST charged on top of every plan's list price. Baked into the Razorpay Plan's
+# own item.amount below (Razorpay bills exactly what that resource says, every
+# cycle) rather than passed separately -- Subscriptions has no per-cycle "add
+# a tax %" param, so this is the only way that's actually enforced by Razorpay
+# itself rather than just a frontend display convention.
+GST_RATE = 0.18
+
 
 class RazorpayError(Exception):
     """Raised for any Razorpay API/config failure. Message is safe to show the caller."""
@@ -79,6 +86,7 @@ async def sync_plan_to_razorpay(plan: Plan) -> str:
             # fall through and create a fresh one below
 
     effective_price = plan.discount_price_minor if plan.discount_price_minor is not None else plan.price_minor
+    price_with_gst = round(effective_price * (1 + GST_RATE))
     try:
         result = await asyncio.to_thread(
             client.plan.create,
@@ -87,11 +95,11 @@ async def sync_plan_to_razorpay(plan: Plan) -> str:
                 "interval": 1,
                 "item": {
                     "name": f"QuickHowl {plan.name}",
-                    "amount": effective_price,
+                    "amount": price_with_gst,
                     "currency": plan.currency,
-                    "description": f"QuickHowl {plan.name} plan — {plan.credits_per_month} min/month",
+                    "description": f"QuickHowl {plan.name} plan — {plan.credits_per_month} min/month (incl. 18% GST)",
                 },
-                "notes": {"internal_plan_id": str(plan.id)},
+                "notes": {"internal_plan_id": str(plan.id), "gst_rate": str(GST_RATE)},
             },
         )
     except Exception as exc:

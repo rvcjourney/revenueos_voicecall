@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import select
 
@@ -648,3 +648,43 @@ async def test_update_plan_price_change_resyncs_razorpay_plan(client, db):
 
     await db.refresh(plan)
     assert plan.razorpay_plan_id == "plan_new_456"
+
+
+# ── GST ──────────────────────────────────────────────────────────────────
+
+async def test_sync_plan_to_razorpay_bakes_in_18pct_gst(db):
+    from app.core.razorpay_client import sync_plan_to_razorpay
+
+    plan = await _make_plan(db, name="Starter", price_minor=499_900)
+    await db.commit()
+
+    # get_client() returns a real, synchronous razorpay.Client (called via
+    # asyncio.to_thread by sync_plan_to_razorpay) -- MagicMock, not AsyncMock,
+    # so client.plan.create(...) returns the dict directly rather than a
+    # coroutine that never gets awaited.
+    fake_client = MagicMock()
+    fake_client.plan.create.return_value = {"id": "plan_gst_123"}
+    with patch("app.core.razorpay_client.get_client", return_value=fake_client):
+        result = await sync_plan_to_razorpay(plan)
+
+    assert result == "plan_gst_123"
+    call_kwargs = fake_client.plan.create.call_args[0][0]
+    # 499_900 * 1.18 = 589_882 exactly -- no rounding ambiguity to worry about here.
+    assert call_kwargs["item"]["amount"] == 589_882
+
+
+async def test_sync_plan_to_razorpay_gst_applies_to_discount_price(db):
+    from app.core.razorpay_client import sync_plan_to_razorpay
+
+    plan = await _make_plan(db, name="Starter", price_minor=499_900, discount_price_minor=399_900)
+    await db.commit()
+
+    fake_client = MagicMock()
+    fake_client.plan.create.return_value = {"id": "plan_gst_456"}
+    with patch("app.core.razorpay_client.get_client", return_value=fake_client):
+        await sync_plan_to_razorpay(plan)
+
+    call_kwargs = fake_client.plan.create.call_args[0][0]
+    # 399_900 * 1.18 = 471_882 -- GST applies to the discounted price actually
+    # charged, not the crossed-out list price.
+    assert call_kwargs["item"]["amount"] == 471_882
