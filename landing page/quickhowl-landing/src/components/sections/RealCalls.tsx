@@ -1,4 +1,4 @@
-import { PhoneCall } from "lucide-react";
+import { CircleAudioPlayer } from "@/components/shared/CircleAudioPlayer";
 
 // Add more by dropping an mp3 into public/audio/ and adding an entry here —
 // files in public/ are served from the site root, so call-2.mp3 here would
@@ -21,15 +21,13 @@ export function RealCalls() {
 
         <div className={`mt-12 grid gap-6 ${recordings.length > 1 ? "md:grid-cols-3" : "mx-auto max-w-md"}`}>
           {recordings.map((r) => (
-            <div key={r.file} className="rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-card)]">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/30 bg-primary/15 text-primary">
-                <PhoneCall className="h-4 w-4" />
-              </span>
-              <h4 className="mt-4 text-base font-semibold">{r.label}</h4>
+            <div
+              key={r.file}
+              className="flex flex-col items-center rounded-2xl border border-border bg-card p-8 text-center shadow-[var(--shadow-card)]"
+            >
+              <CircleAudioPlayer src={r.file} />
+              <h4 className="mt-5 text-base font-semibold">{r.label}</h4>
               <p className="mt-1 text-sm text-muted-foreground">{r.description}</p>
-              <audio controls preload="none" className="mt-4 w-full" src={r.file}>
-                Your browser doesn't support inline audio — download it instead.
-              </audio>
             </div>
           ))}
         </div>
