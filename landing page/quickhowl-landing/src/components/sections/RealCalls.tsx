@@ -1,12 +1,10 @@
 import { PhoneCall } from "lucide-react";
 
-// Drop the 3 mp3 files into public/audio/ using exactly these filenames —
-// files in public/ are served from the site root, so call-1.mp3 here maps
-// straight to https://quickhowl.com/audio/call-1.mp3, no build step needed.
+// Add more by dropping an mp3 into public/audio/ and adding an entry here —
+// files in public/ are served from the site root, so call-2.mp3 here would
+// map straight to https://quickhowl.com/audio/call-2.mp3, no build step needed.
 const recordings = [
-  { file: "/audio/call-1.mp3", label: "Cold outbound call", description: "Opening a conversation with a new lead" },
-  { file: "/audio/call-2.mp3", label: "Appointment booking", description: "Qualifying interest and locking in a time" },
-  { file: "/audio/call-3.mp3", label: "Objection handling", description: "Responding naturally to pushback" },
+  { file: "/audio/call-1.mp3", label: "Live QuickHowl AI agent call", description: "Unscripted — judge the voice quality for yourself" },
 ];
 
 export function RealCalls() {
@@ -15,13 +13,13 @@ export function RealCalls() {
       <div className="reveal-on-scroll mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <p className="eyebrow text-primary">Hear it yourself</p>
-          <h2 className="mt-3 font-heading text-3xl font-semibold sm:text-4xl">Real calls, not a scripted demo</h2>
+          <h2 className="mt-3 font-heading text-3xl font-semibold sm:text-4xl">A real call, not a scripted demo</h2>
           <p className="mt-3 text-muted-foreground">
-            Actual recordings from QuickHowl agents talking to real leads — judge the voice quality for yourself.
+            An actual recording of a QuickHowl AI agent on a live call — no cherry-picked script.
           </p>
         </div>
 
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
+        <div className={`mt-12 grid gap-6 ${recordings.length > 1 ? "md:grid-cols-3" : "mx-auto max-w-md"}`}>
           {recordings.map((r) => (
             <div key={r.file} className="rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-card)]">
               <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/30 bg-primary/15 text-primary">
