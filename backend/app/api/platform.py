@@ -44,12 +44,14 @@ from app.models.audit_log import AuditLog
 from app.models.call import Call, CallStatus
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.cloned_voice import ClonedVoice
+from app.models.invoice import Invoice
 from app.models.plan import Plan
 from app.models.platform_admin import PlatformAdmin
 from app.models.platform_cost_settings import PlatformCostSettings
 from app.models.subscription import Subscription
 from app.models.user import Organization, User
 from app.models.voice_clone_request import VoiceCloneRequest
+from app.schemas.billing import TaxInvoiceListOut, TaxInvoiceOut
 from app.schemas.platform import (
     CreditAdjustRequest,
     CreditAdjustResponse,
@@ -141,9 +143,16 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
     )
     sub = await _active_subscription(db, org.id)
     plan_name = None
+    plan_price_minor = None
+    plan_discount_price_minor = None
+    plan_currency = None
     if sub:
         plan = await db.get(Plan, sub.plan_id)
-        plan_name = plan.name if plan else None
+        if plan:
+            plan_name = plan.name
+            plan_price_minor = plan.price_minor
+            plan_discount_price_minor = plan.discount_price_minor
+            plan_currency = plan.currency
 
     await reset_credit_period_if_stale(db, org)
     credits_per_month = await resolve_org_credits_per_month(db, org.id)
@@ -165,6 +174,9 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
         credits_used_this_period=org.credits_used_this_period,
         credits_per_month=credits_per_month,
         elevenlabs_enabled=org.elevenlabs_enabled,
+        plan_price_minor=plan_price_minor,
+        plan_discount_price_minor=plan_discount_price_minor,
+        plan_currency=plan_currency,
     )
 
 
@@ -233,6 +245,59 @@ async def get_org(
     if not org or org.deleted_at:
         raise NotFoundError("Organization not found")
     return await _to_org_detail_out(db, org)
+
+
+@router.get("/orgs/{org_id}/invoices", response_model=TaxInvoiceListOut)
+async def get_org_invoices(
+    org_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    QuickHowl's own generated GST tax invoices for one org (app/core/invoicing.py) --
+    same records shown to the org itself on its Billing page (GET /api/billing/tax-invoices),
+    surfaced here so SuperAdmin can see a client's payment history without impersonating them.
+    """
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+
+    result = await db.execute(
+        select(Invoice).where(Invoice.org_id == org_id).order_by(Invoice.issued_at.desc())
+    )
+    rows = result.scalars().all()
+    return TaxInvoiceListOut(
+        invoices=[
+            TaxInvoiceOut(
+                id=str(inv.id),
+                invoice_number=inv.invoice_number,
+                plan_name=inv.plan_name,
+                total_minor=inv.total_minor,
+                currency=inv.currency,
+                issued_at=inv.issued_at.isoformat(),
+            )
+            for inv in rows
+        ]
+    )
+
+
+@router.get("/orgs/{org_id}/invoices/{invoice_id}/pdf")
+async def download_org_invoice(
+    org_id: UUID,
+    invoice_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    invoice = await db.get(Invoice, invoice_id)
+    if not invoice or invoice.org_id != org_id:
+        raise NotFoundError("Invoice not found")
+
+    data = await get_storage().download(settings.BUCKET_INVOICES, invoice.storage_key)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_number}.pdf"'},
+    )
 
 
 @router.patch("/orgs/{org_id}", response_model=OrgDetailOut)

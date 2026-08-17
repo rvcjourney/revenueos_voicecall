@@ -34,7 +34,6 @@ import {
   useBillingCurrent,
   useCheckout,
   useCreditUsage,
-  useInvoices,
   useTaxInvoices,
   useVerifyPayment,
 } from "@/lib/hooks";
@@ -238,7 +237,6 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
       <BillingDetailsCard />
 
       <TaxInvoiceHistoryCard />
-      <InvoiceHistoryCard />
 
       <Card>
         <CardContent className="space-y-3 pt-6">
@@ -260,12 +258,6 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
       </Card>
     </div>
   );
-}
-
-function invoiceStatusVariant(status: string): "success" | "warning" | "destructive" {
-  if (status === "paid") return "success";
-  if (status === "issued" || status === "partially_paid") return "warning";
-  return "destructive";
 }
 
 function BillingDetailsCard() {
@@ -336,63 +328,6 @@ function TaxInvoiceHistoryCard() {
                 >
                   Download <ExternalLink className="h-3.5 w-3.5" />
                 </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function InvoiceHistoryCard() {
-  const invoices = useInvoices();
-
-  return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <p className="flex items-center gap-2 text-sm font-medium">
-          <Receipt className="h-4 w-4 text-muted-foreground" /> Payment history (Razorpay)
-        </p>
-
-        {invoices.isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </div>
-        ) : !invoices.data || invoices.data.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-            No invoices yet — one appears here after your first successful charge.
-          </div>
-        ) : (
-          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
-            {invoices.data.map((inv) => (
-              <div key={inv.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="text-muted-foreground">
-                    {inv.issued_at
-                      ? new Date(inv.issued_at).toLocaleDateString(undefined, {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })
-                      : "—"}
-                  </span>
-                  <span className="font-medium">{formatPrice(inv.amount_minor, inv.currency)}</span>
-                  <Badge variant={invoiceStatusVariant(inv.status)} className="capitalize">
-                    {inv.status.replace(/_/g, " ")}
-                  </Badge>
-                </div>
-                {inv.hosted_url ? (
-                  <a
-                    href={inv.hosted_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 text-primary hover:underline"
-                  >
-                    View <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                ) : null}
               </div>
             ))}
           </div>

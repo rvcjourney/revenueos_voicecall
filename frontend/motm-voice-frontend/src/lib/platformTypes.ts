@@ -37,6 +37,18 @@ export interface PlatformOrgDetail extends PlatformOrg {
   credits_used_this_period: number;
   credits_per_month: number;
   elevenlabs_enabled: boolean;
+  plan_price_minor: number | null;
+  plan_discount_price_minor: number | null;
+  plan_currency: string | null;
+}
+
+export interface PlatformOrgInvoice {
+  id: string;
+  invoice_number: string;
+  plan_name: string;
+  total_minor: number;
+  currency: string;
+  issued_at: string;
 }
 
 export interface PlatformOrgUpdate {

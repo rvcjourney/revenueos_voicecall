@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, RotateCcw, ShieldOff, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, Receipt, RotateCcw, ShieldOff, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { StatCard } from "@/components/shared/StatCard";
@@ -19,13 +19,29 @@ import { PlatformCallsChart, PlatformCreditsChart } from "@/components/charts/Pl
 import {
   useAdjustPlatformOrgCredits,
   usePlatformOrg,
+  usePlatformOrgInvoices,
   usePlatformOrgUsageAnalytics,
   usePlatformPlans,
   useResetPlatformOrgCredits,
   useUpdatePlatformOrg,
 } from "@/lib/platformHooks";
-import { platformApiErrorMessage } from "@/lib/platformApi";
+import { platformApiErrorMessage, platformOrgsApi } from "@/lib/platformApi";
 import { formatDate } from "@/lib/utils";
+
+function formatPrice(priceMinor: number, currency: string) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(
+    priceMinor / 100
+  );
+}
+
+function triggerPdfDownload(bytes: BlobPart, filename: string) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function PlatformOrgDetail() {
   const { id } = useParams<{ id: string }>();
@@ -64,12 +80,20 @@ export default function PlatformOrgDetail() {
             <StatCard label="Users" value={org.data.users_count} />
             <StatCard label="Subscription" value={org.data.subscription_status} />
             <StatCard
-              label="Period ends"
+              label="Next renewal"
               value={org.data.subscription_current_period_end ? formatDate(org.data.subscription_current_period_end) : "—"}
             />
             <StatCard
               label="Credits used"
               value={`${org.data.credits_used_this_period.toLocaleString()} / ${org.data.credits_per_month.toLocaleString()}`}
+            />
+            <StatCard
+              label="Plan price"
+              value={
+                org.data.plan_price_minor != null && org.data.plan_currency
+                  ? formatPrice(org.data.plan_discount_price_minor ?? org.data.plan_price_minor, org.data.plan_currency)
+                  : "—"
+              }
             />
           </div>
 
@@ -81,6 +105,7 @@ export default function PlatformOrgDetail() {
             elevenlabsEnabled={org.data.elevenlabs_enabled}
           />
           <CreditsCard id={org.data.id} />
+          <PaymentHistoryCard id={org.data.id} />
           <UsageCard id={org.data.id} />
         </>
       )}
@@ -334,6 +359,67 @@ function CreditsCard({ id }: { id: string }) {
         loading={reset.isPending}
         onConfirm={handleResetConfirm}
       />
+    </Card>
+  );
+}
+
+function PaymentHistoryCard({ id }: { id: string }) {
+  const invoices = usePlatformOrgInvoices(id);
+
+  async function download(invoiceId: string, invoiceNumber: string) {
+    try {
+      const resp = await platformOrgsApi.downloadInvoice(id, invoiceId);
+      triggerPdfDownload(resp.data, `${invoiceNumber}.pdf`);
+    } catch (err) {
+      toast.error(platformApiErrorMessage(err, "Couldn't download invoice"));
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Receipt className="h-4 w-4 text-muted-foreground" /> Payment history
+        </CardTitle>
+        <CardDescription>QuickHowl's own GST tax invoices generated for this client's charges.</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {invoices.isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        ) : !invoices.data || invoices.data.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+            No invoices yet for this client.
+          </div>
+        ) : (
+          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
+            {invoices.data.map((inv) => (
+              <div key={inv.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="text-muted-foreground">
+                    {new Date(inv.issued_at).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">{inv.invoice_number}</span>
+                  <span className="font-medium">{formatPrice(inv.total_minor, inv.currency)}</span>
+                  <span className="text-muted-foreground">{inv.plan_name}</span>
+                </div>
+                <button
+                  onClick={() => download(inv.id, inv.invoice_number)}
+                  className="flex items-center gap-1 text-primary hover:underline"
+                >
+                  Download <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
     </Card>
   );
 }

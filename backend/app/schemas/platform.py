@@ -123,6 +123,12 @@ class OrgDetailOut(OrgListItemOut):
     credits_used_this_period: int
     credits_per_month: int
     elevenlabs_enabled: bool
+    # Plan pricing snapshot (from the org's currently-assigned Plan, not
+    # frozen at signup) -- lets SuperAdmin see what each client is actually
+    # being billed without cross-referencing the Plans screen separately.
+    plan_price_minor: int | None = None
+    plan_discount_price_minor: int | None = None
+    plan_currency: str | None = None
 
 
 class OrgPatchRequest(BaseModel):

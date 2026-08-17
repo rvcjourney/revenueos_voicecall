@@ -70,6 +70,14 @@ export function useResetPlatformOrgCredits() {
   });
 }
 
+export function usePlatformOrgInvoices(id: string | undefined) {
+  return useQuery({
+    queryKey: ["platform-org-invoices", id],
+    queryFn: () => platformOrgsApi.invoices(id!).then((r) => r.data.invoices),
+    enabled: !!id,
+  });
+}
+
 // ── Plans ────────────────────────────────────────────────────────────────
 export function usePlatformPlans() {
   return useQuery({

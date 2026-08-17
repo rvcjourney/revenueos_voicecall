@@ -3,6 +3,7 @@ import { Footer } from "@/components/Footer";
 import { Hero } from "@/components/sections/Hero";
 import { TrustStrip } from "@/components/sections/TrustStrip";
 import { PlatformShowcase } from "@/components/sections/PlatformShowcase";
+import { RealCalls } from "@/components/sections/RealCalls";
 import { HowItWorks } from "@/components/sections/HowItWorks";
 import { PlatformPillars } from "@/components/sections/PlatformPillars";
 import { CaseStudies } from "@/components/sections/CaseStudies";
@@ -24,6 +25,7 @@ export default function LandingPage() {
         <Hero />
         <TrustStrip />
         <PlatformShowcase />
+        <RealCalls />
         <HowItWorks />
         <PlatformPillars />
         <CaseStudies />

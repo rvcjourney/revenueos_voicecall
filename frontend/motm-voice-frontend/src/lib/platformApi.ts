@@ -7,6 +7,7 @@ import type {
   PlatformMetrics,
   PlatformOrg,
   PlatformOrgDetail,
+  PlatformOrgInvoice,
   PlatformOrgUpdate,
   PlatformPlan,
   PlatformPlanCreate,
@@ -88,6 +89,9 @@ export const platformOrgsApi = {
   adjustCredits: (id: string, data: { delta: number; reason: string }) =>
     platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/adjust`, data),
   resetCredits: (id: string) => platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/reset`),
+  invoices: (id: string) => platformApi.get<{ invoices: PlatformOrgInvoice[] }>(`/api/platform/orgs/${id}/invoices`),
+  downloadInvoice: (id: string, invoiceId: string) =>
+    platformApi.get(`/api/platform/orgs/${id}/invoices/${invoiceId}/pdf`, { responseType: "blob" }),
 };
 
 // ── Plans ────────────────────────────────────────────────────────────────
