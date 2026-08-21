@@ -1066,7 +1066,13 @@ class VoiceAgent(Agent):
             import groq as _groq
             client = _groq.AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
             resp = await client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                # Groq deprecated llama-3.1-8b-instant (June 2026) -- every call
+                # was silently landing on outcome=pending via the except block
+                # below (model_not_found), not an actual classification. This
+                # step runs after the call ends, off the live conversation path,
+                # so there's no latency cost to using Groq's larger recommended
+                # replacement for best summarization quality.
+                model="openai/gpt-oss-120b",
                 max_tokens=350,
                 temperature=0.0,
                 messages=[

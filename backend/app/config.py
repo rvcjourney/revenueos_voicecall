@@ -133,8 +133,13 @@ class Settings(BaseSettings):
 
     # ── Groq LLM ──────────────────────────────────────────────────────────────
     GROQ_API_KEY: str = Field(...)
-    GROQ_MODEL: str = "llama-3.1-8b-instant"
-    GROQ_SUMMARY_MODEL: str = "llama-3.1-70b-versatile"
+    # Unused elsewhere in the backend today (agent.py's own outcome classifier
+    # hardcodes its model directly) -- kept in sync with Groq's currently
+    # supported models anyway so wiring these up later doesn't inherit a
+    # deprecated default. Both llama-3.1-8b-instant and llama-3.1-70b-versatile
+    # were deprecated by Groq in 2026.
+    GROQ_MODEL: str = "qwen/qwen3.6-27b"
+    GROQ_SUMMARY_MODEL: str = "openai/gpt-oss-120b"
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = ""

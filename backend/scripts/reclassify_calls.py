@@ -50,7 +50,11 @@ async def _classify(http: aiohttp.ClientSession, full_text: str) -> tuple[str, s
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "llama-3.3-70b-versatile",
+                # llama-3.3-70b-versatile was deprecated by Groq in 2026 --
+                # same wave that broke agent.py's live classifier (404
+                # model_not_found). This script runs offline, so no latency
+                # cost to using Groq's larger recommended replacement.
+                "model": "openai/gpt-oss-120b",
                 "max_tokens": 300,
                 "temperature": 0.0,
                 "messages": [
