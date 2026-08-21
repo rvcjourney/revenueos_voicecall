@@ -3,13 +3,17 @@
 reclassify_calls.py — Re-run outcome + summary for all calls that have a transcript.
 
 Run inside the api container on VPS:
-    docker compose exec api python scripts/reclassify_calls.py
+    docker compose exec api python scripts/reclassify_calls.py          # all calls
+    docker compose exec api python scripts/reclassify_calls.py 100      # only the 100 most recent
 
 What it does:
-  1. Finds all COMPLETED calls that have a CallTranscript (with non-empty text)
+  1. Finds COMPLETED calls that have a CallTranscript (with non-empty text),
+     most recent first -- optionally capped to the N most recent via an
+     integer command-line argument
   2. Re-classifies each one with the updated generous Groq prompt
   3. Writes new outcome + summary back to the Call row
   4. Recounts interested_count for every campaign from actual Call records
+     (across ALL calls regardless of the limit above, so counts stay correct)
 
 Use this after updating the classification prompt to fix past mis-classifications.
 """
@@ -139,19 +143,24 @@ async def _recount_campaign_stats() -> None:
     print("  Done.\n")
 
 
-async def reclassify() -> None:
+async def reclassify(limit: int | None = None) -> None:
     print("=" * 62)
-    print("  MOTMVoice — Reclassify All Calls with Transcripts")
+    label = f"Reclassify Last {limit} Calls" if limit else "Reclassify All Calls with Transcripts"
+    print(f"  MOTMVoice — {label}")
     print("=" * 62)
 
-    # Load all completed calls that have a transcript (full_text OR segments)
+    # Load completed calls that have a transcript (full_text OR segments),
+    # most recent first -- optionally capped to the `limit` most recent.
     async with AsyncSessionLocal() as session:
-        rows = (await session.execute(
+        query = (
             select(Call, CallTranscript)
             .join(CallTranscript, CallTranscript.call_id == Call.id)
             .where(Call.status == CallStatus.COMPLETED)
             .order_by(Call.started_at.desc())
-        )).all()
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        rows = (await session.execute(query)).all()
 
     total = len(rows)
     if total == 0:
@@ -216,4 +225,5 @@ async def reclassify() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(reclassify())
+    _limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    asyncio.run(reclassify(_limit))
