@@ -88,7 +88,22 @@ export function CampaignStatusBadge({ status, className }: { status: string; cla
   return <Pill label={titleCase(status)} tone={campaignToneMap[status] ?? "muted"} className={className} />;
 }
 
-export function CallOutcomeBadge({ outcome, className }: { outcome: string; className?: string }) {
+export function CallOutcomeBadge({
+  outcome,
+  status,
+  className,
+}: {
+  outcome: string;
+  status?: string;
+  className?: string;
+}) {
+  // A call whose SIP leg never connected (status=failed) keeps outcome's
+  // DB default of "pending" forever -- no agent ever ran to classify it,
+  // so "Pending" here would misleadingly suggest classification is still
+  // in progress. Show that it simply failed to connect instead.
+  if (status === "failed" && outcome === "pending") {
+    return <Pill label="Call Failed" tone="destructive" className={className} />;
+  }
   return <Pill label={titleCase(outcome)} tone={callOutcomeToneMap[outcome] ?? "muted"} className={className} />;
 }
 

@@ -149,14 +149,19 @@ async def reclassify(limit: int | None = None) -> None:
     print(f"  MOTMVoice — {label}")
     print("=" * 62)
 
-    # Load completed calls that have a transcript (full_text OR segments),
-    # most recent first -- optionally capped to the `limit` most recent.
+    # Load completed calls that have a transcript (full_text OR segments).
+    # Calls still stuck at outcome=PENDING go first regardless of how old
+    # they are -- unsticking those is the actual point of this script, and
+    # a plain most-recent-first order can silently push an entire campaign's
+    # pending calls outside a limited run if other calls (other campaigns,
+    # test calls, inbound) happened more recently. Already-classified calls
+    # fill any remaining room, most recent first, for prompt re-verification.
     async with AsyncSessionLocal() as session:
         query = (
             select(Call, CallTranscript)
             .join(CallTranscript, CallTranscript.call_id == Call.id)
             .where(Call.status == CallStatus.COMPLETED)
-            .order_by(Call.started_at.desc())
+            .order_by((Call.outcome == CallOutcome.PENDING).desc(), Call.started_at.desc())
         )
         if limit is not None:
             query = query.limit(limit)

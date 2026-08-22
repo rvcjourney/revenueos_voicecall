@@ -341,7 +341,7 @@ function CallsTab({ campaignId }: { campaignId: string }) {
                 <TableCell className="font-mono text-xs">{row.phone_number}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{formatDateTime(row.started_at)}</TableCell>
                 <TableCell>{formatDuration(callDurationSeconds(row))}</TableCell>
-                <TableCell><CallOutcomeBadge outcome={row.outcome} /></TableCell>
+                <TableCell><CallOutcomeBadge outcome={row.outcome} status={row.status} /></TableCell>
                 <TableCell className="text-right">
                   <Button variant="ghost" size="sm" asChild>
                     <Link to={`/calls/${row.id}`}>View</Link>

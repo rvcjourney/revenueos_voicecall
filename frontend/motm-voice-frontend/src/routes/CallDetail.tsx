@@ -91,7 +91,7 @@ export default function CallDetail() {
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-heading text-2xl font-semibold sm:text-3xl">{c.phone_number}</h1>
-            <CallOutcomeBadge outcome={c.outcome} />
+            <CallOutcomeBadge outcome={c.outcome} status={c.status} />
             <CallStatusBadge status={c.status} />
             {c.sentiment && <SentimentBadge sentiment={c.sentiment} />}
           </div>

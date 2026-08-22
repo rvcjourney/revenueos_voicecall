@@ -58,7 +58,7 @@ export function RecentCallsCard({ calls, isLoading, isError, error, onRetry }: R
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span>{formatDuration(callDurationSeconds(c))}</span>
-                  <CallOutcomeBadge outcome={c.outcome} />
+                  <CallOutcomeBadge outcome={c.outcome} status={c.status} />
                 </div>
               </Link>
             ))}

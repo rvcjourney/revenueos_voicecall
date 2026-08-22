@@ -170,7 +170,7 @@ export default function CallsList() {
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDateTime(c.started_at)}</TableCell>
                     <TableCell className="tabular-figure text-sm">{formatDuration(callDurationSeconds(c))}</TableCell>
-                    <TableCell><CallOutcomeBadge outcome={c.outcome} /></TableCell>
+                    <TableCell><CallOutcomeBadge outcome={c.outcome} status={c.status} /></TableCell>
                     <TableCell className="tabular-figure text-sm">{c.cost_inr != null ? `₹${c.cost_inr.toFixed(2)}` : "—"}</TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" asChild>
