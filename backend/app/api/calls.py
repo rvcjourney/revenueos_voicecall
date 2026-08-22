@@ -55,6 +55,7 @@ def _to_out(c: Call) -> CallOut:
         outcome=c.outcome,
         sentiment=c.sentiment,
         started_at=c.started_at,
+        answered_at=c.answered_at,
         ended_at=c.ended_at,
         duration_seconds=c.duration_seconds,
         cost_inr=float(c.cost_inr) if c.cost_inr else None,

@@ -50,18 +50,26 @@ export function formatDuration(seconds: number | null | undefined) {
 
 /**
  * A call's duration_seconds is sometimes missing even though the call has real
- * started_at/ended_at timestamps (e.g. outcome set without the field being
+ * answered_at/ended_at timestamps (e.g. outcome set without the field being
  * backfilled). Fall back to deriving it from those timestamps so the UI shows
  * the call's actual length instead of "—" whenever the data to compute it exists.
+ *
+ * Deliberately keyed on answered_at, not started_at: started_at is stamped
+ * when the dial attempt's row is created, which can run well before the call
+ * ever connects (DNC checks, trunk/org slot waits, queue backlog). A call
+ * whose SIP leg never connected has answered_at=null -- computing a fallback
+ * from started_at there would show queue/ring wait time as if it were real
+ * conversation length (see backend app/workers/tasks/campaign.py's own
+ * _finalize, which uses the same answered_at-based measurement).
  */
 export function callDurationSeconds(call: {
   duration_seconds: number | null | undefined;
-  started_at?: string | null;
+  answered_at?: string | null;
   ended_at?: string | null;
 }): number | null | undefined {
   if (call.duration_seconds !== null && call.duration_seconds !== undefined) return call.duration_seconds;
-  if (!call.started_at || !call.ended_at) return call.duration_seconds;
-  const start = new Date(call.started_at).getTime();
+  if (!call.answered_at || !call.ended_at) return call.duration_seconds;
+  const start = new Date(call.answered_at).getTime();
   const end = new Date(call.ended_at).getTime();
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) return call.duration_seconds;
   return Math.round((end - start) / 1000);

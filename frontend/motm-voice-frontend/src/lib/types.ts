@@ -217,6 +217,7 @@ export interface Call {
   outcome: CallOutcome;
   sentiment: CallSentiment | null;
   started_at: string | null;
+  answered_at: string | null;
   ended_at: string | null;
   duration_seconds: number | null;
   cost_inr: number | null;

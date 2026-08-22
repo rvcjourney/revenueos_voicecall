@@ -21,6 +21,7 @@ class CallOut(BaseModel):
     outcome: str
     sentiment: str | None
     started_at: datetime | None
+    answered_at: datetime | None
     ended_at: datetime | None
     duration_seconds: int | None
     cost_inr: float | None
