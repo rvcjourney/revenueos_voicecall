@@ -19,7 +19,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.core.concurrency import acquire_org_slot, release_org_slot, resolve_org_max_concurrent
+from app.core.credits import has_credits_remaining
 from app.core.deps import require_agent_webhook_signature
+from app.core.exceptions import ConflictError, QuotaExceededError
 from app.database import get_db
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus
 from app.models.inbound_agent import InboundAgentTemplate
@@ -67,6 +70,21 @@ async def start_inbound_call(
     if not agent or agent.deleted_at:
         raise HTTPException(status_code=404, detail="Inbound agent not found")
 
+    # Mirror the same two gates outbound calls go through before dialing
+    # (app/api/agents.py:test_call, app/api/campaigns.py:launch_campaign) --
+    # inbound previously had neither, so an org could take unlimited inbound
+    # calls for free with no cap. A non-200 here makes the agent process treat
+    # this call as unresolvable and hang up (see _resolve_inbound_call in
+    # agent/agent.py), the same as e.g. inbound calling not being configured.
+    if not await has_credits_remaining(db, trunk.org_id):
+        raise QuotaExceededError(
+            "Organization has used all its available call credits this period."
+        )
+
+    org_max_concurrent = await resolve_org_max_concurrent(db, trunk.org_id)
+    if not await acquire_org_slot(trunk.org_id, org_max_concurrent):
+        raise ConflictError("Organization is at its concurrent-call capacity.")
+
     call = Call(
         id=uuid7(),
         org_id=trunk.org_id,
@@ -81,7 +99,15 @@ async def start_inbound_call(
         answered_at=datetime.now(timezone.utc),
     )
     db.add(call)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # The org slot acquired above is only ever released from the other end
+        # of the call's life (app/api/calls.py:agent_report) -- if we never
+        # actually created the Call row, that release will never happen, so
+        # release it here to avoid leaking a permanently-stuck slot.
+        await release_org_slot(trunk.org_id)
+        raise
     await db.refresh(call)
 
     return InboundStartResponse(

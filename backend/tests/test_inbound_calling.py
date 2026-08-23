@@ -13,7 +13,7 @@ from uuid import UUID
 
 from app.config import settings
 from app.core.security import create_access_token, hash_password, sign_webhook_payload
-from app.models.call import Call, CallDirection
+from app.models.call import Call, CallDirection, CallStatus
 from app.models.inbound_agent import InboundAgentTemplate
 from app.models.sip import SipTrunk, SipTransport
 from app.models.user import Organization, User, UserRole
@@ -314,6 +314,126 @@ async def test_internal_inbound_start_creates_call_and_returns_config(client, db
     assert call.org_id == org.id
     assert call.sip_trunk_id == trunk.id
     assert call.phone_number == "+919876543210"
+
+
+async def test_internal_inbound_start_rejects_when_no_credits_remaining(client, db):
+    """Inbound calls must be gated by the org's credit balance the same way
+    outbound test/campaign calls are — an org with none left shouldn't be
+    able to accept a real (billable) inbound call."""
+    from app.core.credits import DEFAULT_CREDITS_PER_MONTH
+
+    org, _user, _token = await _make_org_and_admin(db)
+    trunk = await _make_connected_trunk(db, org)
+    agent = await _make_inbound_agent(db, org)
+    trunk.inbound_enabled = True
+    trunk.inbound_agent_template_id = agent.id
+    org.credits_used_this_period = DEFAULT_CREDITS_PER_MONTH  # fully used, no active Subscription
+    await db.commit()
+
+    payload = {
+        "sip_trunk_id": str(trunk.id), "room_name": "inbound-x",
+        "from_number": "+919876543210", "to_number": trunk.caller_id,
+    }
+    body = json.dumps(payload).encode()
+    resp = await client.post(
+        "/api/internal/inbound/start",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Webhook-Signature": sign_webhook_payload(body)},
+    )
+    assert resp.status_code == 402
+
+    from sqlalchemy import select as _select
+    calls = (await db.execute(_select(Call).where(Call.org_id == org.id))).scalars().all()
+    assert calls == []  # rejected before any Call row was created
+
+
+async def test_internal_inbound_start_rejects_when_org_at_capacity(client, db, fake_redis):
+    """A second concurrent inbound call must be rejected once the org's
+    plan-based concurrency slot (same Redis mechanism outbound calls use) is
+    already full, not accepted for free on top of it."""
+    from app.core.concurrency import acquire_org_slot
+
+    org, _user, _token = await _make_org_and_admin(db)
+    trunk = await _make_connected_trunk(db, org)  # is_active=True -> 1 active trunk
+    agent = await _make_inbound_agent(db, org)
+    trunk.inbound_enabled = True
+    trunk.inbound_agent_template_id = agent.id
+    await db.commit()
+
+    # No Subscription -> DEFAULT_MAX_CONCURRENT_PER_ORG (1) * 1 active trunk = 1 slot total.
+    assert await acquire_org_slot(org.id, 1) is True  # fill the org's only slot
+
+    payload = {
+        "sip_trunk_id": str(trunk.id), "room_name": "inbound-y",
+        "from_number": "+919876543211", "to_number": trunk.caller_id,
+    }
+    body = json.dumps(payload).encode()
+    resp = await client.post(
+        "/api/internal/inbound/start",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Webhook-Signature": sign_webhook_payload(body)},
+    )
+    assert resp.status_code == 409
+
+
+async def test_agent_report_finalizes_and_bills_inbound_call(client, db, fake_redis):
+    """The finalize path added to agent_report for inbound calls: it should
+    stamp ended_at/duration_seconds from answered_at, bill the org via
+    record_call_credits (mirroring outbound's _finalize), mark the call
+    COMPLETED, and release the org concurrency slot acquired at accept-time."""
+    from app.core.concurrency import get_current_usage
+    from app.core.security import sign_webhook_payload as _sign
+
+    org, _user, _token = await _make_org_and_admin(db)
+    trunk = await _make_connected_trunk(db, org)
+    agent = await _make_inbound_agent(db, org)
+    trunk.inbound_enabled = True
+    trunk.inbound_agent_template_id = agent.id
+    await db.commit()
+
+    start_payload = {
+        "sip_trunk_id": str(trunk.id), "room_name": "inbound-bill",
+        "from_number": "+919876543212", "to_number": trunk.caller_id,
+    }
+    start_body = json.dumps(start_payload).encode()
+    start_resp = await client.post(
+        "/api/internal/inbound/start",
+        content=start_body,
+        headers={"Content-Type": "application/json", "X-Webhook-Signature": _sign(start_body)},
+    )
+    assert start_resp.status_code == 200
+    call_id = start_resp.json()["call_id"]
+
+    usage_mid_call = await get_current_usage(db, org.id)
+    assert usage_mid_call["in_use"] == 1  # slot held for the duration of the call
+
+    # Push answered_at back 90s so duration/billing math has a known, nonzero value.
+    from datetime import timedelta
+    call_row = await db.get(Call, UUID(call_id))
+    call_row.answered_at = call_row.answered_at - timedelta(seconds=90)
+    await db.commit()
+
+    report_payload = {"outcome": "interested", "summary": "Asked about pricing.", "transcript": []}
+    report_body = json.dumps(report_payload).encode()
+    import app.workers.tasks.campaign as campaign_module
+    with patch.object(campaign_module.fetch_recording_for_inbound_call, "apply_async", MagicMock()):
+        report_resp = await client.post(
+            f"/api/calls/{call_id}/agent-report",
+            content=report_body,
+            headers={"Content-Type": "application/json", "X-Webhook-Signature": _sign(report_body)},
+        )
+    assert report_resp.status_code == 204
+
+    await db.refresh(call_row)
+    assert call_row.status == CallStatus.COMPLETED
+    assert call_row.ended_at is not None
+    assert call_row.duration_seconds is not None and call_row.duration_seconds >= 90
+
+    await db.refresh(org)
+    assert org.credits_used_this_period == 2  # ceil(90s / 60) = 2 minutes billed
+
+    usage_after = await get_current_usage(db, org.id)
+    assert usage_after["in_use"] == 0  # org slot released
 
 
 async def test_internal_inbound_start_404_when_not_configured(client, db):
