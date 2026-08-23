@@ -181,7 +181,12 @@ services:
     build:
       context: ./agent
       dockerfile: Dockerfile
-    container_name: motm-agent
+    # No fixed container_name -- required for replicas: 2 below (Compose can't
+    # give two containers the same explicit name; it auto-names each replica
+    # instead, e.g. motmvoice-agent-1/-2). Nothing else in this repo referenced
+    # the old "motm-agent" name directly -- `docker compose logs/up agent`
+    # (README's runbook) already operate on the service name and work
+    # unchanged across however many replicas are running.
     restart: always
     env_file: ./agent/.env
     environment:
@@ -204,16 +209,34 @@ services:
     # call SIGKILLed by a deploy landing after this window elapses.
     stop_grace_period: 650s
     deploy:
+      # Was a single instance -- every live call's session state lives only in
+      # this process's memory (confirmed: no DB access, no shared session
+      # store -- see app/api/agent_internal.py's HTTP-only integration), so a
+      # crash or OOM dropped every concurrent call at once with nothing to
+      # fail over to. 2 replicas means a single crashed/OOMed instance now
+      # only takes down whatever calls THAT process happened to be handling.
+      # LiveKit assigns each process its own server-side worker_id on
+      # registration (myenv311/.../livekit/agents/worker.py) -- confirmed
+      # this is the SDK's intended scale-out path, no code change needed for
+      # two independent processes to register under the same agent_name.
+      replicas: 2
       resources:
         limits:
-          # Was 2g -- live docker stats on the deployed VPS showed ~1.27GB used
-          # (63%) at idle/baseline (this container keeps STT/TTS/VAD clients
-          # loaded even with no active call), leaving little room to grow into
-          # more simultaneous live calls without risking an OOM kill mid-call.
-          # 4g on a 32GB-RAM VPS with ~9.5GB already committed elsewhere still
-          # leaves large headroom for the host OS/Docker itself.
-          memory: 4g
-          cpus: "6.0"
+          # Per-replica, not shared -- Compose applies `limits` to each
+          # container independently. Halved from the single-instance 6.0
+          # vCPU so the service's TOTAL CPU ceiling (3.0 x 2 = 6.0) stays
+          # exactly what it was before, rather than doubling on top of the
+          # CPU oversubscription the 2026-08-23 audit already flagged
+          # (committed limits summing to ~14.5 vCPU against the real 8 vCPU
+          # host). Memory is NOT halved: each replica independently loads its
+          # own STT/TTS/VAD models (confirmed ~1.27GB/63% of the old 2g limit
+          # at idle, per the single-instance note this replaces), so splitting
+          # the same total in half would risk an OOM at idle before either
+          # replica takes a single call. Total memory commitment goes from 4g
+          # to 6g as a result -- watch `docker stats` after deploying under
+          # real concurrent-call load and adjust if the VPS is pressured.
+          memory: 3g
+          cpus: "3.0"
 
   # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
