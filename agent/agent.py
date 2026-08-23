@@ -1619,6 +1619,28 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     session.on("speech_created", _on_speech_created)
 
+    def _on_session_close(ev) -> None:
+        # Covers the one teardown path nothing else here reacts to: the SDK
+        # itself force-closing the session (AgentSession._on_error, livekit/
+        # agents/voice/agent_session.py) after max_unrecoverable_errors (3)
+        # consecutive LLM/TTS failures. Without this, a mid-call provider
+        # outage left the caller connected to a dead session for up to the
+        # full 600s max-duration guard before anything hung up or reported
+        # it. Also fires on every teardown WE already initiated (our own
+        # _disconnect() calls session.shutdown(), which emits this same
+        # event) -- harmless there since _post_call_report() is idempotent
+        # (guarded by voice_agent._reported) and _disconnect() is already
+        # safe to call more than once.
+        if ev.error is not None:
+            logger.error("AgentSession closed due to an unrecoverable error | reason=%s error=%s",
+                         ev.reason, ev.error)
+        if voice_agent._ending:
+            return
+        voice_agent._ending = True
+        _safe_task(voice_agent._silent_hangup(), "post-call-on-session-close")
+
+    session.on("close", _on_session_close)
+
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant):
         # Customer hung up — classify + POST the outcome BEFORE tearing the room
