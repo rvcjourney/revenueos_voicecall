@@ -178,7 +178,21 @@ async def agent_report(
     if call_row is None:
         log.warning("agent_report_call_not_found", call_id=str(call_id))
 
+    # Idempotency guard: the agent retries this POST with real backoff
+    # (agent/agent.py:_post_agent_report, up to 3 attempts) if the response is
+    # ever lost after the backend already committed -- without this, a retry
+    # would double-increment Campaign.interested_count below, and (for inbound
+    # calls) double-bill credits and double-release the org's concurrency
+    # slot. reported_at is read here (before this request's own write) so it
+    # reflects whether an EARLIER request already completed this call's
+    # one-time side effects, not this one.
+    already_reported = bool(call_row and call_row.reported_at)
+    if already_reported:
+        log.info("agent_report_duplicate_delivery", call_id=str(call_id))
+
     values: dict = {"outcome": outcome, "summary": body.summary or None}
+    if not already_reported:
+        values["reported_at"] = datetime.now(timezone.utc)
     if body.error_message:
         values["status"] = CallStatus.FAILED
         values["error_message"] = body.error_message[:2000]
@@ -207,7 +221,8 @@ async def agent_report(
     )
 
     # Atomically increment campaign interested_count when outcome is interested
-    if outcome == "interested" and call_row and call_row.campaign_id:
+    # -- guarded by already_reported so a retried report can't double-count.
+    if not already_reported and outcome == "interested" and call_row and call_row.campaign_id:
         await db.execute(
             update(Campaign)
             .where(Campaign.id == call_row.campaign_id)
@@ -256,7 +271,9 @@ async def agent_report(
     # minutes the same way outbound calls are billed, and release the org slot
     # acquired at accept-time. Only for calls that actually connected -- a call
     # start_inbound_call itself rejected never reaches this endpoint at all.
-    if call_row and call_row.direction == CallDirection.INBOUND:
+    # Guarded by already_reported: a retried report must not double-bill
+    # credits or release a slot a NEWER call may have since acquired.
+    if not already_reported and call_row and call_row.direction == CallDirection.INBOUND:
         now = datetime.now(timezone.utc)
         duration = int((now - call_row.answered_at).total_seconds()) if call_row.answered_at else None
         finalize_values: dict = {"ended_at": now, "duration_seconds": duration}

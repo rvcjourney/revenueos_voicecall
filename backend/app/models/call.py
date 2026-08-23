@@ -168,6 +168,12 @@ class Call(Base, TimestampMixin):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set the first time POST /{id}/agent-report successfully processes this
+    # call (app/api/calls.py) -- the agent retries that POST with backoff if
+    # its response is ever lost, and without this marker a retry would
+    # double-increment Campaign.interested_count and, for inbound calls,
+    # double-bill credits / double-release the org's concurrency slot.
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set by app/workers/tasks/retention.py's daily purge once this call's
     # recording/transcript have been removed past CALL_DATA_RETENTION_DAYS.
     # The Call row itself is never deleted (see class docstring) -- this is
