@@ -12,6 +12,8 @@ when Redis hiccups is worse than temporarily unlimited auth attempts.
 """
 from __future__ import annotations
 
+import math
+
 import structlog
 
 from app.core.exceptions import RateLimitedError
@@ -20,9 +22,25 @@ from app.core.redis import redis_key
 log = structlog.get_logger(__name__)
 
 
-async def enforce_rate_limit(bucket: str, identifier: str, *, limit: int, window_seconds: int) -> None:
+async def enforce_rate_limit(
+    bucket: str,
+    identifier: str,
+    *,
+    limit: int,
+    window_seconds: int,
+    message_template: str | None = None,
+) -> None:
     """Raises RateLimitedError once `identifier` has made more than `limit`
-    calls to `bucket` within the trailing `window_seconds`-second window."""
+    calls to `bucket` within the trailing `window_seconds`-second window.
+
+    `message_template` (optional) may contain a `{minutes}` placeholder,
+    filled in with how long until the window resets (rounded up, minimum 1)
+    once the limit is actually hit -- lets a caller give a specific message
+    ("Test call limit reached: 3 per hour. Try again in 42 minute(s).")
+    instead of the generic default. Every caller also gets the same
+    information back machine-readably via RateLimitedError.retry_after_seconds
+    regardless of whether message_template is given.
+    """
     try:
         # Imported here, not at module load -- tests patch app.core.redis.get_redis
         # per-call (conftest.py's fake_redis fixture); a module-level import would
@@ -38,7 +56,14 @@ async def enforce_rate_limit(bucket: str, identifier: str, *, limit: int, window
         return
 
     if current > limit:
-        raise RateLimitedError()
+        ttl = await r.ttl(key)
+        retry_after = ttl if ttl and ttl > 0 else window_seconds
+        message = (
+            message_template.format(minutes=max(1, math.ceil(retry_after / 60)))
+            if message_template
+            else None
+        )
+        raise RateLimitedError(message=message, retry_after_seconds=retry_after)
 
 
 def client_ip(request) -> str:

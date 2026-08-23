@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError, QuotaExceededError
 from app.core.plan_features import check_agent_voice_settings
+from app.core.rate_limit import enforce_rate_limit
 from app.config import settings
 from app.database import get_db
 from app.models.agent import AgentTemplate
@@ -335,6 +336,13 @@ class TestCallResponse(BaseModel):
     status: str
 
 
+# Test calls are an evaluation/testing allowance, not a paywall workaround --
+# available to every org regardless of plan status, so it's capped uniformly
+# per-org rather than gated on payment. 3/hour is generous for evaluating an
+# agent, not for using this as a free unmetered calling path.
+_TEST_CALL_HOURLY_LIMIT = 3
+
+
 @router.post("/{agent_id}/test-call", response_model=TestCallResponse, status_code=202)
 async def test_call(
     agent_id: UUID,
@@ -367,6 +375,30 @@ async def test_call(
     phone = body.phone_number.strip().replace(" ", "").replace("-", "")
     if not phone.startswith("+"):
         phone = "+91" + phone.lstrip("0")
+
+    # Test calls bypass campaign dialing entirely, so — same as try-now above —
+    # they must independently check the DNC lists the dispatcher checks.
+    # Checked before the rate limit below so a DNC-blocked attempt doesn't
+    # burn one of the org's 3 test calls for the hour.
+    from app.workers.tasks.campaign import _is_dnc_blocked
+
+    if await _is_dnc_blocked(db, token.org_id, phone):
+        raise AppValidationError("This number is on a Do Not Call list and can't be dialed", errors=[])
+
+    # Test calls are an evaluation allowance available to every org regardless
+    # of plan/payment status (deliberately NOT gated on org.is_active or
+    # credits-by-itself the way campaigns are) -- capped per-org instead so it
+    # can't be used as an unlimited free-calling loophole. Keyed on org_id
+    # (not user_id) since the allowance is meant to be shared org-wide, same
+    # scope as has_credits_remaining below.
+    await enforce_rate_limit(
+        "test-call", str(token.org_id),
+        limit=_TEST_CALL_HOURLY_LIMIT, window_seconds=3600,
+        message_template=(
+            f"Test call limit reached: {_TEST_CALL_HOURLY_LIMIT} per hour. "
+            "Try again in {minutes} minute(s)."
+        ),
+    )
 
     # Validate the chosen "From" trunk belongs to this org (and, for
     # non-admins, is actually assigned to them) before handing it to the

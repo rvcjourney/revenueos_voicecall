@@ -217,9 +217,13 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RateLimitedError)
     async def rate_limited_handler(request: Request, exc: RateLimitedError) -> JSONResponse:
+        headers = {}
+        if exc.retry_after_seconds is not None:
+            headers["Retry-After"] = str(exc.retry_after_seconds)
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"detail": exc.message, "code": exc.code},
+            content={"detail": exc.message, "code": exc.code, "retry_after_seconds": exc.retry_after_seconds},
+            headers=headers,
         )
 
     @app.exception_handler(StorageError)

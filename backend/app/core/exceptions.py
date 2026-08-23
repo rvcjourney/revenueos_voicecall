@@ -91,3 +91,16 @@ class RateLimitedError(AppError):
     """HTTP 429 — too many requests to a rate-limited endpoint (app/core/rate_limit.py)."""
     code = "RATE_LIMITED"
     message = "Too many attempts. Please wait a bit and try again."
+
+    def __init__(
+        self,
+        message: str | None = None,
+        code: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message, code)
+        # How long until the caller's rate-limit window resets, if known --
+        # surfaced by app/main.py's handler as both a Retry-After header and a
+        # response field so the frontend can show a countdown instead of just
+        # a static "try again later".
+        self.retry_after_seconds = retry_after_seconds
