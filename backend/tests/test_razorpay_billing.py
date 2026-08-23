@@ -497,6 +497,51 @@ async def test_webhook_subscription_charged_activates_org_and_resets_credits(cli
     assert sub.current_period_end is not None
 
 
+async def test_webhook_subscription_charged_redelivery_does_not_re_reset_credits(client, db):
+    """Razorpay redelivers webhooks on any non-2xx/timeout -- a second
+    delivery of the SAME charge (same payment id) must not zero out credit
+    usage the org has accrued since the first delivery was processed."""
+    plan = await _make_plan(db, credits_per_month=500)
+    org, _user, _token = await _make_org_with_subscription(
+        db, plan, sub_overrides={"provider": "razorpay", "provider_subscription_id": "sub_dup_charge", "status": "created"},
+    )
+    await db.commit()
+
+    payload = _webhook_payload(
+        "subscription.charged", "sub_dup_charge",
+        current_start=1700000000, current_end=1702592000,
+        payment_entity={"id": "pay_dup_123", "amount": 149900},
+    )
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True), \
+         patch("app.api.webhooks.generate_invoice_for_charge", new=AsyncMock(return_value=None)):
+        first = await client.post(
+            "/webhooks/razorpay", content=json.dumps(payload),
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert first.status_code == 200
+
+    # Org used some credits after the first delivery was processed.
+    await db.refresh(org)
+    assert org.credits_used_this_period == 0
+    org.credits_used_this_period = 137
+    await db.commit()
+
+    with patch("app.api.webhooks.verify_webhook_signature", return_value=True), \
+         patch("app.api.webhooks.generate_invoice_for_charge", new=AsyncMock(return_value=None)):
+        second = await client.post(
+            "/webhooks/razorpay", content=json.dumps(payload),  # identical redelivery
+            headers={"X-Razorpay-Signature": "valid", "Content-Type": "application/json"},
+        )
+    assert second.status_code == 200
+
+    await db.refresh(org)
+    assert org.credits_used_this_period == 137  # NOT wiped back to 0 by the duplicate
+
+    sub = await db.scalar(select(Subscription).where(Subscription.org_id == org.id))
+    assert sub.last_charged_payment_id == "pay_dup_123"
+
+
 async def test_webhook_promotes_pending_plan_on_authenticated_with_blended_credits(client, db):
     """Once the webhook confirms payment for a plan change queued via
     pending_plan_id, plan_id should move over and credits should blend --

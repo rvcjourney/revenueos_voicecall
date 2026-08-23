@@ -76,3 +76,12 @@ class Subscription(Base, TimestampMixin, SoftDeleteMixin):
     # Cleared back to NULL whenever the credit period resets (org.last_credit_reset_at
     # rolls over), at which point the new plan's credits_per_month applies in full.
     prorated_credits_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Idempotency key for the "subscription.charged" webhook handler
+    # (app/api/webhooks.py) -- Razorpay redelivers on any non-2xx/timeout (and
+    # can otherwise redeliver in the wild). Without tracking which payment was
+    # last actually processed, a redelivery of an already-handled charge would
+    # re-zero credits_used_this_period a second time, silently granting free
+    # credits. Set to the Razorpay payment id once its credit reset/promotion
+    # has been applied; a later event carrying the same id is a no-op.
+    last_charged_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

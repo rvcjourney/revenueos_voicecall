@@ -315,20 +315,42 @@ async def razorpay_webhook(
                 await _promote_pending_plan(db, sub, org)
 
         elif event == "subscription.charged":
+            payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+            razorpay_payment_id = payment_entity.get("id")
+            charged_amount = payment_entity.get("amount")
+
+            # Razorpay redelivers webhooks on any non-2xx/timeout (and can
+            # otherwise redeliver in the wild) -- without this, a redelivered
+            # event for a payment we already processed would re-zero
+            # credits_used_this_period a second time, silently granting free
+            # credits. Tracked independently of invoice generation below
+            # (Subscription.last_charged_payment_id, not Invoice existence)
+            # since invoice generation has its own separate skip condition
+            # (no billing_state yet) that shouldn't gate this.
+            already_processed = bool(razorpay_payment_id) and sub.last_charged_payment_id == razorpay_payment_id
+
             sub.status = "active"
             sub.current_period_start = _unix_to_datetime(sub_entity.get("current_start"))
             sub.current_period_end = _unix_to_datetime(sub_entity.get("current_end"))
             if org:
                 org.is_active = True
-                if sub.pending_plan_id is not None:
-                    # A plan-change payment can land as "charged" without an
-                    # "authenticated" firing first for some payment methods --
-                    # promote it here too rather than doing a full period reset
-                    # that would wipe the blended credit override this same
-                    # event should be setting.
-                    await _promote_pending_plan(db, sub, org)
+                if not already_processed:
+                    if sub.pending_plan_id is not None:
+                        # A plan-change payment can land as "charged" without an
+                        # "authenticated" firing first for some payment methods --
+                        # promote it here too rather than doing a full period reset
+                        # that would wipe the blended credit override this same
+                        # event should be setting.
+                        await _promote_pending_plan(db, sub, org)
+                    else:
+                        await reset_credit_period(db, org)
+                    if razorpay_payment_id:
+                        sub.last_charged_payment_id = razorpay_payment_id
                 else:
-                    await reset_credit_period(db, org)
+                    log.info(
+                        "razorpay_charged_duplicate_delivery_skipped",
+                        org_id=str(org.id), razorpay_payment_id=razorpay_payment_id,
+                    )
 
                 # Generate QuickHowl's own GST tax invoice for this charge.
                 # "contains": ["subscription", "payment"] on this event per
@@ -337,10 +359,12 @@ async def razorpay_webhook(
                 # Wrapped in its own SAVEPOINT so a PDF/storage failure here
                 # can never roll back the org-activation work above -- a
                 # missing invoice is a support ticket, not a reason to leave
-                # a paying customer's account suspended.
-                payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-                charged_amount = payment_entity.get("amount")
-                razorpay_payment_id = payment_entity.get("id")
+                # a paying customer's account suspended. Left outside the
+                # already_processed guard: generate_invoice_for_charge is
+                # independently idempotent (dedups on razorpay_payment_id
+                # itself), and still needs to run on a "redelivery" for the
+                # case where the first delivery reset credits but crashed
+                # before the invoice was generated.
                 if charged_amount and razorpay_payment_id:
                     try:
                         async with db.begin_nested():
