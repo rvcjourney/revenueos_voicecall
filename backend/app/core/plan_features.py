@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import PermissionDeniedError
@@ -24,6 +24,13 @@ from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization
+from app.models.voice_clone_request import VoiceCloneRequest
+
+# Flat platform-wide cap, not plan-based -- ElevenLabs cloned voices are a
+# limited/costly resource per org regardless of plan tier. An org that wants
+# a different voice once at the cap must delete an existing one first
+# (DELETE /api/voice-cloning/{id}) to free a slot before submitting a new one.
+MAX_CLONED_VOICES_PER_ORG = 2
 
 
 async def _active_plan(db: AsyncSession, org_id: UUID) -> Plan | None:
@@ -62,6 +69,31 @@ async def is_voice_cloning_allowed(db: AsyncSession, org_id: UUID) -> bool:
     if "voice_cloning" not in plan.features:
         return True
     return bool(plan.features["voice_cloning"])
+
+
+async def count_org_voice_clone_slots_used(db: AsyncSession, org_id: UUID) -> int:
+    """
+    Active ClonedVoice rows + still-pending VoiceCloneRequest rows. A pending
+    request will become a ClonedVoice if approved, so it must count against
+    the cap too -- otherwise an org could queue up unlimited pending requests
+    and have them all approved at once. Rejected requests never count (they
+    never became, and never will become, a real voice).
+    """
+    active = await db.scalar(
+        select(func.count(ClonedVoice.id)).where(
+            ClonedVoice.org_id == org_id, ClonedVoice.deleted_at.is_(None)
+        )
+    )
+    pending = await db.scalar(
+        select(func.count(VoiceCloneRequest.id)).where(
+            VoiceCloneRequest.org_id == org_id, VoiceCloneRequest.status == "pending"
+        )
+    )
+    return (active or 0) + (pending or 0)
+
+
+async def has_voice_clone_capacity(db: AsyncSession, org_id: UUID) -> bool:
+    return await count_org_voice_clone_slots_used(db, org_id) < MAX_CLONED_VOICES_PER_ORG
 
 
 async def check_agent_voice_settings(

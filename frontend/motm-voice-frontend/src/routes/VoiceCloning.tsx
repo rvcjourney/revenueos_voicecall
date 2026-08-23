@@ -36,12 +36,20 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
 };
 
+// Must match MAX_CLONED_VOICES_PER_ORG in backend/app/core/plan_features.py --
+// a flat platform-wide cap, not plan-based. Rejected requests never occupy a
+// slot (they never became, and never will become, a real voice).
+const MAX_CLONED_VOICES_PER_ORG = 2;
+
 export default function VoiceCloning() {
   const clonedVoices = useClonedVoices();
   const createVoice = useCreateClonedVoice();
   const deleteVoice = useDeleteClonedVoice();
 
   const [name, setName] = useState("");
+
+  const slotsUsed = clonedVoices.data?.filter((v) => v.status === "ready" || v.status === "pending").length ?? 0;
+  const atCap = slotsUsed >= MAX_CLONED_VOICES_PER_ORG;
 
   // ── Audio sample (upload or record) ─────────────────────────────────────
   const [source, setSource] = useState<"upload" | "record">("upload");
@@ -175,6 +183,12 @@ export default function VoiceCloning() {
   }
 
   async function handleCreate() {
+    if (atCap) {
+      toast.error(
+        `Maximum limit for cloned voices is ${MAX_CLONED_VOICES_PER_ORG}. Delete one of your existing voices, then try cloning again.`
+      );
+      return;
+    }
     if (!name.trim()) {
       toast.error("Give your cloned voice a name");
       return;
@@ -240,12 +254,24 @@ export default function VoiceCloning() {
       <Card>
         <CardContent className="space-y-4 pt-6">
           <div>
-            <p className="font-medium">Create a cloned voice</p>
+            <p className="font-medium">
+              Create a cloned voice
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                ({slotsUsed}/{MAX_CLONED_VOICES_PER_ORG} used)
+              </span>
+            </p>
             <p className="text-sm text-muted-foreground">
               Name it, provide a voice sample, and record a short consent video — every submission is reviewed
               before the voice becomes usable.
             </p>
           </div>
+
+          {atCap && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+              Maximum limit for cloned voices is {MAX_CLONED_VOICES_PER_ORG} (pending requests count too). Delete
+              one of your existing voices below, then try cloning again.
+            </div>
+          )}
 
           <div className="max-w-sm space-y-1.5">
             <Label>Voice name</Label>
@@ -381,7 +407,7 @@ export default function VoiceCloning() {
             </Tabs>
           </div>
 
-          <Button type="button" variant="gradient" onClick={handleCreate} disabled={createVoice.isPending}>
+          <Button type="button" variant="gradient" onClick={handleCreate} disabled={createVoice.isPending || atCap}>
             {createVoice.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
             Submit for review
           </Button>

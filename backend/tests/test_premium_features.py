@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 import app.workers.tasks.campaign as campaign_module
 from app.core.elevenlabs_voice import ElevenLabsVoiceError
+from app.core.plan_features import MAX_CLONED_VOICES_PER_ORG
 from app.core.security import create_access_token, create_platform_token, hash_password
 from app.models.agent import AgentTemplate, VoiceProvider
 from app.models.call import Call, CallDirection, CallStatus
@@ -212,6 +213,49 @@ async def test_voice_cloning_submission_creates_pending_request(client, db):
     # Not usable anywhere yet -- no ClonedVoice row exists until approval
     cloned = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
     assert cloned is None
+
+
+async def _submit_voice_clone(client, token, name: str):
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        return await client.post(
+            "/api/voice-cloning",
+            data={"name": name},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+async def test_voice_cloning_capped_per_org(client, db):
+    """
+    Founder-requested cap: an org can have at most MAX_CLONED_VOICES_PER_ORG
+    cloned voices (counting pending requests, since those become real voices
+    if approved) -- must delete one to free a slot before cloning a different
+    voice, rather than accumulating unlimited ElevenLabs voices.
+    """
+    _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
+
+    request_ids = []
+    for i in range(MAX_CLONED_VOICES_PER_ORG):
+        resp = await _submit_voice_clone(client, token, f"Voice {i}")
+        assert resp.status_code == 201
+        request_ids.append(resp.json()["id"])
+
+    # At the cap -- the next submission is rejected, not silently queued.
+    over_cap_resp = await _submit_voice_clone(client, token, "One too many")
+    assert over_cap_resp.status_code == 409
+
+    # Deleting one of the pending requests frees a slot for a new submission.
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        del_resp = await client.delete(
+            f"/api/voice-cloning/{request_ids[0]}", headers={"Authorization": f"Bearer {token}"}
+        )
+    assert del_resp.status_code == 204
+
+    after_delete_resp = await _submit_voice_clone(client, token, "A different voice")
+    assert after_delete_resp.status_code == 201
 
 
 async def test_voice_clone_request_approval_creates_model(client, db):

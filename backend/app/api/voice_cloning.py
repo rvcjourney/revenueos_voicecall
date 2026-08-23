@@ -26,8 +26,13 @@ from uuid6 import uuid7
 from app.config import settings
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.elevenlabs_voice import MAX_SAMPLE_BYTES, delete_voice
-from app.core.exceptions import NotFoundError, PermissionDeniedError
-from app.core.plan_features import is_voice_cloning_allowed, is_voice_provider_allowed
+from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from app.core.plan_features import (
+    MAX_CLONED_VOICES_PER_ORG,
+    has_voice_clone_capacity,
+    is_voice_cloning_allowed,
+    is_voice_provider_allowed,
+)
 from app.database import get_db
 from app.models.agent import VoiceProvider
 from app.models.cloned_voice import ClonedVoice
@@ -106,6 +111,11 @@ async def create_voice_clone_request(
         raise PermissionDeniedError("Your plan does not include voice cloning. Upgrade to Premium to use this feature.")
     if not await is_voice_provider_allowed(db, token.org_id, VoiceProvider.ELEVENLABS):
         raise PermissionDeniedError("Voice cloning is currently disabled for your organization.")
+    if not await has_voice_clone_capacity(db, token.org_id):
+        raise ConflictError(
+            f"Maximum limit for cloned voices is {MAX_CLONED_VOICES_PER_ORG}. Delete one of your existing "
+            "voices, then try cloning again."
+        )
 
     sample_bytes = await file.read()
     if not sample_bytes:
