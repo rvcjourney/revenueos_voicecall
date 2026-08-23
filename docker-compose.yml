@@ -191,6 +191,18 @@ services:
       - motm
     depends_on:
       - redis
+    # Without this, Docker's default 10s stop timeout SIGKILLs this process on
+    # every deploy/restart -- well before the livekit-agents SDK's own SIGTERM
+    # handling (agents.cli.run_app -> AgentServer.drain(), default
+    # drain_timeout=1800s in myenv311/.../livekit/agents/worker.py) gets a
+    # chance to let in-progress calls finish. 650s clears this codebase's own
+    # outbound max-call-duration guard (agent.py's _max_duration_guard, 600s)
+    # with a small margin. NOTE: inbound calls are NOT covered by that same
+    # guard -- InboundAgentTemplate.max_call_duration_seconds (app/schemas/
+    # inbound_agent.py) defaults to 600 but has no upper bound, so an org that
+    # configures a longer inbound max duration can still have a live inbound
+    # call SIGKILLed by a deploy landing after this window elapses.
+    stop_grace_period: 650s
     deploy:
       resources:
         limits:
