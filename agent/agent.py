@@ -32,6 +32,7 @@ from config import (
     LIVEKIT_AGENT_NAME,
     GROQ_MODEL,
     GROQ_LLM_TEMPERATURE,
+    GROQ_CLASSIFY_MODEL,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL_ID,
@@ -1066,13 +1067,17 @@ class VoiceAgent(Agent):
             import groq as _groq
             client = _groq.AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
             resp = await client.chat.completions.create(
-                # Groq deprecated llama-3.1-8b-instant (June 2026) -- every call
-                # was silently landing on outcome=pending via the except block
-                # below (model_not_found), not an actual classification. This
-                # step runs after the call ends, off the live conversation path,
-                # so there's no latency cost to using Groq's larger recommended
-                # replacement for best summarization quality.
-                model="openai/gpt-oss-120b",
+                # Configurable via GROQ_CLASSIFY_MODEL (config.py) instead of a
+                # hardcoded literal -- Groq deprecated the previous model
+                # (llama-3.1-8b-instant, June 2026) with no warning, and every
+                # call silently landed on outcome=pending via the except block
+                # below (model_not_found) until someone noticed. Swappable via
+                # env now, and the backend's SuperAdmin health check actively
+                # verifies this exact model is still valid on Groq (keep
+                # GROQ_CLASSIFY_MODEL and the backend's GROQ_SUMMARY_MODEL in
+                # sync). This step runs after the call ends, off the live
+                # conversation path, so there's no latency cost to a larger model.
+                model=GROQ_CLASSIFY_MODEL,
                 max_tokens=350,
                 temperature=0.0,
                 messages=[

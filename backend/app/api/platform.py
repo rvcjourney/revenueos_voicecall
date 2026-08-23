@@ -41,7 +41,7 @@ from app.database import check_db_health, get_db
 from app.storage.backend import get_storage
 from app.models.agent import VoiceProvider
 from app.models.audit_log import AuditLog
-from app.models.call import Call, CallStatus
+from app.models.call import Call, CallOutcome, CallStatus
 from app.models.campaign import Campaign, CampaignStatus
 from app.models.cloned_voice import ClonedVoice
 from app.models.invoice import Invoice
@@ -794,6 +794,48 @@ async def _db_stats(db: AsyncSession) -> dict:
     }
 
 
+_GROQ_HEALTH_CACHE_TTL = timedelta(minutes=5)
+_groq_health_cache: dict = {"checked_at": None, "ok": None, "error": None}
+
+
+async def _check_groq_model() -> tuple[bool, str | None]:
+    """
+    Verifies settings.GROQ_SUMMARY_MODEL (the post-call classification model --
+    must match agent/agent.py's GROQ_CLASSIFY_MODEL env var) still exists and
+    is reachable on Groq. Groq deprecates models with little to no warning --
+    this already broke every call's outcome classification once (Aug 2026)
+    before anyone noticed. Cached for 5 minutes so the SuperAdmin dashboard's
+    30s health poll doesn't hit Groq's API purely from a browser tab being
+    left open.
+    """
+    now = datetime.now(timezone.utc)
+    cached_at = _groq_health_cache["checked_at"]
+    if cached_at is not None and now - cached_at < _GROQ_HEALTH_CACHE_TTL:
+        return _groq_health_cache["ok"], _groq_health_cache["error"]
+
+    ok, error = False, None
+    if not settings.GROQ_API_KEY:
+        error = "GROQ_API_KEY not configured"
+    else:
+        try:
+            async with aiohttp.ClientSession() as http:
+                async with http.get(
+                    f"https://api.groq.com/openai/v1/models/{settings.GROQ_SUMMARY_MODEL}",
+                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    if resp.status == 200:
+                        ok = True
+                    else:
+                        body = await resp.text()
+                        error = f"Groq {resp.status}: {body[:300]}"
+        except Exception as exc:
+            error = str(exc)
+
+    _groq_health_cache.update(checked_at=now, ok=ok, error=error)
+    return ok, error
+
+
 @router.get("/health", response_model=PlatformHealthOut)
 async def platform_health(
     admin: PlatformAdmin = Depends(require_platform_admin),
@@ -840,6 +882,20 @@ async def platform_health(
         except ElevenLabsVoiceError as exc:
             log.warning("platform_health_elevenlabs_check_failed", error=str(exc))
 
+    groq_ok, groq_error = await _check_groq_model()
+
+    from app.workers.tasks.campaign import _STALE_PENDING_AGE  # lazy: see _ping_workers above
+
+    stale_cutoff = datetime.now(timezone.utc) - _STALE_PENDING_AGE
+    stale_pending_calls_count = await db.scalar(
+        select(func.count(Call.id)).where(
+            Call.status == CallStatus.COMPLETED,
+            Call.outcome == CallOutcome.PENDING,
+            Call.ended_at.is_not(None),
+            Call.ended_at <= stale_cutoff,
+        )
+    ) or 0
+
     return PlatformHealthOut(
         api=True,
         database=db_ok,
@@ -856,6 +912,9 @@ async def platform_health(
         db_connections_current=db_stats["connections_current"],
         db_connections_max=db_stats["connections_max"],
         db_tables_missing_rls=db_stats["tables_missing_rls"],
+        groq_ok=groq_ok,
+        groq_error=groq_error,
+        stale_pending_calls_count=stale_pending_calls_count,
     )
 
 

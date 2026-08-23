@@ -55,6 +55,14 @@ SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
 GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
+# Post-call outcome classification/summarization model (agent.py's _send_report).
+# Separate from GROQ_MODEL (the live conversation model) -- was a hardcoded
+# literal until Groq deprecated it out from under us with no warning (Aug 2026,
+# see agent.py's classify_llm/groq_classify_error logs). Now an env var so it
+# can be swapped without a code change, AND so the backend's SuperAdmin health
+# check (app/api/platform.py, settings.GROQ_SUMMARY_MODEL) can verify the exact
+# model actually in use -- keep these two values in sync when either changes.
+GROQ_CLASSIFY_MODEL  = os.getenv("GROQ_CLASSIFY_MODEL", "openai/gpt-oss-120b")
 
 # ── Agent behaviour ───────────────────────────────────────────────────────────
 # Default fallback — system prompt and welcome message are set via the UI (agent template).

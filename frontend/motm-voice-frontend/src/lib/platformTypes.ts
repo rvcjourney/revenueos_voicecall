@@ -134,6 +134,9 @@ export interface PlatformHealth {
   db_connections_current: number;
   db_connections_max: number;
   db_tables_missing_rls: string[];
+  groq_ok: boolean;
+  groq_error: string | null;
+  stale_pending_calls_count: number;
 }
 
 export interface PlatformVoiceCloneRequest {

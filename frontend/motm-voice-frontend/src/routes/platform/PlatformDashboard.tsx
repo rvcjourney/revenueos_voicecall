@@ -70,6 +70,11 @@ function SystemHealthCard() {
           ok: health.data.elevenlabs_ok,
           detail: health.data.elevenlabs_ok ? "Reachable" : "Unreachable",
         },
+        {
+          label: "Groq (call classification)",
+          ok: health.data.groq_ok,
+          detail: health.data.groq_ok ? "Reachable" : (health.data.groq_error ?? "Unreachable"),
+        },
       ]
     : [];
 
@@ -102,7 +107,7 @@ function SystemHealthCard() {
           <Skeleton className="h-24 w-full" />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
               {rows.map((row) => (
                 <div
                   key={row.label}
@@ -179,6 +184,33 @@ function SystemHealthCard() {
                     {health.data.db_tables_missing_rls.length} table
                     {health.data.db_tables_missing_rls.length > 1 ? "s" : ""}:{" "}
                     <span className="text-muted-foreground">{health.data.db_tables_missing_rls.join(", ")}</span>
+                  </p>
+                </div>
+              )}
+
+              {!health.data.groq_ok && (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <p>
+                    <span className="font-medium text-destructive">Call classification is broken</span> — every call's
+                    outcome will silently land on "Pending" until this is fixed.{" "}
+                    <span className="text-muted-foreground">{health.data.groq_error}</span>
+                  </p>
+                </div>
+              )}
+
+              {health.data.stale_pending_calls_count > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                  <p>
+                    <span className="font-medium text-warning">
+                      {health.data.stale_pending_calls_count} call{health.data.stale_pending_calls_count > 1 ? "s" : ""} stuck
+                      at "Pending"
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      — ended 10+ minutes ago with no classification. Check the Groq status above, or a call's own
+                      logs if that's healthy.
+                    </span>
                   </p>
                 </div>
               )}

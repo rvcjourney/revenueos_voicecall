@@ -225,3 +225,17 @@ class PlatformHealthOut(BaseModel):
     db_connections_current: int
     db_connections_max: int
     db_tables_missing_rls: list[str]
+    # Groq deprecated the post-call classification model with no warning once
+    # already (Aug 2026) -- every real call silently landed at outcome=pending
+    # until someone noticed on the calls page. This actively verifies the
+    # model is still valid on Groq instead of waiting to find out from
+    # customer-facing symptoms.
+    groq_ok: bool
+    groq_error: str | None = None
+    # COMPLETED calls still sitting at outcome=pending 10+ minutes after
+    # ending -- the visible version of the flag_stale_pending_calls Beat task
+    # (app/workers/tasks/campaign.py), which previously only wrote a log line
+    # nobody was watching. A nonzero count here means SOMETHING in the
+    # post-call classification pipeline is broken right now, whatever the
+    # cause -- not just the specific Groq-model failure mode above.
+    stale_pending_calls_count: int

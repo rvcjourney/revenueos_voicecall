@@ -63,6 +63,11 @@ async def test_platform_health_returns_live_status(client, db):
             "next_reset_unix": 1_800_000_000,
             "status": "active",
         }),
+    ), patch(
+        # Never hit Groq's real API from a test -- see _check_groq_model's
+        # own docstring for why this check exists at all.
+        "app.api.platform._check_groq_model",
+        new=AsyncMock(return_value=(True, None)),
     ):
         resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
@@ -83,6 +88,10 @@ async def test_platform_health_returns_live_status(client, db):
     assert body["elevenlabs_characters_used"] == 12_000
     assert body["elevenlabs_characters_limit"] == 100_000
 
+    assert body["groq_ok"] is True
+    assert body["groq_error"] is None
+    assert isinstance(body["stale_pending_calls_count"], int)
+
 
 async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db):
     _admin, token = await _make_platform_admin(db)
@@ -90,6 +99,9 @@ async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db
     with patch(
         "app.api.platform.get_account_usage",
         new=AsyncMock(side_effect=ElevenLabsVoiceError("Invalid ElevenLabs API key")),
+    ), patch(
+        "app.api.platform._check_groq_model",
+        new=AsyncMock(return_value=(True, None)),
     ):
         resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
 
@@ -97,6 +109,76 @@ async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db
     body = resp.json()
     assert body["elevenlabs_ok"] is False
     assert body["elevenlabs_characters_used"] is None
+
+
+async def test_platform_health_groq_model_deprecated_surfaces_warning(client, db):
+    """
+    The exact incident this check exists for: Groq deprecates the
+    classification model, every call's outcome silently lands on
+    "pending", and nobody notices until a customer asks why. The health
+    endpoint must surface this directly instead of staying green.
+    """
+    _admin, token = await _make_platform_admin(db)
+
+    with patch(
+        "app.api.platform.get_account_usage",
+        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
+    ), patch(
+        "app.api.platform._check_groq_model",
+        new=AsyncMock(return_value=(False, "Groq 404: model_not_found")),
+    ):
+        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["groq_ok"] is False
+    assert body["groq_error"] == "Groq 404: model_not_found"
+
+
+async def test_platform_health_counts_stale_pending_calls(client, db):
+    """A COMPLETED call still at outcome=pending 10+ minutes after ending is
+    exactly the symptom of a broken classification pipeline (see
+    app/workers/tasks/campaign.py's flag_stale_pending_calls) -- this count
+    is the visible version of that same check."""
+    from datetime import timedelta
+
+    from app.models.call import CallOutcome
+
+    _admin, token = await _make_platform_admin(db)
+    org = await _make_org(db, "Stale Pending Co")
+
+    now = datetime.now(timezone.utc)
+    # Genuinely stale: COMPLETED, still pending, ended 20 minutes ago.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500001",
+        direction=CallDirection.OUTBOUND, status=CallStatus.COMPLETED, outcome=CallOutcome.PENDING,
+        started_at=now - timedelta(minutes=25), ended_at=now - timedelta(minutes=20),
+    ))
+    # Not stale yet: ended just now -- still within the grace window.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500002",
+        direction=CallDirection.OUTBOUND, status=CallStatus.COMPLETED, outcome=CallOutcome.PENDING,
+        started_at=now - timedelta(minutes=1), ended_at=now,
+    ))
+    # Old but already classified -- not a symptom of anything broken.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500003",
+        direction=CallDirection.OUTBOUND, status=CallStatus.COMPLETED, outcome=CallOutcome.NOT_INTERESTED,
+        started_at=now - timedelta(minutes=25), ended_at=now - timedelta(minutes=20),
+    ))
+    await db.commit()
+
+    with patch(
+        "app.api.platform.get_account_usage",
+        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
+    ), patch(
+        "app.api.platform._check_groq_model",
+        new=AsyncMock(return_value=(True, None)),
+    ):
+        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    assert resp.json()["stale_pending_calls_count"] == 1
 
 
 async def test_platform_usage_analytics_counts_real_calls(client, db):
