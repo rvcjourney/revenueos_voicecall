@@ -606,7 +606,7 @@ function toFormValues(agent: AgentTemplate): AgentCreate {
   };
 }
 
-function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; onOpenChange: () => void }) {
+export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; onOpenChange: () => void }) {
   const [phone, setPhone] = useState("+91");
   const [trunkId, setTrunkId] = useState<string>("");
   const [loading, setLoading] = useState(false);
