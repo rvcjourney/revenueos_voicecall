@@ -16,6 +16,7 @@ Six buckets are created on startup if they don't exist:
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import io
 from datetime import datetime
@@ -64,6 +65,28 @@ class StorageBackend:
             settings.BUCKET_INVOICES,
         ]
 
+        # SSE-C (customer-provided key): the key never leaves this process or
+        # touches MinIO's own config, so it works against plain MinIO with no
+        # KMS/KES backend -- appropriate here since every bucket is read back
+        # exclusively via download()/exists() below (server-side), never a
+        # presigned URL handed to a browser. Config validation (app/config.py)
+        # already guarantees this decodes to exactly 32 bytes when set.
+        self._sse_key: bytes | None = (
+            base64.b64decode(settings.STORAGE_SSE_C_KEY_B64) if settings.STORAGE_SSE_C_KEY_B64 else None
+        )
+        if self._sse_key is None:
+            log.warning(
+                "storage_sse_not_configured",
+                detail="STORAGE_SSE_C_KEY_B64 is unset -- objects are being stored unencrypted at rest",
+            )
+
+    def _sse_args(self) -> dict:
+        """SSE-C ExtraArgs/kwargs for a request, or {} if encryption isn't configured.
+        boto3 computes SSECustomerKeyMD5 automatically from SSECustomerKey."""
+        if self._sse_key is None:
+            return {}
+        return {"SSECustomerAlgorithm": "AES256", "SSECustomerKey": self._sse_key}
+
     async def ensure_buckets(self) -> None:
         """Create all required buckets if they don't exist. Called at startup."""
         for bucket in self._buckets:
@@ -105,7 +128,7 @@ class StorageBackend:
                 io.BytesIO(data),
                 bucket,
                 key,
-                ExtraArgs={"ContentType": content_type},
+                ExtraArgs={"ContentType": content_type, **self._sse_args()},
             )
         )
         log.debug("storage_upload_ok", bucket=bucket, key=key, size=len(data))
@@ -117,7 +140,23 @@ class StorageBackend:
         key: str,
         expiry: int | None = None,
     ) -> str:
-        """Generate a presigned GET URL valid for `expiry` seconds."""
+        """Generate a presigned GET URL valid for `expiry` seconds.
+
+        Not currently called anywhere -- every consumer downloads server-side
+        via download() below instead. Deliberately left incompatible with
+        SSE-C: a browser following a plain presigned URL has no way to attach
+        the required x-amz-server-side-encryption-customer-key* headers, so
+        wiring SSE-C params into this method would produce URLs that always
+        fail to fetch once STORAGE_SSE_C_KEY_B64 is set. If this is ever
+        wired up for real browser-facing use, route it through a backend
+        proxy endpoint (like app/api/calls.py's recording proxy) that calls
+        download() instead, rather than exposing MinIO/S3 directly.
+        """
+        if self._sse_key is not None:
+            raise NotImplementedError(
+                "presigned_url() is incompatible with SSE-C (STORAGE_SSE_C_KEY_B64 is set) -- "
+                "use download() and stream the bytes through a backend endpoint instead"
+            )
         expiry = expiry if expiry is not None else settings.EXPORT_URL_EXPIRY_SECONDS
         url: str = await asyncio.to_thread(
             functools.partial(
@@ -130,11 +169,29 @@ class StorageBackend:
         return url
 
     async def download(self, bucket: str, key: str) -> bytes:
-        """Download an object's bytes (e.g. to re-feed a stored sample to an external API)."""
+        """Download an object's bytes (e.g. to re-feed a stored sample to an external API).
+
+        Falls back to a plain (no SSE-C headers) request if the object
+        predates STORAGE_SSE_C_KEY_B64 being set -- S3/MinIO reject an SSE-C
+        request against an object that wasn't itself stored with SSE-C, so
+        without this fallback turning encryption on would make every
+        already-stored file undownloadable until it's re-uploaded.
+        """
         buf = io.BytesIO()
-        await asyncio.to_thread(
-            functools.partial(self._client.download_fileobj, bucket, key, buf)
-        )
+        try:
+            await asyncio.to_thread(
+                functools.partial(
+                    self._client.download_fileobj, bucket, key, buf, ExtraArgs=self._sse_args()
+                )
+            )
+        except ClientError as exc:
+            if self._sse_key is not None and exc.response["Error"]["Code"] == "InvalidArgument":
+                buf = io.BytesIO()
+                await asyncio.to_thread(
+                    functools.partial(self._client.download_fileobj, bucket, key, buf)
+                )
+            else:
+                raise
         return buf.getvalue()
 
     async def delete(self, bucket: str, key: str) -> None:
@@ -160,12 +217,24 @@ class StorageBackend:
     async def exists(self, bucket: str, key: str) -> bool:
         try:
             await asyncio.to_thread(
-                self._client.head_object, Bucket=bucket, Key=key
+                functools.partial(self._client.head_object, Bucket=bucket, Key=key, **self._sse_args())
             )
             return True
         except ClientError as exc:
-            if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+            code = exc.response["Error"]["Code"]
+            if code in ("404", "NoSuchKey"):
                 return False
+            # Same pre-SSE-C-rollout fallback as download() above.
+            if self._sse_key is not None and code == "InvalidArgument":
+                try:
+                    await asyncio.to_thread(
+                        functools.partial(self._client.head_object, Bucket=bucket, Key=key)
+                    )
+                    return True
+                except ClientError as exc2:
+                    if exc2.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                        return False
+                    raise
             raise
 
 

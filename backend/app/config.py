@@ -22,7 +22,7 @@ _SECRET_FIELDS = frozenset({
     "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
-    "OFFSITE_BACKUP_SECRET_KEY",
+    "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64",
 })
 
 
@@ -168,6 +168,17 @@ class Settings(BaseSettings):
     BUCKET_INVOICES: str = "motm-invoices"
     EXPORT_URL_EXPIRY_SECONDS: int = 600
 
+    # Server-side encryption (SSE-C) for every object this backend stores.
+    # Blank disables it (objects upload unencrypted, today's behavior) so this
+    # is safe to deploy before it's configured -- set it to actually turn
+    # encryption at rest on. Every bucket is read back exclusively through
+    # StorageBackend.download() (never a presigned URL handed to a browser --
+    # see StorageBackend.presigned_url()'s docstring), so a single
+    # server-managed key works cleanly with no MinIO-side KMS/KES setup
+    # required. Must be a base64-encoded 32-byte key, generated with:
+    #   python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+    STORAGE_SSE_C_KEY_B64: str = ""
+
     # ── Offsite database backups ─────────────────────────────────────────────
     # BUCKET_BACKUPS above (via StorageBackend) lives on the SAME disk as every
     # other bucket -- when STORAGE_BACKEND=minio (the production default, see
@@ -202,6 +213,22 @@ class Settings(BaseSettings):
     # Queue-then-reject: max seconds a contact waits for a plan-based org-level
     # call slot before being marked QUEUE_TIMEOUT (see app/core/concurrency.py).
     CONCURRENCY_MAX_WAIT_SECONDS: int = 600
+
+    @field_validator("STORAGE_SSE_C_KEY_B64")
+    @classmethod
+    def _validate_sse_key(cls, v: str) -> str:
+        if not v:
+            return v
+        import base64
+        try:
+            raw = base64.b64decode(v, validate=True)
+        except Exception as exc:
+            raise ValueError("STORAGE_SSE_C_KEY_B64 must be valid base64") from exc
+        if len(raw) != 32:
+            raise ValueError(
+                f"STORAGE_SSE_C_KEY_B64 must decode to exactly 32 bytes for AES-256 (got {len(raw)})"
+            )
+        return v
 
     @model_validator(mode="after")
     def _validate_production(self) -> "Settings":
