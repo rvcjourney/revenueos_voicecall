@@ -7,6 +7,8 @@ calls within a campaign are sequential).
 """
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import beat_init, worker_process_init
+
 from app.config import settings
 
 celery_app = Celery(
@@ -84,3 +86,38 @@ celery_app.conf.update(
         },
     },
 )
+
+
+# app/main.py (the API process) has always called configure_logging() +
+# sentry_sdk.init() on its own startup, but nothing ever did the same for the
+# worker/beat processes. Two consequences, now fixed here:
+#   - structlog was never routed through the stdlib logging bridge in these
+#     processes (app/core/logging.py's configure_logging(), whose own
+#     docstring already lists "celery" as one of the loggers it bridges --
+#     designed to be shared, just never actually wired up here).
+#   - Sentry was never initialized at all in these processes, so every task
+#     error -- including the deliberate log.error() fail-open branches in
+#     app/workers/tasks/campaign.py, meant to be alerting-visible -- was
+#     invisible to it even once the logging bridge above is fixed, since
+#     Sentry's LoggingIntegration only captures logging records in a process
+#     that has actually called sentry_sdk.init().
+# worker_process_init fires once per forked prefork child (the worker itself,
+# not a per-task hook); beat_init fires once for the scheduler process.
+def _init_worker_logging_and_sentry(*, component: str) -> None:
+    from app.core.logging import configure_logging
+    configure_logging()
+
+    from sentry_sdk.integrations.celery import CeleryIntegration
+
+    from app.core.sentry import init_sentry
+    init_sentry(integrations=[CeleryIntegration()], component=component)
+
+
+@worker_process_init.connect
+def _on_worker_process_init(**kwargs) -> None:
+    _init_worker_logging_and_sentry(component="worker")
+
+
+@beat_init.connect
+def _on_beat_init(**kwargs) -> None:
+    _init_worker_logging_and_sentry(component="beat")

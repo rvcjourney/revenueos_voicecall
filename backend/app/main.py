@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-import sentry_sdk
 import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -31,6 +30,7 @@ from app.core.exceptions import (
     WebhookAuthError,
 )
 from app.core.logging import RequestIDMiddleware, configure_logging
+from app.core.sentry import init_sentry
 from app.database import check_db_health, dispose_engine
 
 log = structlog.get_logger(__name__)
@@ -39,17 +39,7 @@ log = structlog.get_logger(__name__)
 # ── Sentry ────────────────────────────────────────────────────────────────────
 
 def _init_sentry() -> None:
-    if not settings.SENTRY_DSN:
-        return
-    sentry_sdk.init(
-        dsn=settings.SENTRY_DSN,
-        environment=settings.ENVIRONMENT,
-        release=settings.APP_VERSION,
-        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
-        send_default_pii=False,
-        integrations=[FastApiIntegration(), StarletteIntegration()],
-    )
-    log.info("sentry_initialized", environment=settings.ENVIRONMENT)
+    init_sentry(integrations=[FastApiIntegration(), StarletteIntegration()], component="api")
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
