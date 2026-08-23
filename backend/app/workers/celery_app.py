@@ -13,7 +13,10 @@ celery_app = Celery(
     "motmvoice",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.tasks.campaign", "app.workers.tasks.billing", "app.workers.tasks.backup"],
+    include=[
+        "app.workers.tasks.campaign", "app.workers.tasks.billing",
+        "app.workers.tasks.backup", "app.workers.tasks.retention",
+    ],
 )
 
 celery_app.conf.update(
@@ -71,6 +74,13 @@ celery_app.conf.update(
         "sync-storage-offsite": {
             "task": "app.workers.tasks.backup.sync_storage_offsite",
             "schedule": crontab(minute=0, hour=3),
+        },
+        # Offset another hour after the offsite sync above -- runs after
+        # anything that day's backup/sync would still want to see the
+        # not-yet-purged data. See app/workers/tasks/retention.py.
+        "purge-expired-call-data": {
+            "task": "app.workers.tasks.retention.purge_expired_call_data",
+            "schedule": crontab(minute=0, hour=4),
         },
     },
 )

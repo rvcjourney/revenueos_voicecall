@@ -168,6 +168,12 @@ class Call(Base, TimestampMixin):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set by app/workers/tasks/retention.py's daily purge once this call's
+    # recording/transcript have been removed past CALL_DATA_RETENTION_DAYS.
+    # The Call row itself is never deleted (see class docstring) -- this is
+    # purely an audit marker proving when/whether a purge happened, since a
+    # cleared recording_url alone can't be told apart from "never had one".
+    recording_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     campaign: Mapped["Campaign | None"] = relationship("Campaign", back_populates="calls")

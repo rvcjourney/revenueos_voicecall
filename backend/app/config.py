@@ -179,6 +179,13 @@ class Settings(BaseSettings):
     #   python -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
     STORAGE_SSE_C_KEY_B64: str = ""
 
+    # How long a call's recording (recording_url) and transcript (CallTranscript
+    # row) are kept before app/workers/tasks/retention.py's daily beat task
+    # hard-deletes them. The Call row itself (outcome, duration, summary, etc.)
+    # is never touched -- see app/models/call.py's Call docstring. Founder
+    # decision (2026-08-23 readiness audit, blocker 3): 45 days, hard delete.
+    CALL_DATA_RETENTION_DAYS: int = 45
+
     # ── Offsite database backups ─────────────────────────────────────────────
     # BUCKET_BACKUPS above (via StorageBackend) lives on the SAME disk as every
     # other bucket -- when STORAGE_BACKEND=minio (the production default, see
