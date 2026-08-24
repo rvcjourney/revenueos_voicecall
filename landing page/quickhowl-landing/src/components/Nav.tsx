@@ -21,13 +21,16 @@ import { Logo } from "@/components/shared/Logo";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { LOGIN_URL, SIGNUP_URL } from "@/lib/env";
+import { usePublicPlans } from "@/lib/hooks";
 import { usePlatformTab, type PlatformTabId } from "@/lib/platformTab";
 import { cn } from "@/lib/utils";
 
 // Hover-expand panel content, mirrored verbatim from the sections it
 // previews (PlatformShowcase's tabs, PlatformPillars' pillars, HowItWorks'
-// steps, Pricing's plan capacity lines) — same existing copy, just surfaced
-// a second time as nav previews (like Sarvam's mega menus), not new content.
+// steps) — same existing copy, just surfaced a second time as nav previews
+// (like Sarvam's mega menus), not new content. The Pricing panel is the one
+// exception: it's built live from usePublicPlans() below, not hardcoded --
+// see that block for why.
 // `tabId` (Platform items only) also selects the matching tab in
 // PlatformShowcase so clicking "Multilingual voice" lands on that tab, not
 // whichever one is active by default.
@@ -59,23 +62,39 @@ const howItWorksMenu: NavMenuItem[] = [
   { icon: Download, label: "05 · Export Leads", description: "Download results the moment they're ready" },
 ];
 
-const pricingMenu: NavMenuItem[] = [
-  { icon: Sparkles, label: "Starter", description: "500 AI call-minutes every month" },
-  { icon: Zap, label: "Professional", description: "1,600 AI call-minutes every month" },
-  { icon: Building2, label: "Enterprise", description: "3,200 AI call-minutes every month" },
-  { icon: Briefcase, label: "Business", description: "Custom call-minute volume" },
-];
+// Icon per plan name, purely cosmetic -- falls back to Sparkles for any
+// plan name not listed here (e.g. a newly-created plan).
+const PRICING_PLAN_ICONS: Record<string, typeof Mic> = {
+  Starter: Sparkles,
+  Professional: Zap,
+  Enterprise: Building2,
+  Business: Briefcase,
+};
 
 const links = [
   { href: "#platform", label: "Platform", menu: platformMenu },
   { href: "#features", label: "Features", menu: featuresMenu },
   { href: "#how-it-works", label: "How it works", menu: howItWorksMenu },
-  { href: "#pricing", label: "Pricing", menu: pricingMenu },
 ];
 
 export function Nav() {
   const [open, setOpen] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const plans = usePublicPlans();
+
+  // Pulled from the live /api/plans response (same source as the Pricing
+  // section itself) instead of a hardcoded copy -- a hardcoded mirror here
+  // previously went stale the moment a plan's price/capacity changed in the
+  // SuperAdmin console, since nothing kept it in sync.
+  const pricingMenu: NavMenuItem[] = (plans.data ?? []).map((plan) => ({
+    icon: PRICING_PLAN_ICONS[plan.name] ?? Sparkles,
+    label: plan.name,
+    description: plan.is_custom_pricing
+      ? "Custom call-minute volume"
+      : `${plan.credits_per_month.toLocaleString()} AI call-minutes every month`,
+  }));
+
+  const allLinks = [...links, { href: "#pricing", label: "Pricing", menu: pricingMenu }];
   const closeTimer = useRef<number | undefined>(undefined);
   const { setActiveTab } = usePlatformTab();
 
@@ -88,7 +107,7 @@ export function Nav() {
     closeTimer.current = window.setTimeout(() => setActiveMenu(null), 180);
   };
 
-  const active = links.find((l) => l.href === activeMenu);
+  const active = allLinks.find((l) => l.href === activeMenu);
 
   return (
     <header className="sticky top-3 z-40 mx-auto max-w-6xl px-4 sm:top-4 sm:px-6 lg:px-8" onMouseLeave={scheduleClose}>
@@ -98,7 +117,7 @@ export function Nav() {
         </a>
 
         <nav className="hidden items-center gap-8 md:flex">
-          {links.map((l) => (
+          {allLinks.map((l) => (
             <a
               key={l.href}
               href={l.href}
@@ -174,7 +193,7 @@ export function Nav() {
         )}
       >
         <div className="flex flex-col gap-1 px-4 py-3">
-          {links.map((l) => (
+          {allLinks.map((l) => (
             <a key={l.href} href={l.href} className="rounded-md px-2 py-2 text-sm text-muted-foreground hover:bg-accent">
               {l.label}
             </a>

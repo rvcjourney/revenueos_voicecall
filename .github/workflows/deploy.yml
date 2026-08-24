@@ -145,15 +145,19 @@ jobs:
           docker compose run --rm --no-deps api alembic upgrade head
           echo "Migrations complete ✓"
 
-          BUILD_AGENT=0; BUILD_BACKEND=0; BUILD_FRONTEND=0
-          echo "$CHANGED" | grep -q '^agent/'    && BUILD_AGENT=1
-          echo "$CHANGED" | grep -q '^backend/'  && BUILD_BACKEND=1
-          echo "$CHANGED" | grep -q '^frontend/' && BUILD_FRONTEND=1
+          BUILD_AGENT=0; BUILD_BACKEND=0; BUILD_FRONTEND=0; BUILD_LANDING=0
+          echo "$CHANGED" | grep -q '^agent/'         && BUILD_AGENT=1
+          echo "$CHANGED" | grep -q '^backend/'       && BUILD_BACKEND=1
+          echo "$CHANGED" | grep -q '^frontend/'      && BUILD_FRONTEND=1
+          # Note the space in the path itself ("landing page/") -- quoted so
+          # grep matches it literally instead of treating it as two patterns.
+          echo "$CHANGED" | grep -q '^landing page/'  && BUILD_LANDING=1
 
           SERVICES=""
           [ "$BUILD_AGENT"    = "1" ] && SERVICES="$SERVICES agent"
           [ "$BUILD_BACKEND"  = "1" ] && SERVICES="$SERVICES api worker beat"
           [ "$BUILD_FRONTEND" = "1" ] && SERVICES="$SERVICES frontend"
+          [ "$BUILD_LANDING"  = "1" ] && SERVICES="$SERVICES landing"
 
           if [ -n "$SERVICES" ]; then
             echo "Rebuilding:$SERVICES"
