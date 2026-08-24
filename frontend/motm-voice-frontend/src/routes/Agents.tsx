@@ -415,16 +415,27 @@ function AgentEditorDialog({
           <DialogTitle>{agent ? "Edit agent" : "Create agent"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+          {agent ? (
+            // Language isn't editable once an agent exists -- form.language still
+            // carries the agent's actual saved value through to handleSave() below
+            // unchanged, this just removes the (confusing, free-text) control that
+            // let it be edited here. Still editable at creation time, below.
             <div className="space-y-1.5">
               <Label>Name</Label>
               <Input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Enterprise Sales Agent" />
             </div>
-            <div className="space-y-1.5">
-              <Label>Language</Label>
-              <Input value={form.language} onChange={(e) => update("language", e.target.value)} placeholder="hinglish" />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Name</Label>
+                <Input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Enterprise Sales Agent" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Language</Label>
+                <Input value={form.language} onChange={(e) => update("language", e.target.value)} placeholder="hinglish" />
+              </div>
             </div>
-          </div>
+          )}
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Input value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What is this agent for?" />
