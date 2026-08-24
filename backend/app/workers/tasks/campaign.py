@@ -15,9 +15,16 @@ until the previous room is confirmed empty.
 Retry contacts (NO_ANSWER within retry budget) are processed on a second
 pass after all fresh PENDING contacts are exhausted.
 
-Window exit: when the current time falls outside the campaign's calling window
-the task exits cleanly. The beat task `resume_stalled_campaigns` re-queues
-it when the window opens again.
+Window exit: when the current time falls outside the campaign's calling window,
+the dispatcher does NOT exit -- it sleeps 60s and re-checks in a loop (see
+_dispatch_loop below), refreshing its own Redis lock each time so it isn't
+mistaken for a dead dispatcher. It resumes dialing in-place, in the same
+still-running task, the moment the window reopens (next allowed day/time --
+no explicit day-rollover logic needed, _in_calling_window's weekday+time check
+already covers multi-day gaps). The beat task `resume_stalled_campaigns` is
+purely a crash-recovery fallback for this: it only re-queues a RUNNING
+campaign whose lock has actually expired (i.e. the worker process holding
+this loop died), not the normal wait-for-window case.
 """
 from __future__ import annotations
 
@@ -908,8 +915,9 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
     """
     Parallel-call dispatcher.
     Each iteration picks up to `calls_per_minute` contacts and runs them
-    simultaneously with asyncio.gather().  Exits when the campaign is done,
-    paused, or outside the calling window.
+    simultaneously with asyncio.gather(). Exits when the campaign is done or
+    paused -- outside the calling window it sleeps and waits instead (see the
+    module docstring above), it does not exit.
     """
     while True:
         # ── Re-read campaign at the top of every iteration ─────────────────
