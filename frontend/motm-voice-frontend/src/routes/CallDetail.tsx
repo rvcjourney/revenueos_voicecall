@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Bot, Download, FileText, ListTree, Loader2, MessageSquare, RefreshCw, User } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,8 @@ import { callDurationSeconds, cn, formatDateTime, formatDuration, titleCase } fr
 
 export default function CallDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
   const call = useCall(id);
   const fetchRecording = useFetchRecording();
   const [recordingBlobUrl, setRecordingBlobUrl] = useState<string | null>(null);
@@ -65,6 +67,18 @@ export default function CallDetail() {
   const c = call.data;
   const defaultTab = c.summary ? "summary" : "transcript";
 
+  // Reached from several places (global call history, a campaign's Calls tab,
+  // the dashboard's recent-calls card) -- a hardcoded `Link to="/calls"` here
+  // sent every one of them back to call history regardless of where they
+  // actually came from. True back-navigation fixes all of them at once.
+  // location.key is "default" only when there's no real SPA history to go
+  // back to (e.g. this page was loaded directly / refreshed) -- fall back to
+  // call history in that case instead of navigating out of the app.
+  function handleBack() {
+    if (location.key !== "default") navigate(-1);
+    else navigate("/calls");
+  }
+
   async function handleFetchRecording() {
     if (!id) return;
     try {
@@ -81,10 +95,8 @@ export default function CallDetail() {
 
   return (
     <div className="space-y-6">
-      <Button variant="ghost" size="sm" asChild className="-ml-2">
-        <Link to="/calls">
-          <ArrowLeft className="h-4 w-4" /> Back to call history
-        </Link>
+      <Button variant="ghost" size="sm" onClick={handleBack} className="-ml-2">
+        <ArrowLeft className="h-4 w-4" /> Back
       </Button>
 
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
