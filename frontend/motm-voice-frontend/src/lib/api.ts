@@ -253,7 +253,8 @@ export const campaignsApi = {
   },
   launch: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/launch`),
   pause: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/pause`),
-  duplicate: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/duplicate`),
+  duplicate: (id: string, copyContacts = true) =>
+    api.post<Campaign>(`/api/campaigns/${id}/duplicate`, undefined, { params: { copy_contacts: copyContacts } }),
   exportInterested: (id: string, filename = "interested-leads.csv") =>
     downloadBlob(`/api/campaigns/${id}/export/interested`, filename),
   exportNoAnswer: (id: string, filename = "no-answer.csv") =>

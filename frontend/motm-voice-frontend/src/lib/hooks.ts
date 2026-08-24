@@ -182,7 +182,8 @@ export function usePauseCampaign() {
 export function useDuplicateCampaign() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => campaignsApi.duplicate(id),
+    mutationFn: ({ id, copyContacts = true }: { id: string; copyContacts?: boolean }) =>
+      campaignsApi.duplicate(id, copyContacts),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["campaigns"] }),
   });
 }

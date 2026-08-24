@@ -682,10 +682,20 @@ async def export_all_results(
 @router.post("/{campaign_id}/duplicate", response_model=CampaignOut, status_code=201)
 async def duplicate_campaign(
     campaign_id: UUID,
+    copy_contacts: bool = Query(True),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Clone a campaign (settings + contacts) into a new draft."""
+    """
+    Clone a campaign's settings into a new draft.
+
+    copy_contacts=False skips copying the original's contact list, leaving
+    the new campaign with 0 contacts -- for the "duplicate with fresh data"
+    flow, where the frontend uploads a new CSV onto this draft right after
+    (POST /{id}/contacts, which appends rather than replaces, so skipping
+    the copy here is what keeps the two contact lists from ending up mixed
+    together).
+    """
     original = await db.get(Campaign, campaign_id)
     _check_campaign_access(original, token)
 
@@ -713,7 +723,7 @@ async def duplicate_campaign(
 
     original_contacts = (await db.execute(
         select(CampaignContact).where(CampaignContact.campaign_id == campaign_id)
-    )).scalars().all()
+    )).scalars().all() if copy_contacts else []
 
     if original_contacts:
         new_contacts = [

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -7,9 +7,9 @@ import {
   Download,
   Loader2,
   Pause,
-  Pencil,
   Phone,
   Play,
+  StickyNote,
   Users,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,19 +37,22 @@ import {
   useLaunchCampaign,
   usePauseCampaign,
   useUpdateCampaign,
+  useUploadContacts,
 } from "@/lib/hooks";
 import { campaignsApi, usageApi } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api";
-import { callDurationSeconds, formatDate, formatDateTime, formatDuration } from "@/lib/utils";
+import { callDurationSeconds, cn, formatDate, formatDateTime, formatDuration } from "@/lib/utils";
 
 export default function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const campaign = useCampaign(id);
   const launch = useLaunchCampaign();
   const pause = usePauseCampaign();
-  const duplicate = useDuplicateCampaign();
   const [editOpen, setEditOpen] = useState(false);
+  const [dupOpen, setDupOpen] = useState(false);
 
   if (campaign.isLoading) {
     return (
@@ -106,16 +109,6 @@ export default function CampaignDetail() {
     }
   }
 
-  async function handleDuplicate() {
-    try {
-      const res = await duplicate.mutateAsync(c.id);
-      toast.success("Campaign duplicated");
-      navigate(`/campaigns/${res.data.id}`);
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't duplicate campaign"));
-    }
-  }
-
   async function handleExport(kind: "interested" | "no_answer" | "callback_requested" | "all") {
     try {
       const filename = `${c.name.replace(/\s+/g, "-")}-${kind}.csv`;
@@ -132,12 +125,28 @@ export default function CampaignDetail() {
     }
   }
 
+  const activeTab = searchParams.get("tab") ?? "overview";
+  function handleTabChange(tab: string) {
+    // replace: true -- switching tabs shouldn't itself be a back-button stop,
+    // it just keeps the URL (and so browser history) pointing at whichever
+    // tab is currently open, so returning here later (e.g. from a call's
+    // detail page) restores that tab instead of resetting to Overview.
+    setSearchParams(tab === "overview" ? {} : { tab }, { replace: true });
+  }
+
+  // Campaigns list is the only place this page is ever linked from today, but
+  // true back-navigation (matching the fix in CallDetail.tsx) is still more
+  // correct than a hardcoded destination, and avoids piling up redundant
+  // history entries. Same "no real history" fallback as CallDetail.
+  function handleBack() {
+    if (location.key !== "default") navigate(-1);
+    else navigate("/campaigns");
+  }
+
   return (
     <div className="space-y-6">
-      <Button variant="ghost" size="sm" asChild className="-ml-2">
-        <Link to="/campaigns">
-          <ArrowLeft className="h-4 w-4" /> Back to campaigns
-        </Link>
+      <Button variant="ghost" size="sm" onClick={handleBack} className="-ml-2">
+        <ArrowLeft className="h-4 w-4" /> Back to campaigns
       </Button>
 
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
@@ -164,9 +173,9 @@ export default function CampaignDetail() {
             </Button>
           )}
           <Button variant="outline" onClick={() => setEditOpen(true)}>
-            <Pencil className="h-4 w-4" /> Edit
+            <StickyNote className="h-4 w-4" /> Notes
           </Button>
-          <Button variant="outline" onClick={handleDuplicate} disabled={duplicate.isPending}>
+          <Button variant="outline" onClick={() => setDupOpen(true)}>
             <Copy className="h-4 w-4" /> Duplicate
           </Button>
           <DropdownMenu>
@@ -192,7 +201,7 @@ export default function CampaignDetail() {
         <StatCard icon={Phone} label="Failed" value={c.failed_count} tone={c.failed_count > 0 ? "destructive" : undefined} />
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
@@ -226,6 +235,7 @@ export default function CampaignDetail() {
       </Tabs>
 
       <EditCampaignDialog campaignId={c.id} initialNotes={c.notes ?? ""} open={editOpen} onOpenChange={setEditOpen} />
+      <DuplicateCampaignDialog campaignId={c.id} campaignName={c.name} open={dupOpen} onOpenChange={setDupOpen} />
     </div>
   );
 }
@@ -394,6 +404,146 @@ function EditCampaignDialog({
           <Button variant="gradient" onClick={save} disabled={updateCampaign.isPending}>
             {updateCampaign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DuplicateCampaignDialog({
+  campaignId,
+  campaignName,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  campaignName: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [mode, setMode] = useState<"existing" | "new" | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const navigate = useNavigate();
+  const duplicate = useDuplicateCampaign();
+  const uploadContacts = useUploadContacts();
+  const launchCampaign = useLaunchCampaign();
+  const busy = duplicate.isPending || uploadContacts.isPending || launchCampaign.isPending;
+
+  function reset() {
+    setMode(null);
+    setFile(null);
+  }
+
+  async function handleConfirm() {
+    if (mode === "existing") {
+      try {
+        const res = await duplicate.mutateAsync({ id: campaignId, copyContacts: true });
+        toast.success("Campaign duplicated");
+        onOpenChange(false);
+        reset();
+        navigate(`/campaigns/${res.data.id}`);
+      } catch (err) {
+        toast.error(apiErrorMessage(err, "Couldn't duplicate campaign"));
+      }
+      return;
+    }
+
+    if (mode === "new") {
+      if (!file) {
+        toast.error("Choose a CSV or Excel file first");
+        return;
+      }
+      // Three steps against a brand-new campaign: create it empty (copy_contacts=
+      // false -- see the backend's own note on why skipping the copy matters
+      // here, since uploads append rather than replace), upload the chosen file,
+      // then launch. If a later step fails, the campaign from the earlier steps
+      // still exists -- navigate to it either way so nothing is stranded off-screen,
+      // just with a message pointing at what still needs finishing manually.
+      let newId: string | null = null;
+      try {
+        const dup = await duplicate.mutateAsync({ id: campaignId, copyContacts: false });
+        newId = dup.data.id;
+        await uploadContacts.mutateAsync({ id: newId, file });
+        await launchCampaign.mutateAsync(newId);
+        toast.success("Campaign duplicated and launched with the new contact list");
+        onOpenChange(false);
+        reset();
+        navigate(`/campaigns/${newId}`);
+      } catch (err) {
+        toast.error(
+          apiErrorMessage(
+            err,
+            "Duplicate created, but uploading/launching with the new contacts didn't finish — pick up from the new campaign's page"
+          )
+        );
+        if (newId) {
+          onOpenChange(false);
+          reset();
+          navigate(`/campaigns/${newId}`);
+        }
+      }
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Duplicate "{campaignName}"</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Should the new campaign keep this campaign's contacts, or start fresh with a new list?
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setMode("existing")}
+              className={cn(
+                "rounded-lg border p-3 text-left text-sm transition-colors",
+                mode === "existing" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+              )}
+            >
+              <p className="font-medium">Keep existing contacts</p>
+              <p className="text-xs text-muted-foreground">Copies the same contact list into the new draft.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("new")}
+              className={cn(
+                "rounded-lg border p-3 text-left text-sm transition-colors",
+                mode === "new" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+              )}
+            >
+              <p className="font-medium">Upload new contacts</p>
+              <p className="text-xs text-muted-foreground">Starts empty — upload a CSV, then it launches automatically.</p>
+            </button>
+          </div>
+
+          {mode === "new" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="dup-file">Contact file</Label>
+              <input
+                id="dup-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80"
+              />
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="gradient" onClick={handleConfirm} disabled={!mode || (mode === "new" && !file) || busy}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {mode === "new" ? "Duplicate & launch" : "Duplicate"}
           </Button>
         </DialogFooter>
       </DialogContent>
