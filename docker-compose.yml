@@ -65,6 +65,13 @@ services:
     restart: always
     env_file: ./backend/.env
     environment:
+      # Only the api service set this explicitly before -- worker/beat fell
+      # back to Settings' "development" default (backend/.env apparently
+      # doesn't set it either), confirmed live: their logs were rendering
+      # via structlog's colorized dev console renderer instead of JSON like
+      # api, and app/config.py's production-only validation checks (DEBUG/
+      # DOCS_ENABLED/SENTRY_DSN) were silently skipping these two processes.
+      - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -117,6 +124,8 @@ services:
     restart: always
     env_file: ./backend/.env
     environment:
+      # See the worker service's identical setting above for why.
+      - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
