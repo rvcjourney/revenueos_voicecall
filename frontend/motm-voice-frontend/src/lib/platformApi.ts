@@ -86,6 +86,7 @@ export const platformOrgsApi = {
   get: (id: string) => platformApi.get<PlatformOrgDetail>(`/api/platform/orgs/${id}`),
   update: (id: string, data: PlatformOrgUpdate) =>
     platformApi.patch<PlatformOrgDetail>(`/api/platform/orgs/${id}`, data),
+  delete: (id: string) => platformApi.delete<void>(`/api/platform/orgs/${id}`),
   adjustCredits: (id: string, data: { delta: number; reason: string }) =>
     platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/adjust`, data),
   resetCredits: (id: string) => platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/reset`),

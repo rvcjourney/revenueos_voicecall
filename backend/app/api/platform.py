@@ -387,6 +387,51 @@ async def update_org(
     return await _to_org_detail_out(db, org)
 
 
+@router.delete("/orgs/{org_id}", status_code=204)
+async def delete_org(
+    org_id: UUID,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Soft-delete an organization (sets deleted_at, same SoftDeleteMixin
+    convention every other table in this codebase uses -- see
+    app/models/base.py: "Soft-deleted (never hard-deleted) for compliance
+    and audit trail"). Immediately drops the org out of every listing here
+    (list_orgs/get_org both filter on deleted_at.is_(None)) -- its rows and
+    call history are kept, not erased.
+
+    Refuses to delete an org that has an active (non-deleted) Subscription --
+    this is meant for cleaning up abandoned/test orgs that were never on a
+    plan, not for offboarding a paying customer (cancel their subscription
+    first, or use suspend for a reversible block).
+    """
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+
+    sub = await _active_subscription(db, org.id)
+    if sub is not None:
+        raise ConflictError(
+            "This organization has an active subscription — cancel it before deleting, "
+            "or suspend the org instead."
+        )
+
+    org.deleted_at = datetime.now(timezone.utc)
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=org.id,
+        action="org.delete",
+        target_type="organization",
+        target_id=org.id,
+        audit_metadata={"name": org.name, "slug": org.slug},
+    ))
+
+    await db.commit()
+
+
 @router.post("/orgs/{org_id}/credits/adjust", response_model=CreditAdjustResponse)
 async def adjust_org_credits(
     org_id: UUID,

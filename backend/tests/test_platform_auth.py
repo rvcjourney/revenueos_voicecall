@@ -7,11 +7,15 @@ require_platform_admin): each must reject the other's token outright.
 """
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import select
 
 from app.core.security import create_access_token, create_platform_token, hash_password
 from app.models.audit_log import AuditLog
+from app.models.plan import Plan
 from app.models.platform_admin import PlatformAdmin
+from app.models.subscription import Subscription
 from app.models.user import Organization, User, UserRole
 
 
@@ -106,3 +110,47 @@ async def test_patch_org_writes_audit_log(client, db):
     assert len(audit_rows) == 1
     assert audit_rows[0].actor_type == "platform_admin"
     assert audit_rows[0].actor_id == admin.id
+
+
+async def test_delete_org_without_plan_succeeds(client, db):
+    admin = await _make_platform_admin(db, "super5@motmvoice.com", "correct-horse-5")
+    org, _user = await _make_org_and_user(db)
+    token = create_platform_token(str(admin.id))
+
+    resp = await client.delete(
+        f"/api/platform/orgs/{org.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 204
+
+    await db.refresh(org)
+    assert org.deleted_at is not None
+
+    # Deleted orgs drop out of the list endpoint immediately.
+    list_resp = await client.get("/api/platform/orgs", headers={"Authorization": f"Bearer {token}"})
+    assert org.id not in {UUID(o["id"]) for o in list_resp.json()}
+
+    audit_rows = (await db.execute(
+        select(AuditLog).where(AuditLog.org_id == org.id, AuditLog.action == "org.delete")
+    )).scalars().all()
+    assert len(audit_rows) == 1
+    assert audit_rows[0].actor_id == admin.id
+
+
+async def test_delete_org_with_active_subscription_is_refused(client, db):
+    admin = await _make_platform_admin(db, "super6@motmvoice.com", "correct-horse-6")
+    org, _user = await _make_org_and_user(db)
+    token = create_platform_token(str(admin.id))
+
+    plan = Plan(name="Starter", price_minor=99900, monthly_call_quota=1000, max_concurrent_calls=5)
+    db.add(plan)
+    await db.flush()
+    db.add(Subscription(org_id=org.id, plan_id=plan.id, status="active"))
+    await db.commit()
+
+    resp = await client.delete(
+        f"/api/platform/orgs/{org.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 409
+
+    await db.refresh(org)
+    assert org.deleted_at is None

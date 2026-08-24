@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, ExternalLink, Loader2, Receipt, RotateCcw, ShieldOff, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, Receipt, RotateCcw, ShieldOff, ShieldCheck, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { StatCard } from "@/components/shared/StatCard";
@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformCallsChart, PlatformCreditsChart } from "@/components/charts/PlatformUsageCharts";
 import {
   useAdjustPlatformOrgCredits,
+  useDeletePlatformOrg,
   usePlatformOrg,
   usePlatformOrgInvoices,
   usePlatformOrgUsageAnalytics,
@@ -107,9 +108,55 @@ export default function PlatformOrgDetail() {
           <CreditsCard id={org.data.id} />
           <PaymentHistoryCard id={org.data.id} />
           <UsageCard id={org.data.id} />
+          <DeleteCard id={org.data.id} orgName={org.data.name} hasPlan={!!org.data.plan_name} />
         </>
       )}
     </div>
+  );
+}
+
+function DeleteCard({ id, orgName, hasPlan }: { id: string; orgName: string; hasPlan: boolean }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const navigate = useNavigate();
+  const del = useDeletePlatformOrg();
+
+  async function handleConfirm() {
+    try {
+      await del.mutateAsync(id);
+      toast.success("Organization deleted");
+      navigate("/ops/organizations");
+    } catch (err) {
+      toast.error(platformApiErrorMessage(err, "Couldn't delete organization"));
+    }
+  }
+
+  return (
+    <Card className="border-destructive/30">
+      <CardHeader>
+        <CardTitle className="text-destructive">Danger zone</CardTitle>
+        <CardDescription>
+          {hasPlan
+            ? "This org has an active subscription — cancel it before it can be deleted, or suspend the org instead for a reversible block."
+            : "This org has no active plan. Deleting removes it from every list here — its data is kept for audit, not erased, but it cannot be recovered through this console."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <Button variant="destructive" onClick={() => setConfirmOpen(true)} disabled={hasPlan}>
+          <Trash2 className="h-3.5 w-3.5" /> Delete organization
+        </Button>
+      </CardContent>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={`Delete ${orgName}?`}
+        description="This permanently removes the organization from every SuperAdmin listing. This cannot be undone from here."
+        confirmLabel="Delete"
+        variant="destructive"
+        loading={del.isPending}
+        onConfirm={handleConfirm}
+      />
+    </Card>
   );
 }
 

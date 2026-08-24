@@ -47,6 +47,16 @@ export function useUpdatePlatformOrg() {
   });
 }
 
+export function useDeletePlatformOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => platformOrgsApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["platform-orgs"] });
+    },
+  });
+}
+
 export function useAdjustPlatformOrgCredits() {
   const qc = useQueryClient();
   return useMutation({
