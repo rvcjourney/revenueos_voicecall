@@ -68,13 +68,13 @@ export default function PlatformOrganizations() {
                   <TableHead className="pl-5">Organization</TableHead>
                   <TableHead>Plan</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Calls used</TableHead>
+                  <TableHead>Usage (min)</TableHead>
                   <TableHead className="pr-5">Created</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((org) => {
-                  const ratio = org.monthly_call_quota > 0 ? Math.min(100, (org.calls_used_this_period / org.monthly_call_quota) * 100) : 0;
+                  const ratio = org.credits_per_month > 0 ? Math.min(100, (org.credits_used_this_period / org.credits_per_month) * 100) : 0;
                   return (
                     <TableRow
                       key={org.id}
@@ -99,7 +99,7 @@ export default function PlatformOrganizations() {
                         <div className="flex items-center gap-2">
                           <Progress value={ratio} className="h-1.5 w-24" />
                           <span className="whitespace-nowrap text-xs text-muted-foreground">
-                            {org.calls_used_this_period.toLocaleString()} / {org.monthly_call_quota.toLocaleString()}
+                            {org.credits_used_this_period.toLocaleString()} / {org.credits_per_month.toLocaleString()}
                           </span>
                         </div>
                       </TableCell>

@@ -111,8 +111,15 @@ class OrgListItemOut(BaseModel):
     slug: str
     is_active: bool
     plan_name: str | None
+    # Legacy call-count quota -- superseded by credits_used_this_period/
+    # credits_per_month below (1 credit = 1 minute), which is what's actually
+    # incremented on every completed call (app/core/credits.py). These two
+    # are never incremented anywhere and always read 0; kept only because
+    # monthly_call_quota remains an editable per-org override (OrgPatchRequest).
     calls_used_this_period: int
     monthly_call_quota: int
+    credits_used_this_period: int
+    credits_per_month: int
     created_at: str
 
 
@@ -120,8 +127,6 @@ class OrgDetailOut(OrgListItemOut):
     users_count: int
     subscription_status: str | None
     subscription_current_period_end: str | None
-    credits_used_this_period: int
-    credits_per_month: int
     elevenlabs_enabled: bool
     # Plan pricing snapshot (from the org's currently-assigned Plan, not
     # frozen at signup) -- lets SuperAdmin see what each client is actually

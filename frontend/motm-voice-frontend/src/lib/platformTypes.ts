@@ -25,8 +25,14 @@ export interface PlatformOrg {
   slug: string;
   plan_name: string;
   is_active: boolean;
+  // Legacy call-count quota -- never incremented; kept only because
+  // monthly_call_quota is still an editable per-org override. Use
+  // credits_used_this_period/credits_per_month (1 credit = 1 minute) for
+  // actual live usage.
   calls_used_this_period: number;
   monthly_call_quota: number;
+  credits_used_this_period: number;
+  credits_per_month: number;
   created_at: string;
 }
 
@@ -34,8 +40,6 @@ export interface PlatformOrgDetail extends PlatformOrg {
   users_count: number;
   subscription_status: string;
   subscription_current_period_end: string | null;
-  credits_used_this_period: number;
-  credits_per_month: number;
   elevenlabs_enabled: boolean;
   plan_price_minor: number | null;
   plan_discount_price_minor: number | null;

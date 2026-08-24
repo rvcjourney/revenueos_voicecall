@@ -222,6 +222,13 @@ async def list_orgs(
         if sub:
             plan = await db.get(Plan, sub.plan_id)
             plan_name = plan.name if plan else None
+
+        # Live usage: calls_used_this_period/monthly_call_quota are never
+        # incremented (see OrgListItemOut's docstring) -- credits_used_this_period
+        # is the field campaign workers actually update on every completed call.
+        await reset_credit_period_if_stale(db, org)
+        credits_per_month = await resolve_org_credits_per_month(db, org.id)
+
         result.append(OrgListItemOut(
             id=str(org.id),
             name=org.name,
@@ -230,6 +237,8 @@ async def list_orgs(
             plan_name=plan_name,
             calls_used_this_period=org.calls_used_this_period,
             monthly_call_quota=org.monthly_call_quota,
+            credits_used_this_period=org.credits_used_this_period,
+            credits_per_month=credits_per_month,
             created_at=org.created_at.isoformat(),
         ))
     return result
@@ -627,11 +636,10 @@ async def get_metrics(
             Campaign.deleted_at.is_(None),
         )
     )
-    total_calls_used = await db.scalar(
-        select(func.coalesce(func.sum(Organization.calls_used_this_period), 0)).where(
-            Organization.deleted_at.is_(None)
-        )
-    )
+    # Organization.calls_used_this_period is a legacy counter that's never
+    # incremented anywhere (see OrgListItemOut) -- summing it always returns 0.
+    # A direct count of Call rows is the real, live cross-tenant total.
+    total_calls_used = await db.scalar(select(func.count(Call.id)))
     return PlatformMetricsOut(
         org_count=org_count or 0,
         active_campaigns=active_campaigns or 0,
