@@ -40,6 +40,23 @@ celery_app.conf.update(
     # Fetch only one task at a time — campaign tasks are long-running and we
     # don't want a worker to pre-fetch a second campaign task it can't start.
     worker_prefetch_multiplier=1,
+    # Both default to True, and both fight the custom structlog setup this
+    # app wires in via worker_process_init/beat_init below (app/core/logging.
+    # py's configure_logging()) -- confirmed live: with these left at their
+    # defaults, that setup silently produced zero visible output in
+    # `docker compose logs`, no exception either, even though calling the
+    # handler directly worked fine in isolation.
+    #   worker_hijack_root_logger: Celery reconfigures the root logger AFTER
+    #     worker_process_init fires, discarding whatever handler we just
+    #     attached to it.
+    #   worker_redirect_stdouts: Celery replaces sys.stdout/sys.stderr with
+    #     its own proxy that routes writes into Celery's own logger. Our
+    #     handler is built as logging.StreamHandler(sys.stdout) INSIDE
+    #     configure_logging() -- if that runs after Celery's redirect has
+    #     already swapped sys.stdout for its proxy, every write loops back
+    #     into Celery's logging instead of reaching the real stream.
+    worker_hijack_root_logger=False,
+    worker_redirect_stdouts=False,
     beat_schedule={
         # Every 60 s: restart any RUNNING campaign whose dispatcher has died.
         "resume-stalled-campaigns": {
