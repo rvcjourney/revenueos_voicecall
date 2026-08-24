@@ -24,6 +24,17 @@ services:
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      # Without this, Python fully block-buffers stdout whenever it isn't a
+      # TTY (always true under Docker) -- app/core/logging.py's structlog
+      # handler writes to stdout, not stderr (unlike Celery's own default
+      # logger, which explicitly targets stderr and is unbuffered regardless).
+      # This container only ever "worked" by accident: enough request/
+      # healthcheck traffic happens to fill and flush the buffer on its own.
+      # Confirmed missing on worker/beat below caused their structlog output
+      # (including sentry_initialized) to never appear in `docker compose
+      # logs` at all, even though it ran successfully -- agent already had
+      # this set for the same reason.
+      - PYTHONUNBUFFERED=1
     ports:
       - "7000:8000"
     networks:
@@ -57,6 +68,11 @@ services:
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      # See the api service's identical setting above for why -- confirmed
+      # via a live deploy that without this, structlog output (including
+      # the new worker_process_init Sentry-init log line) silently never
+      # reached `docker compose logs` even though it ran successfully.
+      - PYTHONUNBUFFERED=1
     networks:
       - motm
     command: >
@@ -104,6 +120,8 @@ services:
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      # See the api service's identical setting above for why.
+      - PYTHONUNBUFFERED=1
     networks:
       - motm
     volumes:
