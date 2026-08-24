@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import httpx
 
-GROQ_OPTIMIZE_MODEL  = "llama-3.3-70b-versatile"   # best quality for structured generation
+# llama-3.3-70b-versatile (previous default) was deprecated by Groq, same
+# fate as llama-3.1-* -- see app/config.py's GROQ_SUMMARY_MODEL comment for
+# the same story on the call-classification model. gpt-oss-120b is Groq's
+# current best-quality model for structured generation like this.
+GROQ_OPTIMIZE_MODEL  = "openai/gpt-oss-120b"
 
 # ── Fixed sections (same for every agent, never changes) ─────────────────────
 
