@@ -71,7 +71,16 @@ services:
       # via structlog's colorized dev console renderer instead of JSON like
       # api, and app/config.py's production-only validation checks (DEBUG/
       # DOCS_ENABLED/SENTRY_DSN) were silently skipping these two processes.
+      # DOCS_ENABLED/DEBUG MUST travel together with ENVIRONMENT=production --
+      # Settings._validate_production hard-fails startup if ENVIRONMENT is
+      # "production" but DOCS_ENABLED/DEBUG aren't also explicitly set (their
+      # class defaults are DOCS_ENABLED=True, DEBUG=False -- backend/.env
+      # doesn't override DOCS_ENABLED either, only api's own environment
+      # block did). Confirmed live: adding ENVIRONMENT=production alone
+      # crash-looped both worker and beat on this exact validation error.
       - ENVIRONMENT=production
+      - DOCS_ENABLED=false
+      - DEBUG=false
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -124,8 +133,12 @@ services:
     restart: always
     env_file: ./backend/.env
     environment:
-      # See the worker service's identical setting above for why.
+      # See the worker service's identical settings above for why -- all
+      # three must travel together or Settings._validate_production
+      # hard-fails startup.
       - ENVIRONMENT=production
+      - DOCS_ENABLED=false
+      - DEBUG=false
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
