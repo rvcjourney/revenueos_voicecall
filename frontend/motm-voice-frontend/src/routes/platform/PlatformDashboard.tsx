@@ -111,9 +111,9 @@ function SystemHealthCard() {
               {rows.map((row) => (
                 <div
                   key={row.label}
-                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     {row.ok ? (
                       <CheckCircle2 className="h-4 w-4 text-success" />
                     ) : (
@@ -121,7 +121,16 @@ function SystemHealthCard() {
                     )}
                     <span className="text-sm font-medium">{row.label}</span>
                   </div>
-                  <Badge variant={row.ok ? "success" : "destructive"}>
+                  {/* min-w-0 lets this actually shrink inside the flex row instead of
+                      forcing the row (and the whole card) to overflow at its intrinsic
+                      width -- a raw Groq/provider error string here previously spilled
+                      off the edge of the page instead of wrapping or truncating.
+                      title= keeps the full message reachable on hover. */}
+                  <Badge
+                    variant={row.ok ? "success" : "destructive"}
+                    title={row.detail}
+                    className="min-w-0 max-w-[65%] truncate"
+                  >
                     {row.detail ?? (row.ok ? "Operational" : "Down")}
                   </Badge>
                 </div>
