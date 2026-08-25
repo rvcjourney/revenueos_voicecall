@@ -955,12 +955,19 @@ class VoiceAgent(Agent):
         _persist_failed_report(self._call_id, payload, last_exc)
         raise last_exc
 
-    async def _post_call_report(self, *, outcome_override: str | None = None) -> None:
+    async def _post_call_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
         """Classify outcome with Groq and POST to backend. Called once after every call.
 
         outcome_override: when the caller already KNOWS the outcome with certainty
         (e.g. deterministic voicemail-phrase detection), skip the transcript-based
         classifier entirely and report this value directly — see _send_report.
+        abrupt_disconnect: the customer's own line disconnected before the agent
+        got a chance to close the call gracefully (see _on_participant_left in
+        entrypoint() below) — as opposed to the agent hanging up after saying its
+        own farewell (_do_hangup), a silence timeout, or a session-level error.
+        Lets _send_report tell "customer dropped off mid-conversation" apart from
+        "conversation reached some real conclusion" when there wasn't much to
+        go on either way.
         """
         if not self._call_id or not self._backend_url:
             logger.warning(
@@ -973,13 +980,16 @@ class VoiceAgent(Agent):
             return
         self._reported = True
         try:
-            await asyncio.wait_for(self._send_report(outcome_override=outcome_override), timeout=15.0)
+            await asyncio.wait_for(
+                self._send_report(outcome_override=outcome_override, abrupt_disconnect=abrupt_disconnect),
+                timeout=15.0,
+            )
         except asyncio.TimeoutError:
             logger.error("post_call_report timed out — backend may be unreachable at %s", self._backend_url)
         except Exception as exc:
             logger.error("post_call_report failed: %s", exc)
 
-    async def _send_report(self, *, outcome_override: str | None = None) -> None:
+    async def _send_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
         import json as _json
 
         # Try to get full conversation (user + agent) from session history
@@ -1018,6 +1028,21 @@ class VoiceAgent(Agent):
             full_transcript = [{"role": "user", "text": t} for t in self._user_messages]
 
         if not full_transcript and not outcome_override:
+            if abrupt_disconnect:
+                # The exact shape of a call that never really started: the
+                # customer's line disconnected before either side said anything
+                # that made it into history (e.g. cut off during/before the
+                # welcome message). Previously this returned here with nothing
+                # reported at all, leaving outcome stuck at the DB default
+                # "pending" forever -- indistinguishable from "still being
+                # classified" on a call that will never be classified.
+                await self._post_agent_report({
+                    "outcome": "call_dropped",
+                    "summary": "Call disconnected before any conversation happened.",
+                    "transcript": [],
+                })
+                logger.info("post_call_report_sent | call=%s outcome=call_dropped (no transcript)", self._call_id)
+                return
             logger.info("post_call_report_skipped | call=%s reason=no_conversation_captured", self._call_id)
             return  # nothing was said by either side; leave outcome as PENDING
 
@@ -1041,20 +1066,30 @@ class VoiceAgent(Agent):
 
         # ── Minimum engagement gate ────────────────────────────────────────────
         # Count how many words the customer actually said across all turns.
-        # If they barely spoke, there is no evidence of interest — skip the LLM
-        # entirely and classify as not_interested immediately.
+        # If they barely spoke, there isn't enough for the LLM to reliably judge
+        # either way — skip it and classify deterministically instead.
         customer_word_count = sum(
             len(m.get("text", "").split())
             for m in full_transcript
             if m.get("role") == "user"
         )
         if customer_word_count < 8:
+            # Two different stories behind "barely any words," and they read very
+            # differently to a sales team: the customer's line disconnecting
+            # abruptly mid-conversation (before the agent could even close things
+            # out gracefully) isn't a rejection — there's no real signal either
+            # way, just a dropped call. Only call it not_interested when nothing
+            # about how the call ended suggests it was cut short.
+            if abrupt_disconnect:
+                outcome = "call_dropped"
+                summary = "Call disconnected before a real conversation happened."
+            else:
+                outcome = "not_interested"
+                summary = "Customer did not engage meaningfully in the conversation."
             logger.info(
-                "classify_skip: customer only spoke %d words — marking not_interested",
-                customer_word_count,
+                "classify_skip: customer only spoke %d words (abrupt_disconnect=%s) — marking %s",
+                customer_word_count, abrupt_disconnect, outcome,
             )
-            outcome = "not_interested"
-            summary = "Customer did not engage meaningfully in the conversation."
             await self._post_agent_report({"outcome": outcome, "summary": summary, "transcript": full_transcript})
             logger.info("post_call_report_sent | call=%s outcome=%s words=%d", self._call_id, outcome, customer_word_count)
             return
@@ -1063,6 +1098,21 @@ class VoiceAgent(Agent):
         outcome, summary = "not_interested", ""
         raw = None          # stays None if the Groq call itself never returned a response
         finish_reason = None
+        # Only offered as a candidate outcome when the call actually ended via an
+        # abrupt customer-side disconnect (see _post_call_report's docstring) --
+        # otherwise the classifier has no reason to ever reach for it, since every
+        # other hangup path (agent's own farewell, silence timeout, session error)
+        # isn't "the customer cut the conversation short."
+        call_dropped_rule = (
+            "  call_dropped        — The customer's line disconnected abruptly before the "
+            "conversation reached any real conclusion — cut off mid-sentence, mid-question, "
+            "or before answering what the agent had just asked. Use this ONLY when there "
+            "isn't enough in the transcript to judge real interest either way because it "
+            "was cut short. Do NOT use this if the customer's own words already gave a "
+            "clear signal before hanging up (a clear rejection, a specific question, "
+            "agreeing to share contact info, etc.) — classify those normally even though "
+            "the call still ended abruptly.\n\n"
+        ) if abrupt_disconnect else ""
         try:
             import groq as _groq
             client = _groq.AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
@@ -1121,6 +1171,7 @@ class VoiceAgent(Agent):
                             "                       • Said 'call me later'/'I'll give you my number' with no specific "
                             "time, especially right before hanging up\n"
                             "                       WHEN IN DOUBT → use not_interested\n\n"
+                            f"{call_dropped_rule}"
                             "  wrong_number       — Wrong person or wrong business.\n\n"
                             "  do_not_call        — Customer demanded never to be called again.\n\n"
                             "RED FLAG — fake contact info: if the phone/WhatsApp number in the transcript is implausible "
@@ -1148,6 +1199,12 @@ class VoiceAgent(Agent):
             raw_extracted = result.get("extracted_data") or {}
             extracted_data = {k: v for k, v in raw_extracted.items() if v is not None}
             valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
+            # call_dropped is only a legal choice on the same calls where the prompt
+            # above actually offered it as an option -- otherwise a model that
+            # hallucinates it anyway still falls back to not_interested like any
+            # other invalid value.
+            if abrupt_disconnect:
+                valid.add("call_dropped")
             if outcome not in valid:
                 outcome = "not_interested"
             # finish_reason == "length" means Groq hit max_tokens and cut the response off —
@@ -1215,9 +1272,9 @@ class VoiceAgent(Agent):
         await self._post_call_report()
         await self._disconnect()
 
-    async def _silent_hangup(self, *, outcome_override: str | None = None) -> None:
+    async def _silent_hangup(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
         """Hang up without a farewell (voicemail, bot, or prolonged silence)."""
-        await self._post_call_report(outcome_override=outcome_override)
+        await self._post_call_report(outcome_override=outcome_override, abrupt_disconnect=abrupt_disconnect)
         await self._disconnect()
 
     async def _silence_watchdog(self) -> None:
@@ -1664,7 +1721,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         if not voice_agent._ending:
             voice_agent._ending = True
             logger.info("Participant disconnected — reporting outcome before disconnect")
-            _safe_task(voice_agent._silent_hangup(), "post-call-on-disconnect")
+            _safe_task(voice_agent._silent_hangup(abrupt_disconnect=True), "post-call-on-disconnect")
 
     try:
         await session.start(

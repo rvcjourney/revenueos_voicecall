@@ -108,6 +108,7 @@ async def dashboard_stats(
         "wrong_number":       "oklch(0.5 0.08 30)",
         "do_not_call":        "oklch(0.45 0.05 265)",
         "pending":            "oklch(0.62 0.23 25)",
+        "call_dropped":       "oklch(0.65 0.18 55)",
     }
     outcome_breakdown = [
         {

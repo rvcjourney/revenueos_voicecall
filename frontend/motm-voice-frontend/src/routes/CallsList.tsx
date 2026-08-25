@@ -24,6 +24,7 @@ const OUTCOMES = [
   "voicemail",
   "no_answer",
   "pending",
+  "call_dropped",
 ];
 
 export default function CallsList() {

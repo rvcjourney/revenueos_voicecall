@@ -58,6 +58,12 @@ class CallOutcome(StrEnum):
     VOICEMAIL = "voicemail"
     NO_ANSWER = "no_answer"     # phone not picked up
     PENDING = "pending"         # AI summary not yet generated
+    # Customer's line disconnected abruptly mid-conversation (before the agent's
+    # own graceful goodbye, or the classifier judged the transcript was cut short
+    # with no real signal either way) -- see agent/agent.py's abrupt_disconnect
+    # handling in _send_report. Distinct from not_interested: there's no evidence
+    # the customer actually rejected anything, the call just dropped.
+    CALL_DROPPED = "call_dropped"
 
 
 class CallSentiment(StrEnum):

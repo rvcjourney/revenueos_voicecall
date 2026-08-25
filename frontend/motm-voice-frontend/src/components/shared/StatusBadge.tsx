@@ -33,6 +33,7 @@ const callOutcomeToneMap: Record<string, Tone> = {
   wrong_number: "warning",
   do_not_call: "muted",
   pending: "warning",
+  call_dropped: "warning",
 };
 
 const callStatusToneMap: Record<string, Tone> = {

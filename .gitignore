@@ -37,6 +37,11 @@ docker-compose.override.yml
 # ── Celery Beat runtime state (regenerated wherever beat runs) ────────────────
 celerybeat-schedule*
 
+# ── Agent durable fallback (agent/agent.py's FAILED_REPORTS_PATH) ─────────────
+# Per-container local file for reports that failed to POST after retries --
+# never meant to be shared/committed, just replayed on that same instance.
+agent/failed_reports.jsonl
+
 # ── Logs & OS ─────────────────────────────────────────────────────────────────
 *.log
 .DS_Store

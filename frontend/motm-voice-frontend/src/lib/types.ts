@@ -33,7 +33,8 @@ export type CallOutcome =
   | "do_not_call"
   | "voicemail"
   | "no_answer"
-  | "pending";
+  | "pending"
+  | "call_dropped";
 
 export type CallSentiment = "positive" | "neutral" | "negative";
 
