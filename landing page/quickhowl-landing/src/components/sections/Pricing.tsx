@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,136 +13,23 @@ import { cn } from "@/lib/utils";
 // instruction not to carry existing content bugs into new copy.
 const SALES_EMAIL = "sales@quickhowl.com";
 
-interface FeatureCategory {
-  label: string;
-  items: string[];
+// Same fixed bullet list on every plan card -- the only thing that changes
+// per plan is the call-minutes line, which is generated from the plan's own
+// credits_per_month (or "Custom call-minute volume" for custom pricing).
+// Deliberately not sourced from plan.marketing_bullets/features anymore.
+function planBullets(plan: PublicPlan): string[] {
+  const minutesLine = plan.is_custom_pricing
+    ? "Custom call-minute volume"
+    : `${plan.credits_per_month.toLocaleString()} AI call-minutes every month`;
+  return [
+    minutesLine,
+    "24/7 inbound call handling",
+    "AI-powered outbound calling",
+    "Personalized voice cloning for your agent",
+    "Call recordings & transcripts",
+    "CSV & contact import",
+  ];
 }
-
-// Display-only feature bullets, grouped and keyed by plan name. Falls back
-// to plan.marketing_bullets (ungrouped) for any plan name not listed here.
-// The first two categories render open by default; the rest sit behind a
-// "+N more features" toggle so card heights stay balanced across the row.
-const PLAN_FEATURE_CATEGORIES: Record<string, FeatureCategory[]> = {
-  Starter: [
-    {
-      label: "Capacity",
-      items: ["500 AI call-minutes every month"],
-    },
-    {
-      label: "AI Features",
-      items: [
-        "24/7 inbound call handling",
-        "AI-powered outbound calling",
-        "Personalized voice cloning for your agent",
-        "Multilingual conversations — Hinglish, English & more",
-      ],
-    },
-    {
-      label: "Insights & Analytics",
-      items: ["Call recordings & transcripts"],
-    },
-    {
-      label: "Support & Compliance",
-      items: ["CSV & contact import", "Built-in Do-Not-Call compliance"],
-    },
-  ],
-  Professional: [
-    {
-      label: "Capacity",
-      items: ["1,600 AI call-minutes every month"],
-    },
-    {
-      label: "AI Features",
-      items: [
-        "24/7 inbound call handling",
-        "AI-powered outbound calling",
-        "Personalized voice cloning for your agent",
-        "Multilingual conversations — Hinglish, English & more",
-        "Auto-retry on unanswered calls",
-        "AI script builder & prompt optimization",
-      ],
-    },
-    {
-      label: "Insights & Analytics",
-      items: [
-        "Call recordings, transcripts & AI summaries",
-        "Sentiment analysis on every call",
-        "Campaign analytics dashboard",
-      ],
-    },
-    {
-      label: "Support & Compliance",
-      items: ["CSV & contact import", "Built-in Do-Not-Call compliance", "Priority support"],
-    },
-  ],
-  Enterprise: [
-    {
-      label: "Capacity",
-      items: ["3,200 AI call-minutes every month"],
-    },
-    {
-      label: "AI Features",
-      items: [
-        "24/7 inbound call handling",
-        "AI-powered outbound calling",
-        "Personalized voice cloning for your agent",
-        "Multilingual conversations — Hinglish, English & more",
-        "Auto-retry on unanswered calls",
-        "AI script builder & prompt optimization",
-        "Scheduled & automated campaign launches",
-      ],
-    },
-    {
-      label: "Insights & Analytics",
-      items: [
-        "Call recordings, transcripts & AI summaries",
-        "Sentiment analysis on every call",
-        "Advanced, real-time campaign analytics",
-      ],
-    },
-    {
-      label: "Support & Compliance",
-      items: [
-        "Role-based team access & permissions",
-        "CSV & contact import",
-        "Built-in Do-Not-Call compliance",
-        "Dedicated onboarding & priority SLA support",
-      ],
-    },
-  ],
-  Business: [
-    {
-      label: "Capacity",
-      items: ["Custom call-minute volume"],
-    },
-    {
-      label: "AI Features",
-      items: [
-        "24/7 inbound call handling",
-        "AI-powered outbound calls",
-        "Personalized voice cloning for your agent",
-        "AI training & knowledge base",
-        "AI script builder",
-        "Auto-retry on unanswered calls",
-        "Schedule & launch campaigns anytime",
-      ],
-    },
-    {
-      label: "Insights & Analytics",
-      items: ["Call recordings & transcripts", "AI summaries & sentiment analysis", "Campaign analytics"],
-    },
-    {
-      label: "Support & Compliance",
-      items: [
-        "CSV & contact import",
-        "Dedicated account manager & custom SLA",
-        "Custom integrations for your workflow",
-      ],
-    },
-  ],
-};
-
-const DEFAULT_VISIBLE_CATEGORIES = 2;
 
 function formatPrice(priceMinor: number, currency: string) {
   return new Intl.NumberFormat(undefined, {
@@ -184,20 +70,7 @@ export function Pricing() {
 
 function PricingCard({ plan }: { plan: PublicPlan }) {
   const hasDiscount = plan.discount_price_minor != null;
-  const [showAll, setShowAll] = useState(false);
-
-  const categories = PLAN_FEATURE_CATEGORIES[plan.name];
-  const flatBullets = plan.marketing_bullets;
-  const hasContent = categories ? categories.some((c) => c.items.length > 0) : flatBullets.length > 0;
-
-  const visibleCategories = categories
-    ? showAll
-      ? categories
-      : categories.slice(0, DEFAULT_VISIBLE_CATEGORIES)
-    : [];
-  const hiddenFeatureCount = categories
-    ? categories.slice(DEFAULT_VISIBLE_CATEGORIES).reduce((sum, c) => sum + c.items.length, 0)
-    : 0;
+  const bullets = planBullets(plan);
 
   return (
     <div
@@ -236,43 +109,13 @@ function PricingCard({ plan }: { plan: PublicPlan }) {
           </p>
         </div>
 
-        {hasContent && (
-          <div className="flex-1 space-y-5">
-            {categories
-              ? visibleCategories.map((category) => (
-                  <div key={category.label}>
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                      {category.label}
-                    </p>
-                    <ul className="mt-2.5 space-y-2.5">
-                      {category.items.map((bullet) => (
-                        <FeatureBullet key={bullet} bullet={bullet} />
-                      ))}
-                    </ul>
-                  </div>
-                ))
-              : (
-                  <ul className="space-y-2.5">
-                    {flatBullets.map((bullet) => (
-                      <FeatureBullet key={bullet} bullet={bullet} />
-                    ))}
-                  </ul>
-                )}
-
-            {hiddenFeatureCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowAll((v) => !v)}
-                className="flex items-center gap-1 text-sm font-medium text-primary transition-colors hover:text-primary/80"
-              >
-                {showAll ? "Show less" : `+ ${hiddenFeatureCount} more features`}
-                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showAll && "rotate-180")} />
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className={hasContent ? "" : "flex-1"} />
+        <div className="flex-1">
+          <ul className="space-y-2.5">
+            {bullets.map((bullet) => (
+              <FeatureBullet key={bullet} bullet={bullet} />
+            ))}
+          </ul>
+        </div>
 
         {plan.is_custom_pricing ? (
           <Button variant="outline" className="w-full rounded-full" asChild>
