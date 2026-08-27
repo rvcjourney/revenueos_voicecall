@@ -189,7 +189,7 @@ export default function TermsOfService() {
                 FIRST FLOOR, Reality Warehousing Pvt Ltd, GAT NO.-1337/1, Pune Nagar Road,
                 Above Reliance Smart, Wagholi, Pune, Maharashtra, India<br />
                 Email: <a href="mailto:support@quickhowl.com" className="text-primary hover:underline">support@quickhowl.com</a><br />
-                Phone: <a href="tel:+918308655418" className="text-primary hover:underline">+91 83086 55418</a>
+                Phone: <a href="tel:+918484876325" className="text-primary hover:underline">+91 84848 76325</a>
               </p>
             </Section>
           </div>

@@ -15,8 +15,8 @@ const channels = [
   {
     icon: Phone,
     label: "Phone",
-    value: "+91 83086 55418",
-    href: "tel:+918308655418",
+    value: "+91 84848 76325",
+    href: "tel:+918484876325",
   },
   {
     icon: MapPin,
