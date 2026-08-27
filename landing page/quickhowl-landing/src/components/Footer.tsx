@@ -13,16 +13,16 @@ const columns = [
   {
     title: "Company",
     links: [
-      { label: "About", href: "#top" },
-      { label: "Contact", href: "#faq" },
+      { label: "About", href: "#about" },
+      { label: "Contact", href: "#contact" },
     ],
   },
   {
     title: "Legal",
     links: [
       { label: "Privacy Policy", href: "/privacy-policy" },
-      { label: "Terms of Service", href: "#top" },
-      { label: "TRAI / DNC Compliance", href: "#top" },
+      { label: "Terms of Service", href: "/terms-of-service" },
+      { label: "TRAI / DNC Compliance", href: "/terms-of-service#trai-dnc-compliance" },
     ],
   },
 ];

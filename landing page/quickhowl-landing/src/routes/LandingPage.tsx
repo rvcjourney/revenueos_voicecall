@@ -8,9 +8,11 @@ import { HowItWorks } from "@/components/sections/HowItWorks";
 import { PlatformPillars } from "@/components/sections/PlatformPillars";
 import { CaseStudies } from "@/components/sections/CaseStudies";
 import { EnterpriseGrade } from "@/components/sections/EnterpriseGrade";
+import { About } from "@/components/sections/About";
 import { Testimonials } from "@/components/sections/Testimonials";
 import { Pricing } from "@/components/sections/Pricing";
 import { FAQ } from "@/components/sections/FAQ";
+import { Contact } from "@/components/sections/Contact";
 import { FinalCTA } from "@/components/sections/FinalCTA";
 import { PlatformTabProvider } from "@/lib/platformTab";
 import { useScrollReveal } from "@/lib/hooks";
@@ -30,9 +32,11 @@ export default function LandingPage() {
         <PlatformPillars />
         <CaseStudies />
         <EnterpriseGrade />
+        <About />
         <Testimonials />
         <Pricing />
         <FAQ />
+        <Contact />
         <FinalCTA />
         <Footer />
       </div>

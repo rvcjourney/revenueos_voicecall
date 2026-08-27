@@ -71,10 +71,11 @@ const PRICING_PLAN_ICONS: Record<string, typeof Mic> = {
   Business: Briefcase,
 };
 
-const links = [
+const links: { href: string; label: string; menu?: NavMenuItem[] }[] = [
   { href: "#platform", label: "Platform", menu: platformMenu },
   { href: "#features", label: "Features", menu: featuresMenu },
   { href: "#how-it-works", label: "How it works", menu: howItWorksMenu },
+  { href: "#about", label: "About" },
 ];
 
 export function Nav() {
