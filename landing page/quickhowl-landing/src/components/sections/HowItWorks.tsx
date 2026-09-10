@@ -24,9 +24,12 @@ export function HowItWorks() {
         <div className="mx-auto max-w-2xl text-center">
           <p className="eyebrow text-primary">How it works</p>
           <h2 className="mt-3 font-heading text-3xl font-semibold text-white sm:text-4xl">
-            From spreadsheet to closed deals in 5 steps
+            Upload leads. Start conversations. Close more deals
           </h2>
-          <p className="mt-3 text-white/65">No dialer to configure, no scripts to memorize — just upload your list and launch in minutes.</p>
+          <p className="mt-3 text-white/65">
+            In just 5 steps, QuickHowl turns your spreadsheet into an automated outbound sales engine&mdash;calling leads,
+            qualifying prospects, and booking meetings for your team.
+          </p>
         </div>
         <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
           {steps.map((s, i) => (

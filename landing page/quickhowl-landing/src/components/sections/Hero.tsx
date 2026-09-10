@@ -14,15 +14,15 @@ export function Hero() {
           <span className="min-w-0 whitespace-normal">AI voice agents built for Hindi &amp; English sales calls</span>
         </Badge>
         <h1 className="font-heading mt-5 text-4xl font-semibold leading-[1.15] sm:text-5xl lg:text-6xl">
-          Your AI sales team that <span className="text-gradient">never stops dialing</span>
+          Your AI sales team that <span className="text-gradient">never stops calling</span>
         </h1>
         <p className="font-heading mt-4 text-xl font-semibold leading-tight text-foreground sm:text-2xl">
           <Mic className="mr-1.5 inline h-5 w-5 -translate-y-0.5 text-primary" />
           ...and sounds exactly like <span className="text-gradient">you</span>.
         </p>
         <p className="mx-auto mt-4 max-w-2xl text-base text-muted-foreground sm:text-lg">
-          Human-sounding voice agents that call, qualify, and follow up with leads in Hinglish,
-          English, and more — real conversations and live analytics, without adding a single new
+          Human-sounding voice agents that call, qualify, and follow up with leads in Hindi and
+          English — real conversations and live analytics, without adding a single new
           hire. Clone your own voice, a top rep's, or your founder's once, then reuse it across
           every AI agent.
         </p>
