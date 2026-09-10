@@ -7,6 +7,7 @@ import { RealCalls } from "@/components/sections/RealCalls";
 import { HowItWorks } from "@/components/sections/HowItWorks";
 import { PlatformPillars } from "@/components/sections/PlatformPillars";
 import { CaseStudies } from "@/components/sections/CaseStudies";
+import { WhyVoiceAgents } from "@/components/sections/WhyVoiceAgents";
 import { EnterpriseGrade } from "@/components/sections/EnterpriseGrade";
 import { About } from "@/components/sections/About";
 import { Testimonials } from "@/components/sections/Testimonials";
@@ -31,6 +32,7 @@ export default function LandingPage() {
         <HowItWorks />
         <PlatformPillars />
         <CaseStudies />
+        <WhyVoiceAgents />
         <EnterpriseGrade />
         <About />
         <Testimonials />
