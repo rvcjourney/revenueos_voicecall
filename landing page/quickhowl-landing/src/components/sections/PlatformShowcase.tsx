@@ -19,11 +19,11 @@ const tabs = [
   },
   {
     id: "multilingual",
-    label: "Multilingual voice",
+    label: "Hindi & English voice",
     icon: Languages,
-    title: "Human-like multilingual voice",
+    title: "Human-like Hindi & English voice",
     description:
-      "Natural, code-switching conversations in Hinglish, English, and 20+ languages — agents that sound like your best rep, not a robot.",
+      "Natural, code-switching conversations in Hinglish, Hindi, and English — agents that sound like your best rep, not a robot.",
     panel: "call" as const,
   },
   {
@@ -57,7 +57,7 @@ export function PlatformShowcase() {
           <p className="eyebrow">Platform</p>
           <h2 className="mt-3 font-heading text-3xl font-semibold sm:text-4xl">The AI platform outbound teams build on</h2>
           <p className="mt-3 text-muted-foreground">
-            One place to clone voices, run campaigns, and close deals — across every language your customers speak.
+            One place to clone voices, run campaigns, and close deals — in the Hindi and English your customers speak.
           </p>
         </div>
 

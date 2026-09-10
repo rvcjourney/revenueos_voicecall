@@ -13,10 +13,10 @@ const pillars = [
   {
     icon: Mic,
     title: "Voices",
-    description: "Human-like, multilingual voice cloning for every AI agent you run.",
+    description: "Human-like voice cloning for every AI agent you run.",
     links: [
       { label: "Voice cloning", meta: "60s sample" },
-      { label: "Multilingual voice", meta: "20+ languages" },
+      { label: "Natural voice", meta: "Hindi & English" },
     ],
   },
   {

@@ -7,11 +7,11 @@ const faqs = [
   },
   {
     q: "Do the AI agents actually sound natural in Hindi-English mixed conversations?",
-    a: "The default agent language is Hinglish — code-mixed Hindi/English speech-to-text and text-to-speech tuned for natural, code-switching conversation, alongside 20+ other languages.",
+    a: "The default agent language is Hinglish — code-mixed Hindi/English speech-to-text and text-to-speech tuned for natural, code-switching conversation. Pure Hindi and pure English are supported too.",
   },
   {
     q: "Can I use this outside India?",
-    a: "Yes. While Hinglish is our specialty, agents support 20+ languages and connect to any SIP-based number worldwide — teams outside India use it for English-only outbound too.",
+    a: "Yes. Agents connect to any SIP-based number worldwide, and teams outside India use QuickHowl for English-only outbound too.",
   },
   {
     q: "Can I use my own phone number?",

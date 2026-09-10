@@ -34,7 +34,7 @@ export function Footer() {
         <div className="space-y-3">
           <Logo />
           <p className="max-w-xs text-sm text-muted-foreground">
-            AI voice agents that make real outbound sales calls, in Hinglish and 20+ languages, at scale.
+            AI voice agents that make real outbound sales calls, in Hindi and English, at scale.
           </p>
         </div>
         {columns.map((col) => (

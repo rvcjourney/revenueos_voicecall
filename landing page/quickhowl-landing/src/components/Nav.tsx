@@ -43,13 +43,13 @@ interface NavMenuItem {
 
 const platformMenu: NavMenuItem[] = [
   { icon: Mic, label: "Voice cloning", description: "Clone any voice, reuse everywhere", tabId: "cloning" },
-  { icon: Languages, label: "Multilingual voice", description: "Human-like, code-switching conversations", tabId: "multilingual" },
+  { icon: Languages, label: "Hindi & English voice", description: "Human-like, code-switching conversations", tabId: "multilingual" },
   { icon: Gauge, label: "Concurrent calling", description: "Dial hundreds of numbers at once", tabId: "calling" },
   { icon: ShieldCheck, label: "Compliance", description: "Org-level DNC lists + TRAI NCPR checks", tabId: "compliance" },
 ];
 
 const featuresMenu: NavMenuItem[] = [
-  { icon: Mic, label: "Voices", description: "Multilingual voice cloning for every agent" },
+  { icon: Mic, label: "Voices", description: "Human-like voice cloning for every agent" },
   { icon: LineChart, label: "Campaigns", description: "Bulk import, concurrent calling, live dashboard" },
   { icon: FileText, label: "Insights", description: "Transcripts, AI summaries, segmented exports" },
 ];
