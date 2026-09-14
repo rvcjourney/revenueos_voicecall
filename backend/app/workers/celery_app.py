@@ -18,7 +18,6 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.campaign", "app.workers.tasks.billing",
         "app.workers.tasks.backup", "app.workers.tasks.retention",
-        "app.workers.tasks.integrations",
     ],
 )
 
@@ -87,13 +86,6 @@ celery_app.conf.update(
         # (agent-report never arrived) so it doesn't go unnoticed indefinitely.
         "flag-stale-pending-calls": {
             "task": "app.workers.tasks.campaign.flag_stale_pending_calls",
-            "schedule": 300.0,
-        },
-        # Every 5 min: re-attempt CRM/webhook deliveries whose backoff has
-        # elapsed. Same division of labour as the campaign tasks -- the push
-        # task itself is max_retries=0 and this sweeper owns re-queuing.
-        "retry-integration-deliveries": {
-            "task": "app.workers.tasks.integrations.retry_failed_deliveries",
             "schedule": 300.0,
         },
         # Daily at 02:17 UTC (quiet hour, avoids the top-of-hour pile-up with
