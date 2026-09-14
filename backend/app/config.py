@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     # Secret configured on the Razorpay Dashboard webhook (Settings -> Webhooks),
     # used to verify X-Razorpay-Signature on incoming webhook requests.
     RAZORPAY_WEBHOOK_SECRET: str = ""
+    # Days past Subscription.current_period_end an org keeps access without a
+    # renewal charge landing -- our own backstop (app/workers/tasks/billing.py:
+    # expire_lapsed_subscriptions), independent of Razorpay's own retry/dunning
+    # cadence and of whether its webhook/reconcile ever tells us the charge
+    # failed. Past this, org.is_active flips False regardless of what Razorpay's
+    # subscription.status still says; a later subscription.charged webhook
+    # reactivates it and pushes current_period_end forward again either way.
+    BILLING_GRACE_PERIOD_DAYS: int = 3
 
     # ── Storage ───────────────────────────────────────────────────────────────
     STORAGE_BACKEND: Literal["minio", "s3"] = "minio"
