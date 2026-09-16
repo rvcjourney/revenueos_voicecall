@@ -81,9 +81,13 @@ _CHUNK_LENGTH_SCHEDULE = [50, 90, 120, 150]
 # own default voice instead of this one (welcome message sounding like a
 # different voice on cold start). stability=0.85/style=0.0 = one steady,
 # consistent tone across all chunks; similarity_boost=0.75 keeps it close to
-# the source voice.
+# the source voice. speed was left unset (ElevenLabs' own NOT_GIVEN default)
+# until reported live the same day as speaking pace swinging "very fast to
+# very slow" turn to turn -- pinned to 1.0 (neutral, ElevenLabs' own baseline
+# pace) for the same reason stability/style are pinned: one steady value
+# instead of letting it vary per generation.
 _ELEVENLABS_VOICE_SETTINGS = elevenlabs.VoiceSettings(
-    stability=0.85, similarity_boost=0.75, style=0.0, use_speaker_boost=True,
+    stability=0.85, similarity_boost=0.75, style=0.0, speed=1.0, use_speaker_boost=True,
 )
 
 
