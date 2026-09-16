@@ -1560,9 +1560,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
             voice_settings        = elevenlabs.VoiceSettings(
-                stability         = 0.5,  # high = consistent tone across all chunks, no high/low shifts
+                # Was 0.5/0.3 -- too low to hold one tone across chunks, which is
+                # exactly why sentences audibly shifted pitch mid-call (reported
+                # 2026-09-16). 0.85/0.0 matches the reasoning already documented
+                # for Sarvam's temperature setting above ("ElevenLabs uses
+                # stability=0.85/style=0.0") -- this just makes the code match it.
+                stability         = 0.85,  # high = consistent tone across all chunks, no high/low shifts
                 similarity_boost  = 0.75,
-                style             = 0.3,   # zero expressiveness = no tonal variation between chunks
+                style             = 0.0,   # zero expressiveness = no tonal variation between chunks
                 use_speaker_boost = True,
             ),
         )
