@@ -92,9 +92,12 @@ async def test_test_call_succeeds_under_the_hourly_limit(client, db, fake_redis)
 
 
 async def test_test_call_rejects_a_fourth_call_within_the_hour(client, db, fake_redis):
+    """The 3/hour cap only protects the unpaid evaluation allowance -- must use
+    an org with no active subscription, since orgs with one are exempt (see
+    test_test_call_unlimited_for_org_with_active_subscription below)."""
     from app.core.concurrency import release_user_slot
 
-    org, user, token = await _make_admin(db)
+    org, user, token = await _make_admin(db, org_is_active=False)
     agent = await _make_agent(db, org)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -130,9 +133,9 @@ async def test_test_call_rejects_a_fourth_call_within_the_hour(client, db, fake_
 async def test_test_call_rate_limit_is_per_org_not_global(client, db, fake_redis):
     from app.core.concurrency import release_user_slot
 
-    org_a, user_a, token_a = await _make_admin(db)
+    org_a, user_a, token_a = await _make_admin(db, org_is_active=False)
     agent_a = await _make_agent(db, org_a)
-    org_b, _user_b, token_b = await _make_admin(db)
+    org_b, _user_b, token_b = await _make_admin(db, org_is_active=False)
     agent_b = await _make_agent(db, org_b)
 
     with _place_test_call_mock():
@@ -157,8 +160,8 @@ async def test_test_call_rate_limit_is_per_org_not_global(client, db, fake_redis
 async def test_test_call_allowed_for_org_with_no_active_subscription(client, db, fake_redis):
     """Explicit product decision (2026-08-23): test calls stay usable by every
     org for evaluation purposes, including orgs with no purchased plan at all
-    -- NOT gated on org.is_active. Regression guard against that gate being
-    reintroduced by mistake."""
+    -- an org with no subscription is never blocked outright, just subject to
+    the 3/hour cap (see test_test_call_rejects_a_fourth_call_within_the_hour)."""
     org, _user, token = await _make_admin(db, org_is_active=False)
     agent = await _make_agent(db, org)
 
@@ -170,3 +173,26 @@ async def test_test_call_allowed_for_org_with_no_active_subscription(client, db,
         )
     assert resp.status_code == 202
     mock_dispatch.assert_called_once()
+
+
+async def test_test_call_unlimited_for_org_with_active_subscription(client, db, fake_redis):
+    """Founder request (2026-09-16): paying orgs were hitting the 3/hour test
+    call cap while legitimately testing their own agent. The cap only exists
+    to stop the unpaid evaluation allowance being used as free unmetered
+    calling -- an org with an active subscription is already billed per call,
+    so it must sail past what would otherwise be the 4th call in an hour."""
+    from app.core.concurrency import release_user_slot
+
+    org, user, token = await _make_admin(db, org_is_active=True)
+    agent = await _make_agent(db, org)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with _place_test_call_mock():
+        for i in range(5):
+            resp = await client.post(
+                f"/api/agents/{agent.id}/test-call",
+                json={"phone_number": f"+9198765433{i:02d}"},
+                headers=headers,
+            )
+            assert resp.status_code == 202, resp.text
+            await release_user_slot(user.id)

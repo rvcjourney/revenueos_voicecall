@@ -22,6 +22,7 @@ from app.models.agent import AgentTemplate
 from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
+from app.models.user import Organization
 from app.schemas.agent import AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
@@ -336,10 +337,11 @@ class TestCallResponse(BaseModel):
     status: str
 
 
-# Test calls are an evaluation/testing allowance, not a paywall workaround --
-# available to every org regardless of plan status, so it's capped uniformly
-# per-org rather than gated on payment. 3/hour is generous for evaluating an
-# agent, not for using this as a free unmetered calling path.
+# Test calls are an evaluation/testing allowance for orgs that haven't paid
+# yet -- 3/hour is generous for evaluating an agent, not for using this as a
+# free unmetered calling path. Orgs with an active paid subscription skip
+# this cap entirely (see the org.is_active check below) since they're
+# already billed per call.
 _TEST_CALL_HOURLY_LIMIT = 3
 
 
@@ -385,20 +387,22 @@ async def test_call(
     if await _is_dnc_blocked(db, token.org_id, phone):
         raise AppValidationError("This number is on a Do Not Call list and can't be dialed", errors=[])
 
-    # Test calls are an evaluation allowance available to every org regardless
-    # of plan/payment status (deliberately NOT gated on org.is_active or
-    # credits-by-itself the way campaigns are) -- capped per-org instead so it
-    # can't be used as an unlimited free-calling loophole. Keyed on org_id
-    # (not user_id) since the allowance is meant to be shared org-wide, same
-    # scope as has_credits_remaining below.
-    await enforce_rate_limit(
-        "test-call", str(token.org_id),
-        limit=_TEST_CALL_HOURLY_LIMIT, window_seconds=3600,
-        message_template=(
-            f"Test call limit reached: {_TEST_CALL_HOURLY_LIMIT} per hour. "
-            "Try again in {minutes} minute(s)."
-        ),
-    )
+    # The 3/hour cap only exists to stop the *unpaid* evaluation allowance
+    # from being used as a free unmetered calling path -- an org with an
+    # active paid subscription is already billed per call (credits/minutes),
+    # so there's nothing left for this to protect against. Removed per
+    # founder request 2026-09-16: paying orgs were hitting this while
+    # legitimately testing their own agent.
+    org = await db.get(Organization, token.org_id)
+    if not (org and org.is_active):
+        await enforce_rate_limit(
+            "test-call", str(token.org_id),
+            limit=_TEST_CALL_HOURLY_LIMIT, window_seconds=3600,
+            message_template=(
+                f"Test call limit reached: {_TEST_CALL_HOURLY_LIMIT} per hour. "
+                "Try again in {minutes} minute(s)."
+            ),
+        )
 
     # Validate the chosen "From" trunk belongs to this org (and, for
     # non-admins, is actually assigned to them) before handing it to the
