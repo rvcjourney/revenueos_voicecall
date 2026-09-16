@@ -45,8 +45,20 @@ from app.config import settings
 # server-side; the rare case where one still dies while pooled just fails
 # that one request (SQLAlchemy discards a connection that errors), and the
 # next request gets a fresh one -- self-healing, not a cascading outage.
-_API_POOL_SIZE = 5
-_API_POOL_MAX_OVERFLOW = 5
+#
+# Sized down from 5/5 after a live outage on 2026-09-15: Supabase's
+# session-mode pooler hard-caps the WHOLE platform (api + worker + agent +
+# any manual script) at 15 concurrent connections. At 5/5, this engine's own
+# steady-state floor alone was 4 gunicorn workers * pool_size(5) = 20 --
+# already over the cap with celery and everything else not even counted.
+# 2/1 keeps the steady floor at 4*2=8 and the burst ceiling at 4*3=12,
+# leaving headroom for the worker (see docker-compose.yml's worker
+# --concurrency comment) and ad-hoc scripts. If gunicorn's worker count
+# (backend/Dockerfile) or DATABASE_URL's Supabase compute tier ever change,
+# re-derive these against the new connection cap rather than raising them
+# back to old values.
+_API_POOL_SIZE = 2
+_API_POOL_MAX_OVERFLOW = 1
 _API_POOL_RECYCLE_SECONDS = 300
 
 # Each request opens a brand-new asyncpg connection, which means a single
@@ -102,7 +114,9 @@ def _make_engine(url: str):
     # Pooled (see module docstring above for why this is safe against the
     # currently-configured session-mode pooler URL). Each of gunicorn's 4
     # worker processes gets its own engine/pool, so peak connections from
-    # the API alone is bounded at 4 * (pool_size + max_overflow) = 40.
+    # the API alone is bounded at 4 * (pool_size + max_overflow) = 12 --
+    # see _API_POOL_SIZE's comment for why this must stay well under
+    # Supabase's platform-wide 15-connection cap.
     return create_async_engine(
         _async_url(url),
         echo=settings.DB_ECHO,

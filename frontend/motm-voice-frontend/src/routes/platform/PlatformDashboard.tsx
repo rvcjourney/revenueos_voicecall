@@ -223,6 +223,23 @@ function SystemHealthCard() {
                   </p>
                 </div>
               )}
+
+              {health.data.stale_initiated_calls_count > 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <p>
+                    <span className="font-medium text-destructive">
+                      {health.data.stale_initiated_calls_count} call
+                      {health.data.stale_initiated_calls_count > 1 ? "s" : ""} stuck mid-dispatch
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      — created 10+ minutes ago but never dialed or finalized. Usually means the database couldn't be
+                      written to at that moment (e.g. connections maxed out) — check worker logs for connection
+                      errors.
+                    </span>
+                  </p>
+                </div>
+              )}
             </div>
           </>
         )}

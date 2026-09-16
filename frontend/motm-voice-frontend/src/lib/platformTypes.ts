@@ -141,6 +141,7 @@ export interface PlatformHealth {
   groq_ok: boolean;
   groq_error: string | null;
   stale_pending_calls_count: number;
+  stale_initiated_calls_count: number;
 }
 
 export interface PlatformVoiceCloneRequest {

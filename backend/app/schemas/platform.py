@@ -244,3 +244,13 @@ class PlatformHealthOut(BaseModel):
     # post-call classification pipeline is broken right now, whatever the
     # cause -- not just the specific Groq-model failure mode above.
     stale_pending_calls_count: int
+    # Call rows still sitting at status=INITIATED (the very first state, set
+    # the instant a call is created — before it's even dialed) 10+ minutes
+    # after creation with no ended_at. Under normal operation this status is
+    # transient (flips to DIALING/COMPLETED/FAILED within seconds); a
+    # nonzero count here means the dispatcher created the row but then
+    # couldn't write back the real outcome — e.g. the 2026-09-15 incident
+    # where Supabase's session-pooler connection cap was exhausted (see
+    # backend/app/database.py's _API_POOL_SIZE comment) and calls were
+    # silently orphaned mid-dispatch.
+    stale_initiated_calls_count: int

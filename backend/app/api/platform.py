@@ -948,6 +948,13 @@ async def platform_health(
             Call.ended_at <= stale_cutoff,
         )
     ) or 0
+    stale_initiated_calls_count = await db.scalar(
+        select(func.count(Call.id)).where(
+            Call.status == CallStatus.INITIATED,
+            Call.ended_at.is_(None),
+            Call.started_at <= stale_cutoff,
+        )
+    ) or 0
 
     return PlatformHealthOut(
         api=True,
@@ -968,6 +975,7 @@ async def platform_health(
         groq_ok=groq_ok,
         groq_error=groq_error,
         stale_pending_calls_count=stale_pending_calls_count,
+        stale_initiated_calls_count=stale_initiated_calls_count,
     )
 
 

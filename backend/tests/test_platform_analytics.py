@@ -91,6 +91,7 @@ async def test_platform_health_returns_live_status(client, db):
     assert body["groq_ok"] is True
     assert body["groq_error"] is None
     assert isinstance(body["stale_pending_calls_count"], int)
+    assert isinstance(body["stale_initiated_calls_count"], int)
 
 
 async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db):
@@ -179,6 +180,51 @@ async def test_platform_health_counts_stale_pending_calls(client, db):
 
     assert resp.status_code == 200
     assert resp.json()["stale_pending_calls_count"] == 1
+
+
+async def test_platform_health_counts_stale_initiated_calls(client, db):
+    """Call rows stuck at status=INITIATED (created but never dialed or
+    finalized) 10+ minutes ago -- the symptom of a dispatcher that couldn't
+    write back to the DB, e.g. the 2026-09-15 connection-pool-exhaustion
+    incident. See _reset_stale_dialing's docstring in
+    app/workers/tasks/campaign.py for why this previously went unmonitored."""
+    from datetime import timedelta
+
+    _admin, token = await _make_platform_admin(db)
+    org = await _make_org(db, "Stale Initiated Co")
+
+    now = datetime.now(timezone.utc)
+    # Genuinely stuck: still INITIATED, created 20 minutes ago, never ended.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500011",
+        direction=CallDirection.OUTBOUND, status=CallStatus.INITIATED,
+        started_at=now - timedelta(minutes=20),
+    ))
+    # Not stale yet -- created just now.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500012",
+        direction=CallDirection.OUTBOUND, status=CallStatus.INITIATED,
+        started_at=now,
+    ))
+    # Old but resolved normally -- not a symptom of anything broken.
+    db.add(Call(
+        org_id=org.id, livekit_room_name=f"room-{uuid.uuid4().hex}", phone_number="+919876500013",
+        direction=CallDirection.OUTBOUND, status=CallStatus.COMPLETED,
+        started_at=now - timedelta(minutes=20), ended_at=now - timedelta(minutes=19),
+    ))
+    await db.commit()
+
+    with patch(
+        "app.api.platform.get_account_usage",
+        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
+    ), patch(
+        "app.api.platform._check_groq_model",
+        new=AsyncMock(return_value=(True, None)),
+    ):
+        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    assert resp.json()["stale_initiated_calls_count"] == 1
 
 
 async def test_platform_usage_analytics_counts_real_calls(client, db):

@@ -91,9 +91,20 @@ services:
       - PYTHONUNBUFFERED=1
     networks:
       - motm
+    # --concurrency 20 (each a real prefork process, each opening its own
+    # NullPool DB connection on demand — see app/database.py) combined with
+    # the api service's own connection pool blew straight through Supabase's
+    # session-mode pooler cap of 15 total connections platform-wide.
+    # Confirmed live 2026-09-15: worker sat 100% failing on EMAXCONNSESSION
+    # for several minutes straight, silently leaving calls stuck "Pending"
+    # (their finalize/classify DB write had nowhere to connect). Keep this
+    # low enough that concurrency + api's steady-state pool (see
+    # backend/app/database.py's _API_POOL_SIZE comment) stays well under 15
+    # — raise it again only after moving to a Supabase tier with a higher
+    # connection limit.
     command: >
       celery -A app.workers.celery_app worker
-      --concurrency 20
+      --concurrency 5
       --loglevel info
       --queues calls,campaigns,exports,default
     depends_on:
@@ -114,14 +125,12 @@ services:
     deploy:
       resources:
         limits:
-          # Raised alongside --concurrency 10->20 above: Celery's default pool
-          # is prefork (one real OS process per concurrency slot, not a
-          # lightweight async task), so doubling concurrency roughly doubles
-          # this container's worst-case memory footprint. 3g assumes the VPS
-          # has real headroom beyond every other service's own limit in this
-          # file -- check `docker stats` after deploying, and dial concurrency
-          # back down if this container is ever memory-pressured in practice.
-          memory: 3g
+          # Celery's default pool is prefork (one real OS process per
+          # concurrency slot, not a lightweight async task) -- scaled down
+          # from 3g/20-way after dropping --concurrency to 5 above (see that
+          # comment for why). Check `docker stats` after deploying, and dial
+          # this back up only alongside a deliberate concurrency increase.
+          memory: 1g
           cpus: "2.0"
 
   # ── Celery Beat (scheduled tasks) ────────────────────────────────────────────
