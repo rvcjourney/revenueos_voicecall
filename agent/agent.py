@@ -74,6 +74,18 @@ _LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix 
 # words at most, at the cost of very slightly more segmented prosody between chunks.
 _CHUNK_LENGTH_SCHEDULE = [50, 90, 120, 150]
 
+# Single source of truth for both the real TTS object and its connection-warmup
+# throwaway call below -- these drifting apart is exactly what caused two
+# separate live bugs (2026-09-16): stability/style left at looser defaults than
+# intended (audible tone drift mid-call), and the warmup call using ElevenLabs'
+# own default voice instead of this one (welcome message sounding like a
+# different voice on cold start). stability=0.85/style=0.0 = one steady,
+# consistent tone across all chunks; similarity_boost=0.75 keeps it close to
+# the source voice.
+_ELEVENLABS_VOICE_SETTINGS = elevenlabs.VoiceSettings(
+    stability=0.85, similarity_boost=0.75, style=0.0, use_speaker_boost=True,
+)
+
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
     """create_task wrapper that logs instead of raising 'Future exception was never retrieved'."""
@@ -1128,7 +1140,12 @@ class VoiceAgent(Agent):
                 # sync). This step runs after the call ends, off the live
                 # conversation path, so there's no latency cost to a larger model.
                 model=GROQ_CLASSIFY_MODEL,
-                max_tokens=350,
+                # Was 350 -- confirmed live 2026-09-16 that a normal call with a full
+                # extracted_data blob (name/email/phone/requirements/budget/decision_maker)
+                # plus a summary can hit finish_reason=length and get truncated mid-JSON,
+                # which json.loads then can't parse -> silently fell back to
+                # outcome=pending. 700 gives real headroom for the full schema.
+                max_tokens=700,
                 temperature=0.0,
                 messages=[
                     {
@@ -1209,7 +1226,7 @@ class VoiceAgent(Agent):
                 outcome = "not_interested"
             # finish_reason == "length" means Groq hit max_tokens and cut the response off —
             # if this ever shows up on a *successful* parse it means we got lucky (the JSON
-            # happened to close before the cut), and it's a warning sign max_tokens=350 is
+            # happened to close before the cut), and it's a warning sign max_tokens=700 is
             # running too close to the edge for calls with a lot to extract.
             logger.info(
                 "classify_llm: call=%s outcome=%s words=%d finish_reason=%s completion_tokens=%s",
@@ -1229,7 +1246,7 @@ class VoiceAgent(Agent):
             # raw is None  -> failed before/during the Groq API call itself (network,
             #                 auth, rate limit) -- never got a response to parse.
             # raw is set   -> Groq responded but json.loads/field access failed; raw_preview
-            #                 + finish_reason show whether max_tokens=350 truncated it
+            #                 + finish_reason show whether max_tokens=700 truncated it
             #                 mid-JSON (finish_reason="length" is the smoking gun).
             logger.warning(
                 "groq_classify_error | call=%s error_type=%s error=%s stage=%s finish_reason=%s "
@@ -1455,7 +1472,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # the plugin) so the real welcome request reuses an already-open connection.
     if voice_provider == "elevenlabs":
         async def _warm_elevenlabs_tts() -> None:
-            warm_tts = elevenlabs.TTS(api_key=ELEVENLABS_API_KEY)
+            # Must match the REAL tts object below (voice_id, model, voice_settings)
+            # exactly -- this used to call elevenlabs.TTS(api_key=...) with none of
+            # those, which warms the HTTP connection but synthesizes with
+            # ElevenLabs' own default demo voice/settings. Reported live 2026-09-16
+            # as "welcome message speaking in a different voice" — the org's actual
+            # configured voice was still cold on its own first real request even
+            # though a connection had already been opened for a different one.
+            warm_tts = elevenlabs.TTS(
+                api_key        = ELEVENLABS_API_KEY,
+                voice_id       = voice_id,
+                model          = tts_model_id,
+                voice_settings = _ELEVENLABS_VOICE_SETTINGS,
+            )
             try:
                 async for _ in warm_tts.synthesize("hi"):
                     pass
@@ -1540,7 +1569,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # turn opens a brand-new TTS session (see logs: distinct session_id per turn),
         # so higher temperature = each line sampled more independently = audible tone
         # drift turn-to-turn — bad for a sales call, which needs one steady voice
-        # (same reasoning ElevenLabs uses stability=0.85/style=0.0 below). Keep it at
+        # (same reasoning behind _ELEVENLABS_VOICE_SETTINGS above). Keep it at
         # Sarvam's own default for consistency; pace alone fixes the sluggish pacing.
         tts = sarvam.TTS(
             api_key             = SARVAM_API_KEY,
@@ -1559,17 +1588,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             model                 = tts_model_id,
             encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
             chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
-            voice_settings        = elevenlabs.VoiceSettings(
-                # Was 0.5/0.3 -- too low to hold one tone across chunks, which is
-                # exactly why sentences audibly shifted pitch mid-call (reported
-                # 2026-09-16). 0.85/0.0 matches the reasoning already documented
-                # for Sarvam's temperature setting above ("ElevenLabs uses
-                # stability=0.85/style=0.0") -- this just makes the code match it.
-                stability         = 0.85,  # high = consistent tone across all chunks, no high/low shifts
-                similarity_boost  = 0.75,
-                style             = 0.0,   # zero expressiveness = no tonal variation between chunks
-                use_speaker_boost = True,
-            ),
+            voice_settings        = _ELEVENLABS_VOICE_SETTINGS,
         )
         logger.info("ElevenLabs TTS ready ✓ (voice=%s model=%s)", voice_id, tts_model_id)
 
