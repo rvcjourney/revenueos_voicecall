@@ -7,6 +7,7 @@ import {
   billingApi,
   callsApi,
   campaignsApi,
+  companyProfileApi,
   foldersApi,
   inboundAgentsApi,
   plansApi,
@@ -16,7 +17,7 @@ import {
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, BillingAddress, CampaignCreate, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
+import type { AgentCreate, BillingAddress, CampaignCreate, CompanyProfileInput, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -113,7 +114,7 @@ export function useCreateFolder() {
 }
 
 // ── Campaigns ────────────────────────────────────────────────────────────
-export function useCampaigns(params?: { status?: string; folder_id?: string }) {
+export function useCampaigns(params?: { status?: string; folder_id?: string; is_prime?: boolean }) {
   return useQuery({
     queryKey: ["campaigns", params],
     queryFn: () => campaignsApi.list(params).then((r) => unwrapList(r.data)),
@@ -185,6 +186,29 @@ export function useDuplicateCampaign() {
     mutationFn: ({ id, copyContacts = true }: { id: string; copyContacts?: boolean }) =>
       campaignsApi.duplicate(id, copyContacts),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["campaigns"] }),
+  });
+}
+
+// ── Prime Calling ───────────────────────────────────────────────────────
+export function useCompanyProfile() {
+  return useQuery({
+    queryKey: ["company-profile"],
+    queryFn: () => companyProfileApi.get().then((r) => r.data),
+  });
+}
+
+export function useSaveCompanyProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CompanyProfileInput) => companyProfileApi.save(data),
+    onSuccess: (r) => qc.setQueryData(["company-profile"], r.data),
+  });
+}
+
+export function usePrimePreview() {
+  return useMutation({
+    mutationFn: ({ id, contactId }: { id: string; contactId?: string }) =>
+      campaignsApi.primePreview(id, contactId).then((r) => r.data),
   });
 }
 

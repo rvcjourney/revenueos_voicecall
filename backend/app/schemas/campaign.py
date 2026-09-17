@@ -49,6 +49,7 @@ class CampaignOut(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     created_by_name: str | None = None
+    is_prime: bool = False
 
 
 class CampaignListResponse(BaseModel):
@@ -73,6 +74,7 @@ class CampaignCreate(BaseModel):
     retry_after_minutes: int = 60
     start_time: datetime | None = None
     end_time: datetime | None = None
+    is_prime: bool = False
 
     @field_validator("calling_window_start", "calling_window_end", mode="before")
     @classmethod

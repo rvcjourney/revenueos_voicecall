@@ -17,6 +17,8 @@ import type {
   CampaignFolder,
   CheckoutResponse,
   ClonedVoice,
+  CompanyProfile,
+  CompanyProfileInput,
   ConcurrencyUsage,
   CreditUsage,
   DashboardStats,
@@ -34,6 +36,7 @@ import type {
   PromptLibraryEntry,
   PromptLibraryUpdate,
   PromptLibraryVersion,
+  PrimePreview,
   PublicPlan,
   SipTrunk,
   VerifyPaymentRequest,
@@ -236,7 +239,7 @@ export const inboundAgentsApi = {
 
 // ── Campaigns ────────────────────────────────────────────────────────────
 export const campaignsApi = {
-  list: (params?: { status?: string; folder_id?: string }) =>
+  list: (params?: { status?: string; folder_id?: string; is_prime?: boolean }) =>
     api.get<ListResponse<Campaign> | Campaign[]>("/api/campaigns", { params }),
   get: (id: string) => api.get<Campaign>(`/api/campaigns/${id}`),
   create: (data: CampaignCreate) => api.post<Campaign>("/api/campaigns", data),
@@ -252,6 +255,12 @@ export const campaignsApi = {
     });
   },
   launch: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/launch`),
+  // Website fetch + LLM generation can take well over the default 20s timeout
+  primePreview: (id: string, contactId?: string) =>
+    api.post<PrimePreview>(`/api/campaigns/${id}/prime-preview`, undefined, {
+      params: contactId ? { contact_id: contactId } : undefined,
+      timeout: 120_000,
+    }),
   pause: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/pause`),
   duplicate: (id: string, copyContacts = true) =>
     api.post<Campaign>(`/api/campaigns/${id}/duplicate`, undefined, { params: { copy_contacts: copyContacts } }),
@@ -263,6 +272,12 @@ export const campaignsApi = {
     downloadBlob(`/api/campaigns/${id}/export/callback_requested`, filename),
   exportAll: (id: string, filename = "all-results.csv") =>
     downloadBlob(`/api/campaigns/${id}/export/all`, filename),
+};
+
+// ── Prime Calling: company profile ──────────────────────────────────────
+export const companyProfileApi = {
+  get: () => api.get<CompanyProfile>("/api/company-profile"),
+  save: (data: CompanyProfileInput) => api.put<CompanyProfile>("/api/company-profile", data),
 };
 
 // ── Folders ──────────────────────────────────────────────────────────────

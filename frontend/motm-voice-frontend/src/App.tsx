@@ -20,6 +20,8 @@ const Dashboard = lazy(() => import("@/routes/Dashboard"));
 const CampaignsList = lazy(() => import("@/routes/CampaignsList"));
 const CampaignNew = lazy(() => import("@/routes/CampaignNew"));
 const CampaignDetail = lazy(() => import("@/routes/CampaignDetail"));
+const PrimeCalling = lazy(() => import("@/routes/PrimeCalling"));
+const PrimeCompanyProfile = lazy(() => import("@/routes/PrimeCompanyProfile"));
 const CallsList = lazy(() => import("@/routes/CallsList"));
 const CallDetail = lazy(() => import("@/routes/CallDetail"));
 const Agents = lazy(() => import("@/routes/Agents"));
@@ -77,6 +79,9 @@ export default function App() {
                       <Route path="/campaigns" element={<CampaignsList />} />
                       <Route path="/campaigns/new" element={<CampaignNew />} />
                       <Route path="/campaigns/:id" element={<CampaignDetail />} />
+                      <Route path="/prime-calling" element={<PrimeCalling />} />
+                      <Route path="/prime-calling/new" element={<CampaignNew prime />} />
+                      <Route path="/prime-calling/company" element={<PrimeCompanyProfile />} />
                       <Route path="/calls" element={<CallsList />} />
                       <Route path="/calls/:id" element={<CallDetail />} />
                       <Route path="/agents" element={<Agents />} />

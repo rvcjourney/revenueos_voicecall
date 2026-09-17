@@ -296,6 +296,7 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.plans import router as plans_router
     from app.api.billing import router as billing_router
     from app.api.prompt_library import router as prompt_library_router
+    from app.api.company_profile import router as company_profile_router
 
     app.include_router(auth_router,        prefix="/api/auth",        tags=["auth"])
     app.include_router(admin_router,       prefix="/api/admin",       tags=["admin"])
@@ -314,6 +315,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(plans_router,       prefix="/api/plans",       tags=["plans"])
     app.include_router(billing_router,     prefix="/api/billing",     tags=["billing"])
     app.include_router(prompt_library_router, prefix="/api/prompt-library", tags=["prompt-library"])
+    app.include_router(company_profile_router, prefix="/api/company-profile", tags=["prime-calling"])
 
 
 app = create_app()

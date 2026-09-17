@@ -18,6 +18,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   LogOut,
+  Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -29,6 +30,7 @@ import { toast } from "sonner";
 const mainNav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
+  { to: "/prime-calling", label: "Prime Calling", icon: Sparkles },
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/agents", label: "AI Agents", icon: Headset },

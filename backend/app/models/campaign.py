@@ -12,7 +12,7 @@ from datetime import datetime, time
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Index, Integer, String, Text, Time, text
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, String, Text, Time, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -111,6 +111,10 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         nullable=True,
         index=True,
     )
+    # Prime Calling: each contact gets an LLM-personalised prompt + welcome
+    # message generated just before their call (see _prepare_prime_prompt in
+    # app/workers/tasks/campaign.py). False = classic campaign, one agent prompt for all.
+    is_prime: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,
@@ -222,6 +226,14 @@ class CampaignContact(Base, TimestampMixin):
     last_attempted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # ── Prime Calling (only set on contacts of is_prime campaigns) ──────────────
+    # Generated once on first dial attempt and reused on retries.
+    generated_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Last generation failure (call still went out on the fallback prompt)
+    prompt_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     campaign: Mapped["Campaign"] = relationship("Campaign", back_populates="contacts")

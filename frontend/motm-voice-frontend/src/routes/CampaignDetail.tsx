@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft,
   Copy,
+  Sparkles,
   Download,
   Loader2,
   Pause,
@@ -42,6 +43,7 @@ import {
 import { campaignsApi, usageApi } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api";
 import { callDurationSeconds, cn, formatDate, formatDateTime, formatDuration } from "@/lib/utils";
+import type { CampaignContact } from "@/lib/types";
 
 export default function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -140,7 +142,7 @@ export default function CampaignDetail() {
   // history entries. Same "no real history" fallback as CallDetail.
   function handleBack() {
     if (location.key !== "default") navigate(-1);
-    else navigate("/campaigns");
+    else navigate(c.is_prime ? "/prime-calling" : "/campaigns");
   }
 
   return (
@@ -154,6 +156,11 @@ export default function CampaignDetail() {
           <div className="flex items-center gap-3">
             <h1 className="font-heading text-2xl font-semibold sm:text-3xl">{c.name}</h1>
             <CampaignStatusBadge status={c.status} />
+            {c.is_prime && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                <Sparkles className="h-3 w-3" /> Prime
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             {c.description || "No description"} · Created by {c.created_by_name ?? "—"} on {formatDate(c.created_at)}
@@ -226,7 +233,7 @@ export default function CampaignDetail() {
         </TabsContent>
 
         <TabsContent value="contacts">
-          <ContactsTab campaignId={c.id} />
+          <ContactsTab campaignId={c.id} isPrime={c.is_prime} />
         </TabsContent>
 
         <TabsContent value="calls">
@@ -281,8 +288,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ContactsTab({ campaignId }: { campaignId: string }) {
+function ContactsTab({ campaignId, isPrime }: { campaignId: string; isPrime: boolean }) {
   const contacts = useCampaignContacts(campaignId, { limit: 100 });
+  const [promptRow, setPromptRow] = useState<CampaignContact | null>(null);
 
   if (contacts.isLoading) return <Skeleton className="h-64 w-full" />;
   if (contacts.isError) return <ErrorBanner error={contacts.error} onRetry={() => contacts.refetch()} />;
@@ -302,6 +310,7 @@ function ContactsTab({ campaignId }: { campaignId: string }) {
               <TableHead>Status</TableHead>
               <TableHead>Attempts</TableHead>
               <TableHead>Last attempted</TableHead>
+              {isPrime && <TableHead>AI prompt</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -313,11 +322,51 @@ function ContactsTab({ campaignId }: { campaignId: string }) {
                 <TableCell><ContactStatusBadge status={row.status} /></TableCell>
                 <TableCell>{row.attempt_count}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{formatDateTime(row.last_attempted_at)}</TableCell>
+                {isPrime && (
+                  <TableCell>
+                    {row.generated_system_prompt || row.prompt_error ? (
+                      <Button variant="ghost" size="sm" onClick={() => setPromptRow(row)}>
+                        {row.generated_system_prompt ? "View" : <span className="text-warning">Fallback used</span>}
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Written at call time</span>
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </CardContent>
+      <Dialog open={!!promptRow} onOpenChange={(open) => !open && setPromptRow(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>AI prompt for {promptRow?.name}</DialogTitle>
+          </DialogHeader>
+          {promptRow?.prompt_error && !promptRow.generated_system_prompt && (
+            <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
+              The AI couldn't write a personalised prompt, so this call used the agent's normal prompt plus the
+              contact's details. Reason: {promptRow.prompt_error}
+            </p>
+          )}
+          {promptRow?.generated_welcome_message && (
+            <div className="space-y-1.5">
+              <Label>Welcome message</Label>
+              <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+                {promptRow.generated_welcome_message}
+              </p>
+            </div>
+          )}
+          {promptRow?.generated_system_prompt && (
+            <div className="space-y-1.5">
+              <Label>Prompt</Label>
+              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed">
+                {promptRow.generated_system_prompt}
+              </pre>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

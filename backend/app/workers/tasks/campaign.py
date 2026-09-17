@@ -346,6 +346,7 @@ async def _place_call(
     llm_model: str = "",
     llm_temperature: float = 0.7,
     tts_model_id: str = "",
+    timezone_name: str = "",
 ) -> str:
     """
     Create room → dispatch AI agent + initiate SIP call (both in parallel).
@@ -370,6 +371,7 @@ async def _place_call(
             "llm_model": llm_model,
             "llm_temperature": llm_temperature,
             "tts_model_id": tts_model_id,
+            "timezone": timezone_name,
         }
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
@@ -643,6 +645,76 @@ async def _save_recording_async(
 
 # ── Per-call coroutine (runs in parallel inside the dispatch loop) ────────────
 
+async def _prepare_prime_prompt(
+    *,
+    contact_id: uuid.UUID,
+    org_id: uuid.UUID,
+    base_prompt: str,
+    base_welcome: str,
+    language: str,
+) -> tuple[str, str]:
+    """Return (system_prompt, welcome_message) personalised for this contact.
+
+    Generated once and saved on the contact, so retries reuse it. Never raises:
+    if generation fails the call still goes out on the agent's normal prompt
+    with the contact's CSV details appended (prompt_error records why).
+    """
+    from app.models.company_profile import OrgCompanyProfile
+    from app.services.prime_prompt import ContactInfo, fallback_prompt, generate_contact_prompt
+
+    try:
+        async with AsyncSessionLocal() as session:
+            contact = await session.get(CampaignContact, contact_id)
+            profile = await session.scalar(
+                select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == org_id)
+            )
+        if contact is None:
+            return base_prompt, base_welcome
+        if contact.generated_system_prompt:
+            return contact.generated_system_prompt, contact.generated_welcome_message or base_welcome
+
+        info = ContactInfo(
+            name=contact.name, phone=contact.phone, email=contact.email,
+            company=contact.company, custom_fields=contact.custom_fields or {},
+        )
+    except Exception as exc:
+        log.error("prime_prompt_load_failed", contact_id=str(contact_id), error=str(exc)[:300])
+        return base_prompt, base_welcome
+
+    started = time.monotonic()
+    try:
+        if profile is None or not profile.is_complete:
+            raise RuntimeError("Company profile is missing or incomplete")
+        result = await generate_contact_prompt(
+            profile=profile, base_prompt=base_prompt, language=language, contact=info,
+        )
+        values = dict(
+            generated_system_prompt=result.system_prompt,
+            generated_welcome_message=result.welcome_message,
+            prompt_generated_at=datetime.now(timezone.utc),
+            prompt_error=None,
+        )
+        prompt, welcome = result.system_prompt, result.welcome_message
+        log.info("prime_prompt_generated", contact_id=str(contact_id),
+                 website_used=result.website_used, seconds=round(time.monotonic() - started, 1))
+    except Exception as exc:
+        prompt, welcome = fallback_prompt(base_prompt, base_welcome, info)
+        # Fallback is not saved as generated_* so the next retry tries the LLM again
+        values = dict(prompt_error=str(exc)[:1000])
+        log.warning("prime_prompt_fallback", contact_id=str(contact_id), error=str(exc)[:300])
+
+    try:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                await session.execute(
+                    update(CampaignContact).where(CampaignContact.id == contact_id).values(**values)
+                )
+    except Exception as exc:
+        log.error("prime_prompt_save_failed", contact_id=str(contact_id), error=str(exc)[:300])
+
+    return prompt, welcome
+
+
 async def _run_one_call(
     http: aiohttp.ClientSession,
     *,
@@ -658,6 +730,17 @@ async def _run_one_call(
     """
     contact_id = kwargs["contact_id"]
     contact_phone = kwargs["contact_phone"]
+
+    # Prime Calling: personalise the prompt BEFORE taking any slot, so the
+    # website fetch + LLM round-trip (several seconds) never holds a phone line.
+    if kwargs.pop("is_prime", False):
+        kwargs["system_prompt"], kwargs["welcome_message"] = await _prepare_prime_prompt(
+            contact_id=contact_id,
+            org_id=kwargs["org_id"],
+            base_prompt=kwargs["system_prompt"],
+            base_welcome=kwargs["welcome_message"],
+            language=kwargs["language"],
+        )
 
     user_slot_acquired = owner_user_id is None  # no owner to attribute to -- fail open
     if owner_user_id is not None:
@@ -719,6 +802,7 @@ async def _run_one_call_body(
     llm_model: str,
     llm_temperature: float,
     org_max_concurrent: int,
+    timezone_name: str = "",
 ) -> None:
     """Place one call, wait for it to finish, and finalize — all with its own DB session.
 
@@ -816,6 +900,7 @@ async def _run_one_call_body(
                 language=language,
                 llm_model=llm_model,
                 llm_temperature=llm_temperature,
+                timezone_name=timezone_name,
             )
 
             if place_result == "congested":
@@ -1022,6 +1107,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         language=str(tmpl.language) if tmpl else "hinglish",
                         llm_model=(tmpl.llm_model or "") if tmpl else "",
                         llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
+                        timezone_name=campaign.timezone or "",
+                        is_prime=bool(campaign.is_prime),
                     )
 
                     for contact in contacts:
@@ -1590,9 +1677,19 @@ async def _launch_scheduled_async() -> None:
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 campaign = await session.get(Campaign, uuid.UUID(cid))
-                if campaign and campaign.status == CampaignStatus.SCHEDULED:
-                    campaign.status = CampaignStatus.RUNNING
-                    campaign.started_at = now
+                if not campaign or campaign.status != CampaignStatus.SCHEDULED:
+                    continue
+                if campaign.is_prime:
+                    from app.models.company_profile import OrgCompanyProfile
+                    profile = await session.scalar(
+                        select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == campaign.org_id)
+                    )
+                    if profile is None or not profile.is_complete:
+                        campaign.status = CampaignStatus.PAUSED
+                        log.warning("scheduled_prime_campaign_paused_no_profile", campaign_id=cid)
+                        continue
+                campaign.status = CampaignStatus.RUNNING
+                campaign.started_at = now
         run_campaign.delay(cid)
         log.info("scheduled_campaign_launched", campaign_id=cid, name=cname)
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Check, ChevronLeft, ChevronRight, Loader2, Rocket, Upload, UploadCloud } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Globe, Loader2, Rocket, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +11,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAccessBadge } from "@/components/shared/StatusBadge";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { useAgents, useCreateCampaign, useFolders, useLaunchCampaign, useMyTrunks, useUpdateCampaign, useUploadContacts } from "@/lib/hooks";
+import { ContactsUploader } from "@/components/shared/ContactsUploader";
+import {
+  useAgents,
+  useCampaignContacts,
+  useCompanyProfile,
+  useCreateCampaign,
+  useFolders,
+  useLaunchCampaign,
+  useMyTrunks,
+  usePrimePreview,
+  useUpdateCampaign,
+  useUploadContacts,
+} from "@/lib/hooks";
 import { apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { CampaignGoal } from "@/lib/types";
 
 const STEPS = ["Campaign & Agent", "Contacts", "Schedule", "Review & Launch"];
+// Prime Calling adds a Preview step: see one contact's AI-personalised prompt before launch
+const PRIME_STEPS = ["Campaign & Agent", "Contacts", "Preview", "Schedule", "Review & Launch"];
 const DAYS = [
   { value: "mon", label: "Mon" },
   { value: "tue", label: "Tue" },
@@ -27,9 +41,11 @@ const DAYS = [
   { value: "sun", label: "Sun" },
 ];
 
-export default function CampaignNew() {
+export default function CampaignNew({ prime = false }: { prime?: boolean }) {
   const navigate = useNavigate();
+  const steps = prime ? PRIME_STEPS : STEPS;
   const [step, setStep] = useState(0);
+  const stepName = steps[step];
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [contactCount, setContactCount] = useState<number | null>(null);
 
@@ -56,6 +72,8 @@ export default function CampaignNew() {
   const updateCampaign = useUpdateCampaign();
   const uploadContacts = useUploadContacts();
   const launchCampaign = useLaunchCampaign();
+  const companyProfile = useCompanyProfile();
+  const profileIncomplete = prime && companyProfile.isSuccess && !companyProfile.data.is_complete;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -64,6 +82,10 @@ export default function CampaignNew() {
   async function handleStep1Submit() {
     if (!form.name.trim() || !form.agent_template_id) {
       toast.error("Campaign name and AI agent are required");
+      return;
+    }
+    if (profileIncomplete) {
+      toast.error("Fill in your Company Profile first — the AI needs it to personalise each call.");
       return;
     }
     const hasDefaultTrunk = trunks.data?.some((t) => t.is_default);
@@ -79,10 +101,11 @@ export default function CampaignNew() {
         folder_id: form.folder_id || undefined,
         agent_template_id: form.agent_template_id,
         sip_trunk_id: form.sip_trunk_id || undefined,
+        is_prime: prime,
       });
       setCampaignId(res.data.id);
       toast.success("Draft campaign created");
-      setStep(1);
+      setStep((s) => s + 1);
     } catch (err) {
       toast.error(apiErrorMessage(err, "Couldn't create campaign"));
     }
@@ -114,7 +137,7 @@ export default function CampaignNew() {
           retry_after_minutes: form.retry_after_minutes,
         },
       });
-      setStep(3);
+      setStep((s) => s + 1);
     } catch (err) {
       toast.error(apiErrorMessage(err, "Couldn't save schedule"));
     }
@@ -135,11 +158,31 @@ export default function CampaignNew() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <PageHeader title="New Campaign" description="Set up an AI voice calling campaign in a few steps." />
+      <PageHeader
+        title={prime ? "New Prime Campaign" : "New Campaign"}
+        description={
+          prime
+            ? "Every contact gets a call personalised by AI from their CSV details, their website and your company profile."
+            : "Set up an AI voice calling campaign in a few steps."
+        }
+      />
+
+      {profileIncomplete && (
+        <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p>
+            Your Company Profile isn't filled in yet. The AI needs to know who you are and what you offer to write each
+            prompt.{" "}
+            <Link to="/prime-calling/company" className="font-medium text-primary underline-offset-4 hover:underline">
+              Set up Company Profile
+            </Link>
+          </p>
+        </div>
+      )}
 
       {/* Stepper */}
       <div className="flex items-center">
-        {STEPS.map((label, i) => (
+        {steps.map((label, i) => (
           <div key={label} className="flex flex-1 items-center last:flex-none">
             <div className="flex flex-col items-center gap-1.5">
               <div
@@ -158,14 +201,14 @@ export default function CampaignNew() {
                 {label}
               </span>
             </div>
-            {i < STEPS.length - 1 && <div className={cn("mx-2 h-px flex-1", i < step ? "bg-primary" : "bg-border")} />}
+            {i < steps.length - 1 && <div className={cn("mx-2 h-px flex-1", i < step ? "bg-primary" : "bg-border")} />}
           </div>
         ))}
       </div>
 
       <Card>
         <CardContent className="space-y-5 pt-6">
-          {step === 0 && (
+          {stepName === "Campaign & Agent" && (
             <div className="space-y-5">
               <div className="space-y-1.5">
                 <Label htmlFor="c-name">Campaign name</Label>
@@ -242,17 +285,32 @@ export default function CampaignNew() {
             </div>
           )}
 
-          {step === 1 && (
+          {stepName === "Contacts" && (
             <div className="space-y-5">
               <ContactsUploader onFile={handleFileUpload} uploading={uploadContacts.isPending} count={contactCount} />
-              <p className="text-xs text-muted-foreground">
-                We'll match any column containing "phone" automatically. Name, email, and company are optional — every
-                other column becomes a custom field for your agent.
-              </p>
+              {prime ? (
+                <div className="space-y-2 text-xs text-muted-foreground">
+                  <p>
+                    The more columns you include, the more personal each call gets. A phone column is required (named
+                    "phone", "mobile" or "contact"). Everything else is optional, for example:
+                  </p>
+                  <code className="block overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-[11px] text-foreground">
+                    Name,Designation,Contact,Company Name,Website,Location,Industry
+                  </code>
+                  <p>If there's a Website column, the AI reads that page before the call.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  We'll match any column containing "phone" automatically. Name, email, and company are optional — every
+                  other column becomes a custom field for your agent.
+                </p>
+              )}
             </div>
           )}
 
-          {step === 2 && (
+          {stepName === "Preview" && campaignId && <PrimePreviewStep campaignId={campaignId} />}
+
+          {stepName === "Schedule" && (
             <div className="space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
@@ -304,9 +362,10 @@ export default function CampaignNew() {
             </div>
           )}
 
-          {step === 3 && (
+          {stepName === "Review & Launch" && (
             <div className="space-y-4 text-sm">
               <SummaryRow label="Name" value={form.name} />
+              {prime && <SummaryRow label="Type" value="Prime (personalised per contact)" />}
               <SummaryRow label="Goal" value={form.goal.replace("_", " ")} />
               <SummaryRow label="Agent" value={selectedAgent?.name ?? "—"} />
               <SummaryRow label="Contacts" value={contactCount !== null ? `${contactCount} uploaded` : "None uploaded"} />
@@ -328,24 +387,24 @@ export default function CampaignNew() {
           <ChevronLeft className="h-4 w-4" /> Back
         </Button>
 
-        {step === 0 && (
+        {stepName === "Campaign & Agent" && (
           <Button variant="gradient" onClick={handleStep1Submit} disabled={createCampaign.isPending}>
             {createCampaign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Continue <ChevronRight className="h-4 w-4" />
           </Button>
         )}
-        {step === 1 && (
-          <Button variant="gradient" onClick={() => setStep(2)}>
+        {(stepName === "Contacts" || stepName === "Preview") && (
+          <Button variant="gradient" onClick={() => setStep((s) => s + 1)}>
             Continue <ChevronRight className="h-4 w-4" />
           </Button>
         )}
-        {step === 2 && (
+        {stepName === "Schedule" && (
           <Button variant="gradient" onClick={handleScheduleSubmit} disabled={updateCampaign.isPending}>
             {updateCampaign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Continue <ChevronRight className="h-4 w-4" />
           </Button>
         )}
-        {step === 3 && (
+        {stepName === "Review & Launch" && (
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate(`/campaigns/${campaignId}`)}>
               Save as draft
@@ -370,62 +429,82 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ContactsUploader({
-  onFile,
-  uploading,
-  count,
-}: {
-  onFile: (file: File) => void;
-  uploading: boolean;
-  count: number | null;
-}) {
-  const [dragOver, setDragOver] = useState(false);
+function PrimePreviewStep({ campaignId }: { campaignId: string }) {
+  const contacts = useCampaignContacts(campaignId, { limit: 200 });
+  const preview = usePrimePreview();
+  const [contactId, setContactId] = useState<string>("");
+
+  async function generate() {
+    try {
+      await preview.mutateAsync({ id: campaignId, contactId: contactId || undefined });
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't generate preview"));
+    }
+  }
+
+  const items = contacts.data?.items ?? [];
+  const result = preview.data;
 
   return (
-    <label
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) onFile(file);
-      }}
-      className={cn(
-        "flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors",
-        dragOver ? "border-primary bg-primary/10" : "border-border hover:bg-muted/30"
-      )}
-    >
-      <input
-        type="file"
-        accept=".csv,.xlsx,.xls"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onFile(file);
-        }}
-      />
-      {uploading ? (
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      ) : count !== null ? (
-        <Check className="h-8 w-8 text-success" />
-      ) : (
-        <UploadCloud className="h-8 w-8 text-muted-foreground" />
-      )}
-      <div>
-        <p className="text-sm font-medium">
-          {count !== null ? `${count} contacts uploaded` : "Drag & drop a CSV or Excel file"}
+    <div className="space-y-5">
+      <div className="space-y-1">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Sparkles className="h-4 w-4 text-primary" /> See what the AI will say
         </p>
-        <p className="text-xs text-muted-foreground">or click to browse — thousands of contacts supported</p>
+        <p className="text-xs text-muted-foreground">
+          Before each call, the AI writes a prompt for that contact. Try it on a contact to check it looks right. This
+          step is optional.
+        </p>
       </div>
-      <Button type="button" variant="outline" size="sm" asChild>
-        <span>
-          <Upload className="h-3.5 w-3.5" /> {count !== null ? "Replace file" : "Choose file"}
-        </span>
-      </Button>
-    </label>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Select value={contactId || "first"} onValueChange={(v) => setContactId(v === "first" ? "" : v)}>
+          <SelectTrigger className="sm:flex-1"><SelectValue placeholder="First contact" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="first">First contact in the list</SelectItem>
+            {items.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}{c.company ? ` · ${c.company}` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" onClick={generate} disabled={preview.isPending || items.length === 0}>
+          {preview.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {result ? "Generate again" : "Generate preview"}
+        </Button>
+      </div>
+
+      {items.length === 0 && !contacts.isLoading && (
+        <p className="text-xs text-muted-foreground">Upload contacts in the previous step to preview.</p>
+      )}
+      {preview.isPending && (
+        <p className="text-xs text-muted-foreground">
+          Reading their website and writing the prompt — this can take up to a minute…
+        </p>
+      )}
+
+      {result && !preview.isPending && (
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <Label>Welcome message for {result.contact_name}</Label>
+              {result.website_used && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Globe className="h-3 w-3" /> used their website
+                </span>
+              )}
+            </div>
+            <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">{result.welcome_message}</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Personalised prompt</Label>
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 font-sans text-xs leading-relaxed">
+              {result.system_prompt}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

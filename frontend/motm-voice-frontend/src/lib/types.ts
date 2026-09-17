@@ -169,6 +169,7 @@ export interface Campaign {
   completed_at: string | null;
   created_at: string;
   created_by_name: string | null;
+  is_prime: boolean;
 }
 
 export interface CampaignCreate {
@@ -188,6 +189,7 @@ export interface CampaignCreate {
   retry_after_minutes?: number;
   start_time?: string;
   end_time?: string;
+  is_prime?: boolean;
 }
 
 export interface CampaignContact {
@@ -200,6 +202,37 @@ export interface CampaignContact {
   status: ContactStatus;
   attempt_count: number;
   last_attempted_at: string | null;
+  generated_system_prompt?: string | null;
+  generated_welcome_message?: string | null;
+  prompt_generated_at?: string | null;
+  prompt_error?: string | null;
+}
+
+// ── Prime Calling ───────────────────────────────────────────────────────
+export interface CompanyProfileInput {
+  company_name: string;
+  website: string | null;
+  industry: string | null;
+  what_we_offer: string | null;
+  value_proposition: string | null;
+  target_customers: string | null;
+  key_points: string | null;
+  call_objective: string | null;
+  tone_notes: string | null;
+  extra_info: string | null;
+}
+
+export interface CompanyProfile extends CompanyProfileInput {
+  is_complete: boolean;
+  updated_at: string | null;
+}
+
+export interface PrimePreview {
+  contact_id: string;
+  contact_name: string;
+  system_prompt: string;
+  welcome_message: string;
+  website_used: boolean;
 }
 
 export interface TranscriptSegment {

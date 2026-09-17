@@ -62,6 +62,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         completed_at=c.completed_at,
         created_at=c.created_at,
         created_by_name=created_by_name,
+        is_prime=c.is_prime,
     )
 
 
@@ -69,6 +70,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
 async def list_campaigns(
     status: str | None = Query(None),
     folder_id: str | None = Query(None),
+    is_prime: bool | None = Query(None),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -81,6 +83,8 @@ async def list_campaigns(
         q = q.where(Campaign.created_by_id == token.user_id)
     if status:
         q = q.where(Campaign.status == status)
+    if is_prime is not None:
+        q = q.where(Campaign.is_prime.is_(is_prime))
     if folder_id == "none":
         q = q.where(Campaign.folder_id.is_(None))
     elif folder_id:
@@ -240,11 +244,25 @@ async def list_contacts(
                 "status": str(c.status),
                 "attempt_count": c.attempt_count,
                 "last_attempted_at": c.last_attempted_at.isoformat() if c.last_attempted_at else None,
+                "custom_fields": c.custom_fields or {},
+                "generated_system_prompt": c.generated_system_prompt,
+                "generated_welcome_message": c.generated_welcome_message,
+                "prompt_generated_at": c.prompt_generated_at.isoformat() if c.prompt_generated_at else None,
+                "prompt_error": c.prompt_error,
             }
             for c in rows
         ],
         "total": total,
     }
+
+
+# Header names (after lowercase + spaces→"_") recognised as the contact's name
+_NAME_COLUMNS = ("name", "full_name", "contact_name", "first_name", "customer_name", "client_name")
+# Recognised as the phone column only when no header contains "phone"
+_PHONE_FALLBACK_COLUMNS = (
+    "contact", "contact_no", "contact_number", "mobile", "mobile_no", "mobile_number",
+    "number", "cell", "whatsapp", "whatsapp_number",
+)
 
 
 @router.post("/{campaign_id}/contacts", status_code=201)
@@ -273,11 +291,15 @@ async def upload_contacts(
 
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
 
-    phone_col = next((c for c in df.columns if "phone" in c), None)
+    name_col = next((c for c in df.columns if c in _NAME_COLUMNS), None)
+    phone_col = next((c for c in df.columns if "phone" in c), None) or next(
+        (c for c in df.columns if c in _PHONE_FALLBACK_COLUMNS and c != name_col), None
+    )
     if not phone_col:
-        raise AppValidationError("File must have a column named 'phone' or 'phone_number'", errors=[])
+        raise AppValidationError(
+            "File must have a phone column (e.g. 'phone', 'mobile' or 'contact')", errors=[]
+        )
 
-    name_col = next((c for c in df.columns if c in ("name", "full_name", "contact_name")), None)
     email_col = next((c for c in df.columns if "email" in c), None)
     company_col = next((c for c in df.columns if "company" in c), None)
 
@@ -382,6 +404,16 @@ async def launch_campaign(
 
     if campaign.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
         raise CampaignStateError(f"Campaign is '{campaign.status}', cannot be launched")
+
+    if campaign.is_prime:
+        from app.api.company_profile import get_org_profile
+        profile = await get_org_profile(db, token.org_id)
+        if not profile or not profile.is_complete:
+            raise AppValidationError(
+                "Prime Calling needs your Company Profile first — add at least your company name "
+                "and what you offer under Prime Calling → Company Profile.",
+                errors=[],
+            )
 
     contact_count = await db.scalar(
         select(func.count()).where(
@@ -716,6 +748,7 @@ async def duplicate_campaign(
         calls_per_minute=original.calls_per_minute,
         max_retries=original.max_retries,
         retry_after_minutes=original.retry_after_minutes,
+        is_prime=original.is_prime,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)
@@ -763,3 +796,64 @@ async def pause_campaign(
     await db.commit()
     await db.refresh(campaign)
     return _to_out(campaign)
+
+
+@router.post("/{campaign_id}/prime-preview")
+async def prime_preview(
+    campaign_id: UUID,
+    contact_id: UUID | None = Query(None),
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate (without saving or dialing) the personalised prompt one contact
+    would get, so the user can sanity-check a Prime campaign before launch.
+    Defaults to the first uploaded contact.
+    """
+    from app.api.company_profile import get_org_profile
+    from app.core.rate_limit import enforce_rate_limit
+    from app.models.agent import AgentTemplate
+    from app.services.prime_prompt import ContactInfo, generate_contact_prompt
+
+    campaign = await db.get(Campaign, campaign_id)
+    _check_campaign_access(campaign, token)
+    if not campaign.is_prime:
+        raise AppValidationError("Preview is only available for Prime Calling campaigns", errors=[])
+
+    profile = await get_org_profile(db, token.org_id)
+    if not profile or not profile.is_complete:
+        raise AppValidationError(
+            "Fill in your Company Profile (company name and what you offer) before previewing.",
+            errors=[],
+        )
+
+    q = select(CampaignContact).where(CampaignContact.campaign_id == campaign_id)
+    if contact_id:
+        q = q.where(CampaignContact.id == contact_id)
+    contact = await db.scalar(q.order_by(CampaignContact.created_at).limit(1))
+    if not contact:
+        raise AppValidationError("Upload contacts before previewing", errors=[])
+
+    await enforce_rate_limit("prime-preview", str(token.org_id), limit=30, window_seconds=3600)
+
+    tmpl = await db.get(AgentTemplate, campaign.agent_template_id)
+    try:
+        result = await generate_contact_prompt(
+            profile=profile,
+            base_prompt=(tmpl.system_prompt or "") if tmpl else "",
+            language=str(tmpl.language) if tmpl else "hinglish",
+            contact=ContactInfo(
+                name=contact.name, phone=contact.phone, email=contact.email,
+                company=contact.company, custom_fields=contact.custom_fields or {},
+            ),
+        )
+    except Exception:
+        raise AppValidationError("Could not generate a preview right now — please try again", errors=[])
+
+    return {
+        "contact_id": str(contact.id),
+        "contact_name": contact.name,
+        "system_prompt": result.system_prompt,
+        "welcome_message": result.welcome_message,
+        "website_used": result.website_used,
+    }
