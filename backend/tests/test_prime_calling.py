@@ -79,8 +79,8 @@ _SECTIONS_0_TO_6 = "# SYSTEM PROMPT\n" + "\n".join(f"## {i}. SECTION\nbody" for 
 
 
 def test_parse_output_appends_fixed_section_7():
-    prompt, welcome = prime_prompt._parse_output("```json\n" + _llm_json(_SECTIONS_0_TO_6) + "\n```")
-    assert welcome.startswith("Namaste ji")
+    prompt, welcome, leftovers = prime_prompt._parse_output("```json\n" + _llm_json(_SECTIONS_0_TO_6) + "\n```")
+    assert welcome.startswith("Namaste ji") and leftovers == []
     assert prompt.startswith("# SYSTEM PROMPT")
     assert prompt.endswith(prime_prompt.SECTION_7)
     assert "[end_call]" in prompt
@@ -88,18 +88,70 @@ def test_parse_output_appends_fixed_section_7():
 
 def test_parse_output_replaces_llm_written_section_7():
     raw = _SECTIONS_0_TO_6 + "\n## 7. CALL ENDING\nsay nothing after namaste"
-    prompt, _ = prime_prompt._parse_output(_llm_json(raw))
+    prompt, _, _ = prime_prompt._parse_output(_llm_json(raw))
     assert "say nothing after namaste" not in prompt
     assert prompt.count("## 7.") == 1
 
 
-def test_parse_output_rejects_missing_sections_or_placeholders():
+def test_parse_output_rejects_missing_sections_or_bad_welcome():
     with pytest.raises(ValueError, match="missing sections"):
         prime_prompt._parse_output(_llm_json("# SYSTEM PROMPT\n## 0. WHO\n## 1. RULES"))
     with pytest.raises(ValueError, match="placeholders"):
         prime_prompt._parse_output(_llm_json(_SECTIONS_0_TO_6, welcome="Namaste [prospect name] ji"))
     with pytest.raises(ValueError):
         prime_prompt._parse_output('{"system_prompt": "", "welcome_message": ""}')
+
+
+def test_parse_output_reports_leftover_placeholders():
+    raw = _SECTIONS_0_TO_6 + "\nconnect to [the decision-maker if known]. Callback at [time/date]."
+    _, _, leftovers = prime_prompt._parse_output(_llm_json(raw))
+    assert leftovers == ["[the decision-maker if known]"]  # [time/date] is allowed
+
+
+def _profile():
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        company_name="MOTM", website=None, industry=None, what_we_offer="Leads", value_proposition=None,
+        target_customers=None, key_points=None, call_objective=None, tone_notes=None, extra_info=None,
+    )
+
+
+async def test_generate_asks_model_to_fix_leftover_placeholders():
+    from app.config import settings
+
+    with_leftover = _llm_json(_SECTIONS_0_TO_6 + "\nask for [the decision-maker]")
+    fixed = _llm_json(_SECTIONS_0_TO_6 + "\nask for Ravi ji")
+    groq = AsyncMock(side_effect=[with_leftover, fixed])
+    with patch.object(settings, "GROQ_API_KEY", "test-key"), patch.object(prime_prompt, "_call_groq", groq):
+        result = await prime_prompt.generate_contact_prompt(
+            profile=_profile(), base_prompt="BASE", language="hinglish", contact=_contact(),
+        )
+    assert "Ravi ji" in result.system_prompt and "[the decision-maker]" not in result.system_prompt
+    fix_messages = groq.await_args_list[1].args[1]
+    assert [m["role"] for m in fix_messages] == ["user", "assistant", "user"]
+    assert "[the decision-maker]" in fix_messages[-1]["content"]
+
+
+async def test_generate_accepts_prompt_if_placeholders_never_fixed():
+    from app.config import settings
+
+    with_leftover = _llm_json(_SECTIONS_0_TO_6 + "\nask for [the decision-maker]")
+    groq = AsyncMock(return_value=with_leftover)
+    with patch.object(settings, "GROQ_API_KEY", "test-key"), patch.object(prime_prompt, "_call_groq", groq):
+        result = await prime_prompt.generate_contact_prompt(
+            profile=_profile(), base_prompt="BASE", language="hinglish", contact=_contact(),
+        )
+    assert groq.await_count == 3
+    assert result.system_prompt.startswith("# SYSTEM PROMPT")
+
+
+def test_template_fills_gatekeeper_target_in_code():
+    text = prime_prompt._META_PROMPT.format(
+        company="MOTM", prospect_ref="Ravi ji (by name)", prospect_ask="Ravi ji",
+        language="hinglish", profile="", base_prompt="", contact="",
+    )
+    assert "connected to Ravi ji (by name)." in text
+    assert "Kya Ravi ji se baat ho sakti hai" in text
 
 
 def test_fallback_prompt_appends_contact_details():

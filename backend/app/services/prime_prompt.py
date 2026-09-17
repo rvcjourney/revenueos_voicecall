@@ -262,8 +262,7 @@ permission to share one relevant point — do not over-explain.
 - **"Not interested"** → acknowledge gracefully, ask if you may email a brief note for future \
 reference, do not push further; close warmly.
 - **Gatekeeper (receptionist/assistant)** → do not pitch to the gatekeeper; politely ask to be \
-connected to [the prospect by name + "ji" if known; otherwise "the decision-maker (owner, MD, VP \
-Sales, or whoever handles sales/business development)"].
+connected to {prospect_ref}.
 - **Wrong number / irrelevant** → apologize briefly and close warmly. No pushing.
 
 ## 4. CONVERSATION FLOW (explicit step-by-step — follow this order, do not skip steps, do not jump ahead)
@@ -339,8 +338,8 @@ aa sake toh?"
    - If no → go directly to STEP 4 (Closing — No Action). Do not ask again.
 
 ### Branch G — Gatekeeper has answered
-1. "[Namaste ji! Main <Agent name> bol <rahi/raha> hoon <Our company> se. Kya <prospect name, or \
-'owner / sales head'> se baat ho sakti hai, ek minute ke liye?]"
+1. "[Namaste ji! Main <Agent name> bol <rahi/raha> hoon <Our company> se.] Kya {prospect_ask} se baat \
+ho sakti hai, ek minute ke liye?"
 2. If asked the purpose: "[one-line purpose tailored to their company]"
 3. If connected → return to STEP 1 (Opening, "prospect available" version).
 4. If not available → "Koi baat nahi. Unka ek convenient time bata sakte hain jab main call kar \
@@ -425,7 +424,12 @@ to send an email instead.
 """
 
 
-def _parse_output(content: str) -> tuple[str, str]:
+def _parse_output(content: str) -> tuple[str, str, list[str]]:
+    """Return (system_prompt with Section 7, welcome_message, leftover placeholders).
+
+    Missing sections / a broken welcome message raise. Leftover [placeholders]
+    are returned instead, so the caller can ask the model to fix them.
+    """
     text = content.strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     try:
@@ -449,21 +453,19 @@ def _parse_output(content: str) -> tuple[str, str]:
         raise ValueError(f"LLM output missing sections: {', '.join(missing)}")
     if "[" in welcome or "<" in welcome:
         raise ValueError("welcome_message still contains template placeholders")
-    leftovers = sorted({m for m in re.findall(r"\[[^\]\n]{1,200}\]", prompt) if m not in _ALLOWED_BRACKETS})
-    if leftovers:
-        raise ValueError(f"system_prompt still contains template placeholders: {', '.join(leftovers[:5])}")
+    leftovers = sorted({m for m in re.findall(r"\[[^\]\n]{1,300}\]", prompt) if m not in _ALLOWED_BRACKETS})
 
-    return f"{prompt}\n\n{SECTION_7}", welcome
+    return f"{prompt}\n\n{SECTION_7}", welcome, leftovers
 
 
-async def _call_groq(api_key: str, content: str) -> str:
+async def _call_groq(api_key: str, messages: list[dict]) -> str:
     async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
         response = await client.post(
             _GROQ_URL,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "model": GROQ_OPTIMIZE_MODEL,
-                "messages": [{"role": "user", "content": content}],
+                "messages": messages,
                 # Full prompt is ~4–6k output tokens (Hinglish tokenises densely), plus reasoning
                 "max_tokens": 16000,
                 "temperature": 0.4,
@@ -489,8 +491,15 @@ async def generate_contact_prompt(
     website = find_website(contact)
     website_summary = await fetch_site_summary(website) if website else ""
 
+    # Contact values end up inside the template text: strip characters that
+    # could look like placeholders or format fields
+    name = re.sub(r"[\[\]{}<>]", "", _clip(contact.name, 80))
+    has_name = bool(name) and name.lower() not in ("contact", "unknown", "nan")
     content = _META_PROMPT.format(
         company=_clip(profile.company_name, 255) or "our company",
+        prospect_ref=f'{name} ji (by name)' if has_name else
+        "the decision-maker (owner, MD, VP Sales, or whoever handles sales/business development)",
+        prospect_ask=f"{name} ji" if has_name else "owner ya sales head",
         language=_clip(language, 30) or "hinglish",
         profile=_profile_block(profile) or "(not provided)",
         base_prompt=(base_prompt or "(none)")[:_MAX_BASE_PROMPT_CHARS],
@@ -498,12 +507,34 @@ async def generate_contact_prompt(
         contact=_contact_block(contact, website_summary).replace("</contact_data>", ""),
     )
 
+    base_messages = [{"role": "user", "content": content}]
+    messages = base_messages
     last_exc: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
-            prompt, welcome = _parse_output(await _call_groq(settings.GROQ_API_KEY, content))
-            return GeneratedPrompt(prompt, welcome, website_used=bool(website_summary))
+            raw = await _call_groq(settings.GROQ_API_KEY, messages)
+            prompt, welcome, leftovers = _parse_output(raw)
         except Exception as exc:
             last_exc = exc
+            messages = base_messages  # structurally broken: start over
             log.warning("prime_prompt_attempt_failed", attempt=attempt + 1, error=str(exc)[:300])
+            continue
+
+        if leftovers and attempt < 2:
+            # Ask the model to finish the job instead of regenerating from scratch
+            log.info("prime_prompt_fixing_placeholders", attempt=attempt + 1, count=len(leftovers))
+            messages = base_messages + [
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": (
+                    "Your system_prompt still contains these unfilled template placeholders: "
+                    + "; ".join(leftovers[:10])
+                    + ". Replace each one with real content (or remove the bullet if unknown), keep "
+                    "everything else identical, and return the full corrected JSON object."
+                )},
+            ]
+            continue
+        if leftovers:
+            # Still a personalised, well-structured prompt — better than the generic fallback
+            log.warning("prime_prompt_placeholders_left", count=len(leftovers), sample=leftovers[0][:120])
+        return GeneratedPrompt(prompt, welcome, website_used=bool(website_summary))
     raise RuntimeError(f"Prompt generation failed: {last_exc}") from last_exc

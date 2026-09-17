@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Globe, Loader2, Rocket, Sparkles } from "lucide-react";
@@ -73,6 +73,13 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
   const uploadContacts = useUploadContacts();
   const launchCampaign = useLaunchCampaign();
   const companyProfile = useCompanyProfile();
+
+  // Prime Calling: if only one agent is usable, pick it so the user doesn't have to
+  const approvedAgents = agents.data?.filter((a) => a.access_status === "approved") ?? [];
+  const onlyAgentId = approvedAgents.length === 1 ? approvedAgents[0].id : "";
+  useEffect(() => {
+    if (prime && onlyAgentId) setForm((f) => (f.agent_template_id ? f : { ...f, agent_template_id: onlyAgentId }));
+  }, [prime, onlyAgentId]);
   const profileIncomplete = prime && companyProfile.isSuccess && !companyProfile.data.is_complete;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -246,9 +253,11 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
               </div>
 
               <div className="space-y-1.5">
-                <Label>AI Agent</Label>
+                <Label>{prime ? "Voice & persona (AI Agent)" : "AI Agent"}</Label>
                 <Select value={form.agent_template_id} onValueChange={(v) => update("agent_template_id", v)}>
-                  <SelectTrigger><SelectValue placeholder="Select an AI agent" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder={prime ? "Choose which agent's voice and persona to use" : "Select an AI agent"} />
+                  </SelectTrigger>
                   <SelectContent>
                     {agents.data?.map((a) => (
                       <SelectItem key={a.id} value={a.id} disabled={a.access_status !== "approved"}>
@@ -264,6 +273,12 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                       {selectedAgent.voice_provider} · {selectedAgent.llm_model}
                     </span>
                   </div>
+                )}
+                {prime && (
+                  <p className="text-xs text-muted-foreground">
+                    Prime Calling writes a new script for every contact, but the call still uses this agent's voice,
+                    language and persona name (e.g. "Priya"). Its prompt is used as background knowledge for the AI.
+                  </p>
                 )}
                 {agents.data?.length === 0 && (
                   <p className="text-xs text-muted-foreground">No agents yet. Create one from the AI Agents page first.</p>
