@@ -70,10 +70,34 @@ def test_find_website_from_custom_fields():
     assert prime_prompt.find_website(_contact(designation="CEO")) is None
 
 
-def test_parse_output_handles_fences_and_rejects_empty():
-    body = '{"system_prompt": "' + "x" * 250 + '", "welcome_message": "Namaste Ravi ji"}'
-    prompt, welcome = prime_prompt._parse_output("```json\n" + body + "\n```")
-    assert welcome == "Namaste Ravi ji" and len(prompt) == 250
+def _llm_json(prompt: str, welcome: str = "Namaste ji! Main Priya bol rahi hoon MOTM se.") -> str:
+    import json
+    return json.dumps({"system_prompt": prompt, "welcome_message": welcome})
+
+
+_SECTIONS_0_TO_6 = "# SYSTEM PROMPT\n" + "\n".join(f"## {i}. SECTION\nbody" for i in range(7))
+
+
+def test_parse_output_appends_fixed_section_7():
+    prompt, welcome = prime_prompt._parse_output("```json\n" + _llm_json(_SECTIONS_0_TO_6) + "\n```")
+    assert welcome.startswith("Namaste ji")
+    assert prompt.startswith("# SYSTEM PROMPT")
+    assert prompt.endswith(prime_prompt.SECTION_7)
+    assert "[end_call]" in prompt
+
+
+def test_parse_output_replaces_llm_written_section_7():
+    raw = _SECTIONS_0_TO_6 + "\n## 7. CALL ENDING\nsay nothing after namaste"
+    prompt, _ = prime_prompt._parse_output(_llm_json(raw))
+    assert "say nothing after namaste" not in prompt
+    assert prompt.count("## 7.") == 1
+
+
+def test_parse_output_rejects_missing_sections_or_placeholders():
+    with pytest.raises(ValueError, match="missing sections"):
+        prime_prompt._parse_output(_llm_json("# SYSTEM PROMPT\n## 0. WHO\n## 1. RULES"))
+    with pytest.raises(ValueError, match="placeholders"):
+        prime_prompt._parse_output(_llm_json(_SECTIONS_0_TO_6, welcome="Namaste [prospect name] ji"))
     with pytest.raises(ValueError):
         prime_prompt._parse_output('{"system_prompt": "", "welcome_message": ""}')
 
