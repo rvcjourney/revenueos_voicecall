@@ -229,6 +229,14 @@ class Settings(BaseSettings):
     # call slot before being marked QUEUE_TIMEOUT (see app/core/concurrency.py).
     CONCURRENCY_MAX_WAIT_SECONDS: int = 600
 
+    # ── Outbound dialing ───────────────────────────────────────────────────────
+    # How long LiveKit keeps an outbound call ringing before cancelling it.
+    # LiveKit's own default is 30 s, which is too short for Indian mobile
+    # networks: post-dial delay (time before the handset even starts ringing)
+    # is often 10–25 s, so 30 s calls were cancelled before or just as the
+    # phone rang (seen in Vobiz logs as "Cancelled" after exactly 30 s).
+    SIP_RINGING_TIMEOUT_SECONDS: int = 55
+
     @field_validator("STORAGE_SSE_C_KEY_B64")
     @classmethod
     def _validate_sse_key(cls, v: str) -> str:

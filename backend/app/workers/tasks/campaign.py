@@ -41,6 +41,7 @@ import structlog
 from livekit import api as lk_api
 from livekit.api import LiveKitAPI
 from livekit.api.twirp_client import TwirpError
+from google.protobuf.duration_pb2 import Duration
 from sqlalchemy import func, select, update
 
 from app.config import settings
@@ -408,6 +409,9 @@ async def _place_call(
                         participant_name=contact_name,
                         play_ringtone=True,
                         wait_until_answered=True,
+                        # See SIP_RINGING_TIMEOUT_SECONDS in app/config.py — LiveKit's
+                        # 30 s default hangs up before many Indian mobiles start ringing.
+                        ringing_timeout=Duration(seconds=settings.SIP_RINGING_TIMEOUT_SECONDS),
                     )
                 ),
             )
