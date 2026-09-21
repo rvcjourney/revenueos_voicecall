@@ -80,6 +80,12 @@ def write_atomic(content: str, dest: Path) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+        # mkstemp() creates the file 0600 (owner-only) by design -- since this
+        # usually runs as root (cron) but is served by Caddy running as its
+        # own less-privileged user, the renamed-into-place file would
+        # otherwise 404/403 for everyone but root. World-readable, like any
+        # other static asset Caddy serves.
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, dest)  # atomic on the same filesystem
     except BaseException:
         try:
