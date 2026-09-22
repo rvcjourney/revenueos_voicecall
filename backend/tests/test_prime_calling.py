@@ -109,7 +109,8 @@ def _brief(**overrides):
         "timely_hook": "Maine dekha aapne Chakan mein naya unit shuru kiya hai.",
         "welcome_message": "Namaste ji! Main Priya bol rahi hoon MOTM se, Pune. Kya main Ravi ji se baat kar sakti hoon?",
         "opening_value_line": "Hum gear manufacturing companies ke liye naye buyers laate hain.",
-        "qualify_question_1": "Main dekh rahi thi aap auto OEMs ke liye gears banate hain — sahi hai?",
+        "opening_question": "Abhi aap naye OEM buyers kaise dhoondhte hain?",
+        "qualifying_questions": ["Har mahine kitne naye enquiries aate hain?", "Yeh kaam team karti hai ya koi agency?"],
         "branch_b_question": "Aap mainly OEMs ko supply karte hain ya aftermarket ko bhi?",
         "gatekeeper_purpose": "Acme ke naye buyers ke silsile mein ek chhoti si baat thi.",
         "why_we_called_answer": "Aap gear manufacturing mein hain, aur hum aise hi businesses ki madad karte hain.",
@@ -141,6 +142,11 @@ def test_build_prompt_fills_every_section_in_code():
     assert "connected to Ravi ji (by name)." in prompt and "Kya Ravi ji se baat ho sakti hai" in prompt
     assert "free business diagnosis call bilkul free hai" in prompt
     assert "www dot motm dot in" in prompt
+    # Straight into relevance + a question; never asks for "ek/do minute"
+    assert ('> "Hum gear manufacturing companies ke liye naye buyers laate hain. '
+            'Abhi aap naye OEM buyers kaise dhoondhte hain?"') in prompt
+    assert "Har mahine kitne naye enquiries aate hain?" in prompt
+    assert "ek do minute hain" not in prompt and "Never ask for time or permission" in prompt
     # No template markers or placeholders left — only the two allowed bracket tokens
     assert "{{" not in prompt and "[[" not in prompt
     assert set(re.findall(r"\[[^\]\n]*\]", prompt)) <= {"[time/date]", "[end_call]"}
@@ -399,3 +405,8 @@ async def test_web_search_mode(mode, site_text, expected):
 
 def test_spoken_tidies_space_before_punctuation():
     assert prime_prompt._spoken("Acme has 18 plants . Nice") == "Acme has 18 plants. Nice"
+
+
+def test_build_prompt_fills_missing_qualifying_questions():
+    prompt, _ = _build(brief=_brief(qualifying_questions=["Sirf ek sawaal?"]))
+    assert "Sirf ek sawaal?" in prompt and "Abhi yeh kaam aapki team karti hai" in prompt

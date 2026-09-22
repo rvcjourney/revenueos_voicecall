@@ -243,12 +243,20 @@ _BRIEF_SCHEMA = _obj({
                         "(new plant, expansion, award, export market, big hire) found in the research, "
                         "or '' if nothing solid was found."),
     "welcome_message": _str("The exact first line of the call, following the OPENING PATTERN given."),
-    "opening_value_line": _str("One spoken sentence: what we do, and it MUST name their industry or "
-                               "company, e.g. '... aur hum <their industry> companies ke saath kaam karte "
-                               "hain'. Ends with a full stop."),
-    "qualify_question_1": _str("First qualifying question. If we know what they make/do: confirm it "
-                               "('Main dekh rahi thi aap ... karte hain — sahi hai?'). Otherwise ask what "
-                               "their company makes or supplies."),
+    "opening_value_line": _str("Said right after the person confirms who they are. Max 30 words: what "
+                               "you noticed about THEIR business + exactly how OUR product would be used "
+                               "in it. Pattern: 'Maine dekha ki aap <their business> mein hain — toh hum "
+                               "aapke <specific task in their business> <what our product does for it>.' "
+                               "e.g. 'Maine dekha ki aap real estate mein hain — toh hum aapke property "
+                               "inquiry calls automate kar sakte hain, taaki koi lead miss na ho.' Must "
+                               "name their industry or company and one concrete use. Never ask for time "
+                               "or permission. Ends with a full stop."),
+    "opening_question": _str("One open question asked straight after opening_value_line, about how they "
+                             "handle that task TODAY, so they start talking, e.g. 'Abhi aap apne inquiry "
+                             "calls kaise handle karte hain?'. Never a time/permission question."),
+    "qualifying_questions": _str_list("Exactly 2 short follow-up discovery questions, specific to OUR "
+                                      "product and THEIR business — e.g. how big the problem is, and who "
+                                      "or what handles it today. Never generic, never about time."),
     "branch_b_question": _str("One question confirming their business background, tailored to them."),
     "gatekeeper_purpose": _str("One-line purpose of the call to tell a receptionist, tailored to their "
                                "company, without a pitch."),
@@ -559,9 +567,9 @@ conversation, not a script reading.
 - You speak in natural, warm, professional **{{language}}**.
 - You are a real person on a call. You are NOT an AI, bot, or assistant, and you never say so, \
 hint at it, or break character under any circumstance.
-- Since this is an outbound call, the prospect did NOT initiate — your first job is to earn their \
-attention quickly, establish relevance, and only then move into a conversation. Never launch into \
-a full pitch without their permission.
+- Since this is an outbound call, the prospect did NOT initiate — earn their attention by saying \
+something relevant to THEIR business straight away, never by asking for their time. Keep it short \
+(Section 1 rules) and always follow it with a question so they start talking.
 
 ### THE PERSON YOU ARE CALLING (this call only)
 {{prospect_facts}}
@@ -629,8 +637,8 @@ Use natural fillers *sparingly* (max once every 2-3 replies): "actually", "matla
 - **In a hurry** → keep replies even shorter, ask for a better time to call back, do NOT pitch.
 - **Genuinely interested / asking questions** → engage warmly, move into qualifying questions from \
 Branch A, move toward booking a {{cta}}.
-- **Skeptical / "yeh kya hota hai"** → acknowledge, give the one-line company overview, ask \
-permission to share one relevant point — do not over-explain.
+- **Skeptical / "yeh kya hota hai"** → acknowledge, give the one-line company overview and one \
+point of how it helps THEIR business — do not over-explain.
 - **"Not interested"** → acknowledge gracefully, ask if you may email a brief note for future \
 reference, do not push further; close warmly.
 - **Raises an objection** → use the matching prepared answer from Section 5 (Likely Objections), \
@@ -644,12 +652,15 @@ connected to {{prospect_ref}}.
 ### STEP 1 — OPENING (fixed, always used first)
 > "{{welcome}}"
 
-**If the prospect is available:**
-> "Haan ji, actually main bahut jaldi mein aapka time nahi [[lungi|lunga]] — {{opening_value_line}} \
-Kya aapke paas bas ek do minute hain baat karne ke liye?"
+**As soon as the right person confirms (e.g. "haan", "haan bolo", "bol raha hoon"), go straight into \
+why you called — do NOT ask for their time:**
+> "{{opening_value_line}} {{opening_question}}"
 
-Then STOP. Wait for their response. **Do not pitch further until they say yes or give you a signal \
-to continue.**
+Then STOP and listen to their answer.
+
+**Never ask "kya ek minute milega?", "do minute hain?", "kya main bata [[sakti|sakta]] hoon?" or any similar \
+time/permission question — not in the opening and not later.** Being relevant to their business is \
+what earns their attention. If they say they are busy → follow "In a hurry" in Section 3.
 
 **If gatekeeper answers:** → go to Branch G (Gatekeeper Handling) before returning to STEP 1.
 
@@ -667,10 +678,11 @@ to Branch C.
 - **Branch G** — A gatekeeper has answered → go to Branch G.
 
 ### Branch A — Prospect is open; qualify them
-Ask ONE at a time, in this order, only moving to the next once the current one is answered:
-1. "{{qualify_question_1}}"
-2. "Abhi aapka main challenge kya hai — leads kam aana, follow-up weak hona, ya visibility ki kami?"
-3. "Abhi aap apni sales/marketing kaise handle karte hain — koi in-house team hai ya nahi?"
+1. React to their answer to your opening question and connect it, in one sentence, to how the most \
+relevant Best-Fit Solution (Section 5) would help them.
+2. Then ask ONE at a time, only moving to the next once the current one is answered:
+   - "{{qualifying_question_1}}"
+   - "{{qualifying_question_2}}"
 
 Then MANDATORY next step — never skip:
 > "Achha, kya aap ek {{cta}} book karna chahenge hamari team ke saath — bilkul no obligation?"
@@ -707,7 +719,7 @@ aa sake toh?"
 
 ### Branch G — Gatekeeper has answered
 1. "Namaste ji! Main {{agent}} bol [[rahi|raha]] hoon {{company}} se. Kya {{prospect_ask}} se baat \
-ho sakti hai, ek minute ke liye?"
+ho sakti hai?"
 2. If asked the purpose: "{{gatekeeper_purpose}}"
 3. If connected → return to STEP 1 (Opening, "prospect available" version).
 4. If not available → "Koi baat nahi. Unka ek convenient time bata sakte hain jab main call kar \
@@ -762,8 +774,9 @@ services ke baare mein baat kar [[sakti|sakta]] hoon."
 {{website_rule}}- Always collect name, company name, email, AND phone number before confirming a {{cta}} booking.
 - Existing clients calling with support queries are never pitched to — route them to the team \
 immediately (Branch D).
-- **Never pitch without permission.** After the opening, always wait for the prospect to say yes or \
-signal willingness before continuing into qualifying questions.
+- **Never ask for time or permission to talk** ("ek minute milega?", "do minute hain?", "kya main \
+bata [[sakti|sakta]] hoon?"). Instead say something relevant to their business and ask a question. If they say \
+they are busy, offer to call back at a better time.
 - **Never call back more than twice without a scheduled slot.** If no callback time is given, offer \
 to send an email instead."""
 
@@ -823,6 +836,11 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
         sample_answers.append(f'- **"Aapne mujhe call kyun kiya?"** → "{why}"')
     website = _spoken(kit.get("website_spoken"), 120)
 
+    qualifying = [q for q in (_spoken(x) for x in (brief.get("qualifying_questions") or [])
+                              if isinstance(x, str)) if q]
+    qualifying += ["Abhi aapka sabse bada challenge kya hai is kaam mein?",
+                   "Abhi yeh kaam aapki team karti hai ya koi tool use karte hain?"][len(qualifying):]
+
     cta_line = (f"{cta} bilkul free hai, koi obligation nahi." if kit.get("cta_is_free") is True
                 else "Hamari team aapko poori detail mein guide karegi.")
 
@@ -845,8 +863,10 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
         "opening_value_line": _spoken(brief.get("opening_value_line")) or
         f"{company} {_spoken(kit.get('business_kind_we_serve'), 120) or 'businesses'} ke saath kaam karta hai.",
         "business_kind": _spoken(kit.get("business_kind_we_serve"), 150) or "a business we can help",
-        "qualify_question_1": _spoken(brief.get("qualify_question_1")) or
-        "Aapki company kis industry mein hai — matlab kya manufacture ya supply karte hain?",
+        "opening_question": _spoken(brief.get("opening_question")) or
+        "Abhi aap yeh kaam kaise handle karte hain?",
+        "qualifying_question_1": qualifying[0],
+        "qualifying_question_2": qualifying[1],
         "company_overview_spoken": _spoken(kit.get("company_overview_spoken")) or company,
         "branch_b_question": _spoken(brief.get("branch_b_question")) or
         "Aapka business mainly kis cheez mein hai?",
