@@ -141,6 +141,20 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "qwen/qwen3.6-27b"
     GROQ_SUMMARY_MODEL: str = "openai/gpt-oss-120b"
 
+    # ── OpenAI (Prime Calling research + prompt writing) ─────────────────────
+    # Optional: without a key, Prime Calling uses Groq (no live web search).
+    OPENAI_API_KEY: str = ""
+    # Cheapest current OpenAI model with web search + structured outputs; the
+    # stronger (pricier) options are gpt-5.6-terra, gpt-5.6-sol, gpt-6-astra.
+    PRIME_OPENAI_MODEL: str = "gpt-5.6-luna"
+    # Output tokens are cheap on luna, so think harder for better sales reasoning
+    PRIME_REASONING_EFFORT: Literal["none", "low", "medium", "high", "xhigh", "max"] = "high"
+    # Paid OpenAI web search (~$0.01 per search) for each contact's company:
+    #   auto   = only when we couldn't read their website ourselves (cheapest useful)
+    #   always = every contact (also finds news, expansions, awards)
+    #   never  = website text + CSV only
+    PRIME_WEB_SEARCH: Literal["auto", "always", "never"] = "auto"
+
     # ── Payments (Razorpay) ───────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""

@@ -856,4 +856,5 @@ async def prime_preview(
         "system_prompt": result.system_prompt,
         "welcome_message": result.welcome_message,
         "website_used": result.website_used,
+        "web_searched": result.web_searched,
     }

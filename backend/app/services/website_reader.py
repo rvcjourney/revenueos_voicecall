@@ -1,11 +1,15 @@
 """
-website_reader.py — fetch a prospect's homepage and boil it down to plain text.
+website_reader.py — read a prospect's website and boil it down to plain text.
 
-Used by Prime Calling (app/services/prime_prompt.py) so the LLM knows what the
-contact's company actually does. The URL comes straight from an uploaded CSV,
-i.e. it is untrusted input fetched from OUR server — so every hop (including
-redirects) is resolved and rejected unless all its IPs are public internet
-addresses (blocks localhost, private LANs, cloud metadata 169.254.169.254, …).
+Reads the homepage plus up to 3 of its most useful same-site pages (about,
+products, services, clients, industries…), so the LLM knows what the
+contact's company actually makes and who it sells to.
+
+Used by Prime Calling (app/services/prime_prompt.py). The URL comes straight
+from an uploaded CSV, i.e. it is untrusted input fetched from OUR server — so
+every hop of every page (including redirects) is resolved and rejected unless
+all its IPs are public internet addresses (blocks localhost, private LANs,
+cloud metadata 169.254.169.254, …).
 
 Never raises: any failure returns "" and the call proceeds without it.
 """
@@ -27,11 +31,21 @@ log = structlog.get_logger(__name__)
 _TIMEOUT_SECONDS = 8.0
 _MAX_BYTES = 500_000
 _MAX_REDIRECTS = 3
-_MAX_SUMMARY_CHARS = 3000
+_MAX_SUMMARY_CHARS = 3000       # homepage
+_MAX_EXTRA_PAGES = 3
+_MAX_EXTRA_PAGE_CHARS = 2000
 _CACHE_TTL_SECONDS = 24 * 3600
 _FAILED_CACHE_TTL_SECONDS = 3600  # retry unreachable sites sooner
-_CACHE_PREFIX = "motm:prime:site:"
+_CACHE_PREFIX = "motm:prime:site2:"  # v2 = homepage + key pages
 _USER_AGENT = "Mozilla/5.0 (compatible; MOTMVoiceBot/1.0)"
+
+# Link paths worth reading, best first
+_KEY_PAGE_WORDS = (
+    "about", "product", "service", "solution", "what-we-do", "client", "industr",
+    "capabilit", "portfolio", "infrastructure", "company", "who-we-are",
+)
+_SKIP_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".zip", ".doc", ".docx",
+                    ".xls", ".xlsx", ".mp4")
 
 
 class UnsafeUrlError(ValueError):
@@ -78,8 +92,13 @@ class _TextExtractor(HTMLParser):
         self._in_title = False
         self._skip_depth = 0
         self.chunks: list[str] = []
+        self.links: list[str] = []
 
     def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            href = next((v for k, v in attrs if k.lower() == "href" and v), None)
+            if href and len(self.links) < 500:
+                self.links.append(href.strip())
         if tag == "title":
             self._in_title = True
         elif tag == "meta":
@@ -107,12 +126,16 @@ class _TextExtractor(HTMLParser):
             self.chunks.append(text)
 
 
-def html_to_summary(html: str) -> str:
+def _parse(html: str) -> _TextExtractor:
     parser = _TextExtractor()
     try:
         parser.feed(html)
     except Exception:
         pass
+    return parser
+
+
+def _summarise(parser: _TextExtractor, limit: int) -> str:
     body = re.sub(r"\s+", " ", " ".join(parser.chunks)).strip()
     parts = []
     title = re.sub(r"\s+", " ", parser.title).strip()
@@ -122,10 +145,47 @@ def html_to_summary(html: str) -> str:
         parts.append(f"Description: {parser.description}")
     if body:
         parts.append(f"Page text: {body}")
-    return "\n".join(parts)[:_MAX_SUMMARY_CHARS]
+    return "\n".join(parts)[:limit]
 
 
-async def _fetch(url: str) -> str:
+def html_to_summary(html: str, limit: int = _MAX_SUMMARY_CHARS) -> str:
+    return _summarise(_parse(html), limit)
+
+
+def pick_key_pages(links: list[str], base_url: str, limit: int = _MAX_EXTRA_PAGES) -> list[str]:
+    """Same-site links whose path looks like about/products/services/…, best first."""
+    base = urlsplit(base_url)
+    site = (base.hostname or "").lower().removeprefix("www.")
+    base_path = base.path.lower().rstrip("/")
+    ranked: dict[str, int] = {}
+    for href in links:
+        if href.lower().startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        url = urljoin(base_url, href).split("#")[0]
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or (parts.hostname or "").lower().removeprefix("www.") != site:
+            continue
+        path = parts.path.lower().rstrip("/")
+        if not path or path == base_path or path.endswith(_SKIP_EXTENSIONS) or path.count("/") > 3:
+            continue  # deep paths are usually blog posts / single products
+        rank = next((i for i, w in enumerate(_KEY_PAGE_WORDS) if w in path), None)
+        if rank is None:
+            continue
+        key = f"{parts.scheme}://{parts.netloc}{parts.path}"
+        ranked[key] = min(rank, ranked.get(key, rank))
+    # One page per keyword, so we don't read five "product-x" pages
+    chosen, used = [], set()
+    for url, rank in sorted(ranked.items(), key=lambda kv: (kv[1], len(kv[0]))):
+        if rank not in used:
+            used.add(rank)
+            chosen.append(url)
+        if len(chosen) >= limit:
+            break
+    return chosen
+
+
+async def _fetch(url: str) -> tuple[str, str]:
+    """Return (html, final url after redirects); html is "" when not a 200 HTML page."""
     async with httpx.AsyncClient(
         timeout=_TIMEOUT_SECONDS,
         follow_redirects=False,
@@ -141,24 +201,46 @@ async def _fetch(url: str) -> str:
                 if resp.is_redirect:
                     location = resp.headers.get("location")
                     if not location:
-                        return ""
+                        return "", url
                     url = urljoin(url, location)
                     continue
                 if resp.status_code != 200:
-                    return ""
+                    return "", url
                 if "html" not in resp.headers.get("content-type", "").lower():
-                    return ""
+                    return "", url
                 buf = bytearray()
                 async for chunk in resp.aiter_bytes():
                     buf.extend(chunk)
                     if len(buf) >= _MAX_BYTES:
                         break
-                return bytes(buf[:_MAX_BYTES]).decode(resp.encoding or "utf-8", errors="replace")
-    return ""  # too many redirects
+                return bytes(buf[:_MAX_BYTES]).decode(resp.encoding or "utf-8", errors="replace"), url
+    return "", url  # too many redirects
+
+
+async def _fetch_page_summary(url: str) -> str:
+    try:
+        html, _ = await _fetch(url)
+    except Exception:
+        return ""
+    return html_to_summary(html, _MAX_EXTRA_PAGE_CHARS) if html else ""
+
+
+async def _read_site(url: str) -> str:
+    html, final_url = await _fetch(url)
+    if not html:
+        return ""
+    home = _parse(html)
+    sections = [_summarise(home, _MAX_SUMMARY_CHARS)]
+    pages = pick_key_pages(home.links, final_url)
+    texts = await asyncio.gather(*(_fetch_page_summary(p) for p in pages))
+    for page_url, text in zip(pages, texts):
+        if text:
+            sections.append(f"--- Page {urlsplit(page_url).path} ---\n{text}")
+    return "\n\n".join(s for s in sections if s)
 
 
 async def fetch_site_summary(raw_url: str) -> str:
-    """Return a short plain-text summary of the page at raw_url, or "" on any failure."""
+    """Return plain text from the site at raw_url (homepage + key pages), or "" on any failure."""
     url = normalize_url(raw_url)
     if not url:
         return ""
@@ -175,7 +257,7 @@ async def fetch_site_summary(raw_url: str) -> str:
         redis = None  # Redis down — just fetch without caching
 
     try:
-        summary = html_to_summary(await _fetch(url))
+        summary = await _read_site(url)
     except Exception as exc:
         log.info("website_fetch_failed", url=url, error=str(exc)[:200])
         summary = ""

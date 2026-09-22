@@ -233,6 +233,7 @@ export interface PrimePreview {
   system_prompt: string;
   welcome_message: string;
   website_used: boolean;
+  web_searched?: boolean;
 }
 
 export interface TranscriptSegment {

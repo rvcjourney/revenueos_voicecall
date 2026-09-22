@@ -504,9 +504,12 @@ function PrimePreviewStep({ campaignId }: { campaignId: string }) {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <Label>Welcome message for {result.contact_name}</Label>
-              {result.website_used && (
+              {(result.website_used || result.web_searched) && (
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Globe className="h-3 w-3" /> used their website
+                  <Globe className="h-3 w-3" />
+                  {result.website_used && result.web_searched
+                    ? "used their website + web search"
+                    : result.website_used ? "used their website" : "used web search"}
                 </span>
               )}
             </div>

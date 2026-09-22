@@ -700,7 +700,7 @@ async def _prepare_prime_prompt(
         )
         prompt, welcome = result.system_prompt, result.welcome_message
         log.info("prime_prompt_generated", contact_id=str(contact_id),
-                 website_used=result.website_used, seconds=round(time.monotonic() - started, 1))
+                 website_used=result.website_used, web_searched=result.web_searched, seconds=round(time.monotonic() - started, 1))
     except Exception as exc:
         prompt, welcome = fallback_prompt(base_prompt, base_welcome, info)
         # Fallback is not saved as generated_* so the next retry tries the LLM again

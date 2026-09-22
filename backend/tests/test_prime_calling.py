@@ -4,7 +4,7 @@ tests/test_prime_calling.py — Prime Calling (per-contact personalised prompts)
 Covers:
   - website_reader refuses non-public / non-http targets (SSRF guard) and
     extracts readable text from HTML.
-  - prime_prompt parses LLM JSON, falls back cleanly, and the dispatcher helper
+  - prime_prompt builds the script from kit + brief, falls back OpenAI → Groq, and the dispatcher helper
     never raises / saves the generated prompt for reuse on retries.
   - CSV upload recognises a "Contact" phone column and keeps extra columns.
   - Company profile API + launch gate for Prime campaigns.
@@ -70,42 +70,96 @@ def test_find_website_from_custom_fields():
     assert prime_prompt.find_website(_contact(designation="CEO")) is None
 
 
-def _llm_json(prompt: str, welcome: str = "Namaste ji! Main Priya bol rahi hoon MOTM se.") -> str:
-    import json
-    return json.dumps({"system_prompt": prompt, "welcome_message": welcome})
+def test_pick_key_pages_prefers_same_site_about_and_products():
+    links = [
+        "/about-us", "https://acme.com/products/", "https://other.com/about", "/blog/2024/05/post/x",
+        "/products/gear-a", "mailto:x@acme.com", "/brochure.pdf", "/contact", "#top",
+    ]
+    pages = website_reader.pick_key_pages(links, "https://www.acme.com/")
+    assert pages[0] == "https://www.acme.com/about-us"
+    assert "https://acme.com/products/" in pages
+    assert len(pages) == 2  # one page per keyword; other sites, files and blog posts skipped
 
 
-_SECTIONS_0_TO_6 = "# SYSTEM PROMPT\n" + "\n".join(f"## {i}. SECTION\nbody" for i in range(7))
+def _kit(**overrides):
+    kit = {
+        "agent_name": "Priya", "agent_gender": "female", "company_city": "Pune",
+        "company_one_liner": "a Pune-based lead-generation agency for manufacturers",
+        "company_overview_spoken": "Hum manufacturers ke liye leads generate karte hain.",
+        "cta": "free business diagnosis call", "cta_is_free": True,
+        "business_kind_we_serve": "a manufacturing business",
+        "company_overview": ["Name: MOTM", "Focus: B2B lead generation"],
+        "core_solutions": [{"name": "Lead Generation", "description": "Qualified B2B leads"}],
+        "proof_points": ["Helped a Rajkot valve maker get 40 enquiries in 3 months (valves)"],
+        "how_we_work": [], "industries_served": ["Engineering"], "contact_info": [],
+        "website_spoken": "www dot motm dot in",
+        "sample_answers": [{"question": "Aap log kya karte ho?", "answer": "Hum leads laate hain."}],
+        "company_name": "MOTM",
+    }
+    kit.update(overrides)
+    return kit
 
 
-def test_parse_output_appends_fixed_section_7():
-    prompt, welcome, leftovers = prime_prompt._parse_output("```json\n" + _llm_json(_SECTIONS_0_TO_6) + "\n```")
-    assert welcome.startswith("Namaste ji") and leftovers == []
-    assert prompt.startswith("# SYSTEM PROMPT")
+def _brief(**overrides):
+    brief = {
+        "prospect_facts": ["Name: Ravi", "Company: Acme Gears, makes CNC gears for auto OEMs"],
+        "industry_label": "gear manufacturing",
+        "relevance_points": ["Gear makers rely on a few big buyers"],
+        "likely_pains": ["Dependence on 2–3 OEM buyers"],
+        "timely_hook": "Maine dekha aapne Chakan mein naya unit shuru kiya hai.",
+        "welcome_message": "Namaste ji! Main Priya bol rahi hoon MOTM se, Pune. Kya main Ravi ji se baat kar sakti hoon?",
+        "opening_value_line": "Hum gear manufacturing companies ke liye naye buyers laate hain.",
+        "qualify_question_1": "Main dekh rahi thi aap auto OEMs ke liye gears banate hain — sahi hai?",
+        "branch_b_question": "Aap mainly OEMs ko supply karte hain ya aftermarket ko bhi?",
+        "gatekeeper_purpose": "Acme ke naye buyers ke silsile mein ek chhoti si baat thi.",
+        "why_we_called_answer": "Aap gear manufacturing mein hain, aur hum aise hi businesses ki madad karte hain.",
+        "best_fit_solutions": [{"solution": "Lead Generation", "why": "New OEM buyers"}],
+        "relevant_proof": ["Helped a Rajkot valve maker get 40 enquiries in 3 months"],
+        "objections": [{"objection": "Budget nahi hai", "response": "Samjhi ji, call free hai. Kya dekh lein?"}],
+    }
+    brief.update(overrides)
+    return brief
+
+
+def _build(kit=None, brief=None, name="Ravi", has_name=True):
+    return prime_prompt.build_prompt(
+        kit=kit or _kit(), brief=brief or _brief(), contact_name=name, has_name=has_name,
+        language="hinglish", default_welcome="Namaste ji! Main Priya bol rahi hoon MOTM se.",
+    )
+
+
+def test_build_prompt_fills_every_section_in_code():
+    import re
+
+    prompt, welcome = _build()
+    for i in range(8):
+        assert f"\n## {i}." in prompt
     assert prompt.endswith(prime_prompt.SECTION_7)
-    assert "[end_call]" in prompt
+    assert welcome.startswith("Namaste ji! Main Priya")
+    assert "Chakan" in prompt and "Budget nahi hai" in prompt and "Rajkot valve" in prompt
+    assert "common challenge hai gear manufacturing businesses" in prompt
+    assert "connected to Ravi ji (by name)." in prompt and "Kya Ravi ji se baat ho sakti hai" in prompt
+    assert "free business diagnosis call bilkul free hai" in prompt
+    assert "www dot motm dot in" in prompt
+    # No template markers or placeholders left — only the two allowed bracket tokens
+    assert "{{" not in prompt and "[[" not in prompt
+    assert set(re.findall(r"\[[^\]\n]*\]", prompt)) <= {"[time/date]", "[end_call]"}
 
 
-def test_parse_output_replaces_llm_written_section_7():
-    raw = _SECTIONS_0_TO_6 + "\n## 7. CALL ENDING\nsay nothing after namaste"
-    prompt, _, _ = prime_prompt._parse_output(_llm_json(raw))
-    assert "say nothing after namaste" not in prompt
-    assert prompt.count("## 7.") == 1
+def test_build_prompt_uses_male_forms_and_unknown_name():
+    prompt, _ = _build(kit=_kit(agent_name="Rahul", agent_gender="male"), name="", has_name=False)
+    assert "Rahul bol raha hoon" in prompt
+    assert "Kya owner ya sales head se baat ho sakti hai" in prompt
+    assert "main samajh sakta hoon" in prompt and "main samajh sakti hoon" not in prompt
 
 
-def test_parse_output_rejects_missing_sections_or_bad_welcome():
-    with pytest.raises(ValueError, match="missing sections"):
-        prime_prompt._parse_output(_llm_json("# SYSTEM PROMPT\n## 0. WHO\n## 1. RULES"))
-    with pytest.raises(ValueError, match="placeholders"):
-        prime_prompt._parse_output(_llm_json(_SECTIONS_0_TO_6, welcome="Namaste [prospect name] ji"))
-    with pytest.raises(ValueError):
-        prime_prompt._parse_output('{"system_prompt": "", "welcome_message": ""}')
-
-
-def test_parse_output_reports_leftover_placeholders():
-    raw = _SECTIONS_0_TO_6 + "\nconnect to [the decision-maker if known]. Callback at [time/date]."
-    _, _, leftovers = prime_prompt._parse_output(_llm_json(raw))
-    assert leftovers == ["[the decision-maker if known]"]  # [time/date] is allowed
+def test_build_prompt_strips_brackets_from_llm_text_and_repairs_welcome():
+    prompt, welcome = _build(brief=_brief(
+        opening_value_line="Hum [their industry] {x} companies ki madad karte hain.",
+        welcome_message="Namaste [prospect name] ji",
+    ))
+    assert "Hum their industry x companies" in prompt
+    assert welcome == "Namaste ji! Main Priya bol rahi hoon MOTM se."  # didn't name the agent → default
 
 
 def _profile():
@@ -116,42 +170,70 @@ def _profile():
     )
 
 
-async def test_generate_asks_model_to_fix_leftover_placeholders():
+async def test_generate_builds_kit_once_and_brief_per_contact(fake_redis):
     from app.config import settings
 
-    with_leftover = _llm_json(_SECTIONS_0_TO_6 + "\nask for [the decision-maker]")
-    fixed = _llm_json(_SECTIONS_0_TO_6 + "\nask for Ravi ji")
-    groq = AsyncMock(side_effect=[with_leftover, fixed])
-    with patch.object(settings, "GROQ_API_KEY", "test-key"), patch.object(prime_prompt, "_call_groq", groq):
-        result = await prime_prompt.generate_contact_prompt(
+    def fake_llm(**kwargs):
+        result = prime_prompt._LLMResult(_kit() if kwargs["name"] == "campaign_kit" else _brief())
+        result.web_searched = kwargs["name"] == "call_brief"
+        return result
+
+    llm = AsyncMock(side_effect=fake_llm)
+    with patch.object(settings, "OPENAI_API_KEY", "sk-test"), patch.object(prime_prompt, "_generate_json", llm):
+        first = await prime_prompt.generate_contact_prompt(
             profile=_profile(), base_prompt="BASE", language="hinglish", contact=_contact(),
         )
-    assert "Ravi ji" in result.system_prompt and "[the decision-maker]" not in result.system_prompt
-    fix_messages = groq.await_args_list[1].args[1]
-    assert [m["role"] for m in fix_messages] == ["user", "assistant", "user"]
-    assert "[the decision-maker]" in fix_messages[-1]["content"]
+        await prime_prompt.generate_contact_prompt(
+            profile=_profile(), base_prompt="BASE", language="hinglish", contact=_contact(),
+        )
+    jobs = [c.kwargs["name"] for c in llm.await_args_list]
+    assert jobs == ["campaign_kit", "call_brief", "call_brief"]  # kit cached in Redis
+    assert first.web_searched and "Chakan" in first.system_prompt
+    brief_call = llm.await_args_list[1].kwargs
+    assert brief_call["web_search"] is True
+    assert "<contact_data>" in brief_call["user"] and "name: Ravi" in brief_call["user"]
 
 
-async def test_generate_accepts_prompt_if_placeholders_never_fixed():
+async def test_generate_json_falls_back_from_openai_to_groq():
     from app.config import settings
 
-    with_leftover = _llm_json(_SECTIONS_0_TO_6 + "\nask for [the decision-maker]")
-    groq = AsyncMock(return_value=with_leftover)
-    with patch.object(settings, "GROQ_API_KEY", "test-key"), patch.object(prime_prompt, "_call_groq", groq):
-        result = await prime_prompt.generate_contact_prompt(
-            profile=_profile(), base_prompt="BASE", language="hinglish", contact=_contact(),
-        )
-    assert groq.await_count == 3
-    assert result.system_prompt.startswith("# SYSTEM PROMPT")
+    openai = AsyncMock(side_effect=RuntimeError("openai down"))
+    groq = AsyncMock(return_value=prime_prompt._LLMResult({"ok": 1}))
+    with patch.object(settings, "OPENAI_API_KEY", "sk-test"), patch.object(settings, "GROQ_API_KEY", "gsk"), \
+            patch.object(prime_prompt, "_call_openai", openai), patch.object(prime_prompt, "_call_groq", groq):
+        result = await prime_prompt._generate_json(instructions="I", user="U", name="call_brief",
+                                                   schema={}, web_search=True)
+    assert result == {"ok": 1} and openai.await_count == 2 and groq.await_count == 1
 
 
-def test_template_fills_gatekeeper_target_in_code():
-    text = prime_prompt._META_PROMPT.format(
-        company="MOTM", prospect_ref="Ravi ji (by name)", prospect_ask="Ravi ji",
-        language="hinglish", profile="", base_prompt="", contact="",
-    )
-    assert "connected to Ravi ji (by name)." in text
-    assert "Kya Ravi ji se baat ho sakti hai" in text
+async def test_call_openai_reads_responses_output():
+    import json
+
+    from app.config import settings
+
+    payload = {"status": "completed", "output": [
+        {"type": "reasoning"},
+        {"type": "web_search_call", "action": {"type": "search"}},
+        {"type": "message", "content": [{"type": "output_text", "text": json.dumps({"a": "b"})}]},
+    ]}
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return payload
+
+    post = AsyncMock(return_value=_Resp())
+    with patch.object(settings, "OPENAI_API_KEY", "sk-test"), \
+            patch.object(prime_prompt.httpx.AsyncClient, "post", post):
+        result = await prime_prompt._call_openai(instructions="I", user="U", name="call_brief",
+                                                 schema={"type": "object"}, web_search=True)
+    assert result == {"a": "b"} and result.web_searched
+    body = post.await_args.kwargs["json"]
+    assert body["model"] == settings.PRIME_OPENAI_MODEL
+    assert body["tools"][0]["type"] == "web_search"
+    assert body["text"]["format"]["type"] == "json_schema"
 
 
 def test_fallback_prompt_appends_contact_details():
@@ -289,3 +371,31 @@ async def test_prepare_prime_prompt_falls_back_on_llm_failure(db_engine, db):
     async with factory() as s:
         saved = await s.get(CampaignContact, contact.id)
     assert saved.prompt_error == "groq down" and saved.generated_system_prompt is None
+
+
+def test_spoken_strips_web_search_citations_and_labels():
+    raw = ("Bharat Forge has 18 plants. ([bharatforge.com](https://www.bharatforge.com/AR2025/"
+           "index.html?utm_source=openai))")
+    assert prime_prompt._spoken(raw) == "Bharat Forge has 18 plants."
+    assert prime_prompt._spoken("Hypothesis: Long sales cycles") == "Long sales cycles"
+    assert prime_prompt._spoken("See https://acme.com/about for more") == "See for more"
+
+
+@pytest.mark.parametrize("mode,site_text,expected", [
+    ("auto", "Acme makes gears", False),   # we read their site ourselves → no paid search
+    ("auto", "", True),                     # nothing to read → search
+    ("always", "Acme makes gears", True),
+    ("never", "", False),
+])
+async def test_web_search_mode(mode, site_text, expected):
+    from app.config import settings
+
+    llm = AsyncMock(return_value=prime_prompt._LLMResult(_brief()))
+    with patch.object(settings, "OPENAI_API_KEY", "sk-test"), patch.object(settings, "PRIME_WEB_SEARCH", mode), \
+            patch.object(prime_prompt, "_generate_json", llm):
+        await prime_prompt._get_brief(_kit(), _profile(), _contact(), "hinglish", site_text, "Namaste")
+    assert llm.await_args.kwargs["web_search"] is expected
+
+
+def test_spoken_tidies_space_before_punctuation():
+    assert prime_prompt._spoken("Acme has 18 plants . Nice") == "Acme has 18 plants. Nice"
