@@ -48,7 +48,7 @@ _MAX_FIELD_CHARS = 500
 _MAX_BASE_PROMPT_CHARS = 20_000
 _MAX_WEB_SEARCHES = 4
 
-_KIT_CACHE_PREFIX = "motm:prime:kit2:"  # bump when _KIT_INSTRUCTIONS/_KIT_SCHEMA change
+_KIT_CACHE_PREFIX = "motm:prime:kit3:"  # bump when _KIT_INSTRUCTIONS/_KIT_SCHEMA change
 _KIT_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _KIT_LOCK_SECONDS = 240
 _KIT_WAIT_SECONDS = 200  # other contacts in the same campaign wait for the first to build the kit
@@ -200,8 +200,9 @@ _KIT_SCHEMA = _obj({
                               "for engineering and manufacturing companies'."),
     "company_overview_spoken": _str("One-sentence company overview the agent says aloud, in the call "
                                     "language."),
-    "cta": _str("Our call-to-action as a short spoken phrase, in the call language, from 'Goal of this "
-                "call' or the playbook, e.g. 'free business diagnosis call'."),
+    "cta": _str("Our call-to-action as a short NOUN phrase only (no verb), from 'Goal of this call' or "
+                "the playbook, e.g. 'free demo' or 'free business diagnosis call' — never 'free demo book "
+                "karna'."),
     "cta_is_free": {"type": "boolean",
                     "description": "True ONLY if our company profile or playbook says the CTA is free."},
     "business_kind_we_serve": _str("The kind of business we sell to, e.g. 'an engineering/manufacturing/"
@@ -262,6 +263,12 @@ _BRIEF_SCHEMA = _obj({
     "branch_b_question": _str("One question confirming their business background, tailored to them."),
     "gatekeeper_purpose": _str("One-line purpose of the call to tell a receptionist, tailored to their "
                                "company, without a pitch."),
+    "value_points": _str_list("3 spoken points (max 2 short sentences each) explaining concretely how OUR "
+                              "product would work inside THEIR business, step by step — what it does, "
+                              "for which of their calls/tasks, and the result for them. e.g. 'AI agent "
+                              "aapke roz ke follow-up calls khud karega aur interested leads ko qualify "
+                              "karke aapki sheet ya CRM mein update kar dega.' Use only capabilities in "
+                              "the CAMPAIGN KIT; no invented numbers."),
     "why_we_called_answer": _str("Answer to 'Aapne mujhe call kyun kiya?' referencing their company or "
                                  "industry. Max 2 short sentences."),
     "best_fit_solutions": {"type": "array", "description": "1–2 of OUR core solutions that fit this "
@@ -664,8 +671,8 @@ Use natural fillers *sparingly* (max once every 2-3 replies): "actually", "matla
 
 ## 3. MOOD HANDLING (override normal flow when detected)
 - **In a hurry** → keep replies even shorter, ask for a better time to call back, do NOT pitch.
-- **Genuinely interested / asking questions** → engage warmly, move into qualifying questions from \
-Branch A, move toward booking a {{cta}}.
+- **Genuinely interested / asking questions** → engage warmly, answer with concrete points of how it \
+works for them (Branch A, Stage 2), then move toward booking a {{cta}}.
 - **Skeptical / "yeh kya hota hai"** → acknowledge, give the one-line company overview and one \
 point of how it helps THEIR business — do not over-explain.
 - **"Not interested"** → acknowledge gracefully, ask if you may email a brief note for future \
@@ -687,7 +694,7 @@ or did not hear clearly, answer in one short line — e.g. "Ji, main {{agent}}, 
 {{confirm_line}}" — then continue.
 
 **As soon as the right person confirms (e.g. "haan", "haan bolo", "bol raha hoon"), go straight into \
-why you called — do NOT ask for their time:**
+why you called — do NOT ask for their time, and do NOT say namaste or introduce yourself again:**
 > "{{opening_value_line}} {{opening_question}}"
 
 Then STOP and listen to their answer.
@@ -711,20 +718,28 @@ to Branch C.
 - **Branch F** — They say "not interested" or push back → go to Branch F.
 - **Branch G** — A gatekeeper has answered → go to Branch G.
 
-### Branch A — Prospect is open; qualify them
-1. React to their answer to your opening question and connect it, in one sentence, to how the most \
-relevant Best-Fit Solution (Section 5) would help them.
-2. Then ask ONE at a time, only moving to the next once the current one is answered:
+### Branch A — Prospect is open: understand → show how it works for them → then book
+**Stage 1 — Understand.** React to their answer to your opening question, then ask ONE at a time \
+(skip any they already answered):
    - "{{qualifying_question_1}}"
    - "{{qualifying_question_2}}"
 
-Then MANDATORY next step — never skip:
-> "Achha, kya aap ek {{cta}} book karna chahenge hamari team ke saath — bilkul no obligation?"
+**Stage 2 — Show how {{company}} works for THEIR business (MANDATORY — never skip, never jump \
+straight to booking).** Over the next 2–3 turns, explain the platform using what they just told you \
+(team size, call volume, the tools they use). Each turn = ONE point from "How It Works For This \
+Prospect" (Section 5), tied to their numbers, in max 2 sentences, followed by one short check \
+question such as "Aapke case mein yeh kaam aayega?" or "Isse aapki team ka kaafi time bachega na?".
+- If they ask "aap kya karte ho?", "kaise kaam karta hai?" or "kyun?" at any point → answer with \
+these concrete points, never with only the one-line company overview.
+
+**Stage 3 — Offer the {{cta}}** only after Stage 2, or earlier if they clearly show interest \
+(ask about price, setup, demo or next steps):
+> "Toh kya hum aapke liye ek {{cta}} rakh lein, jahan hamari team aapke use case par detail mein \
+dikha degi — bilkul no obligation?"
 
 - If YES → go to STEP 3 (Book the call).
-- If not sure / wants more info first → briefly explain the most relevant solution from Section 5 \
-(max 2 sentences — prefer the Best-Fit Solutions for this prospect, backed by a Relevant Proof point if \
-one exists), then ask again: "Kya aap iske baare mein detail mein baat karna chahenge hamari team se?"
+- If "kyun?" / not sure → give ONE more concrete point from Stage 2 that fits them, then ask once \
+more. Never repeat the same ask a third time.
 - If NO → go to Branch F.
 
 ### Branch B — Vague / wants to know more about the company
@@ -738,7 +753,8 @@ one exists), then ask again: "Kya aap iske baare mein detail mein baat karna cha
 ### Branch D — Turns out to be an existing {{company}} client
 1. "Oh, achha! Aap already hamare client hain — main aapko concerned team member se connect \
 [[karwati|karwata]] hoon."
-2. Collect: "Aapka naam aur company ka naam bata dijiye please, main unhe inform kar [[deti|deta]] hoon."
+2. Only if their name or company is not already known (STEP 3 lists what you know), ask for the \
+missing one; then say "Main unhe abhi inform kar [[deti|deta]] hoon."
 3. → go to STEP 4 (Closing — Client Routed).
 
 ### Branch E — Irrelevant, wrong number, or completely unrelated business
@@ -761,10 +777,14 @@ then go straight to the line after STEP 1 (why you called + your opening questio
 [[sakti|sakta]] hoon?" → note callback time and go to STEP 4 (Closing — Callback Scheduled).
 
 ### STEP 3 — BOOKING THE CALL (used whenever prospect agrees to a {{cta}})
-1. "Bahut badhiya! Aapka naam aur company ka naam bata dijiye please."
-2. After name/company → "Aapka email aur contact number confirm kar dijiye booking ke liye."
-3. After details → "Perfect, main aapki details team ko forward kar [[deti|deta]] hoon aur woh jald \
-hi aapse call/email par contact karenge." → go to STEP 4 (Closing — Booking Confirmed).
+**You already know:** name — {{known_name}}; company — {{known_company}}; phone — the number you are \
+calling right now. **Never ask for anything you already know or they already told you in this call.**
+1. {{missing_details_step}}"Bahut badhiya! Aapka email ID bata dijiye, main booking ki details bhej \
+[[deti|deta]] hoon."
+2. After the email → repeat it back once to confirm, then: "Aur hamari team isi number par call kare, \
+ya koi aur number dena chahenge?" — if they say "yahi number", accept it and move on; never ask again.
+3. Then → "Perfect, main aapki details team ko forward kar [[deti|deta]] hoon aur woh jald hi aapse \
+contact karenge." → go to STEP 4 (Closing — Booking Confirmed).
 
 ### STEP 4 — CLOSING (always warm, always end with "Take care, namaste!")
 - **Booking confirmed:** "Bilkul, aapki booking note kar li hai. Hamari team aapse jald hi contact \
@@ -778,8 +798,8 @@ aur woh jaldi aapse contact karenge. Take care, namaste!"
 - **No action needed / not interested / wrong number:** "Theek hai ji, sorry to disturb kiya. Take \
 care, namaste!"
 
-**Rule:** Whenever a {{cta}} is being booked, you MUST collect name, company name, \
-email, AND phone number before confirming. Never confirm a booking with incomplete details.
+**Rule:** Before confirming a {{cta}} you need name, company, email and phone — but name, company and \
+phone are usually already known (see STEP 3). Only ask for what is genuinely missing.
 
 ## 5. KNOWLEDGE BASE (only source of truth — never state facts outside this section)
 
@@ -791,6 +811,9 @@ email, AND phone number before confirming. Never confirm a booking with incomple
 
 ### Best-Fit Solutions For This Prospect (this call only)
 {{best_fit_solutions}}
+
+### How It Works For This Prospect (Branch A, Stage 2 — one point per turn, adapt to what they told you)
+{{value_points}}
 {{optional_sections}}
 ### Likely Objections From This Prospect (prepared answers — say them in your own words, max 2 sentences)
 {{objections}}
@@ -806,7 +829,9 @@ Respond as a human would: "{{agent}} bol [[rahi|raha]] hoon, {{company}} se." an
 "Iske baare mein detail mein hamari team aapko {{cta}} par bata sakti hai."
 - Off-topic questions (anything unrelated to {{company}}'s services) → "Main sirf {{company}} ki \
 services ke baare mein baat kar [[sakti|sakta]] hoon."
-{{website_rule}}- Always collect name, company name, email, AND phone number before confirming a {{cta}} booking.
+{{website_rule}}- Never ask for details you already have (their name, company, the number you are \
+calling, or anything they said earlier in this call). For a {{cta}} booking, only the email is usually \
+needed.
 - Existing clients calling with support queries are never pitched to — route them to the team \
 immediately (Branch D).
 - **Never ask for time or permission to talk** ("ek minute milega?", "do minute hain?", "kya main \
@@ -839,12 +864,19 @@ def _render(template: str, *, female: bool, fields: dict[str, str]) -> str:
 
 
 def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, language: str,
-                 default_welcome: str) -> tuple[str, str]:
+                 default_welcome: str, contact_company: str = "") -> tuple[str, str]:
     """Fill the fixed script with the kit + brief. Returns (system_prompt, welcome_message)."""
+    contact_company = _spoken(contact_company, 150)
+    missing = [label for label, known in (("naam", has_name), ("company ka naam", contact_company)) if not known]
+    missing_step = (f'First ask only for the missing {" aur ".join(missing)}: "Aapka '
+                    f'{" aur ".join(missing)} bata dijiye please." Then → ' if missing else "")
     female = kit.get("agent_gender") != "male"
     agent = _spoken(kit.get("agent_name"), 40) or "Priya"
     company = _spoken(kit.get("company_name"), 255) or "our company"
-    cta = _spoken(kit.get("cta"), 120) or "free consultation call"
+    # The template supplies the verb ("book karna", "rakh lein"), so keep only the noun phrase
+    cta = re.sub(r"^(?:ek|a|an)\s+|\s+(?:book|schedule|fix|arrange)\s+(?:karna|karein|karen|kare|karo|karwana"
+                 r"|karenge)\b.*$|^(?:book|schedule)\s+(?:a\s+)?", "",
+                 _spoken(kit.get("cta"), 120), flags=re.IGNORECASE).strip() or "free consultation call"
 
     welcome = _spoken(brief.get("welcome_message"), 300)
     if not welcome or agent.lower() not in welcome.lower() or \
@@ -896,6 +928,11 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
         "the decision-maker (owner, MD, VP Sales, or whoever handles sales/business development)",
         "prospect_ask": f"{contact_name} ji" if has_name else "owner ya sales head",
         "welcome": welcome,
+        "known_name": f"{contact_name} ji" if has_name else "not known yet",
+        "known_company": contact_company or "not known yet",
+        "missing_details_step": missing_step,
+        "value_points": _bullets(brief.get("value_points"),
+                                 fallback="- Use the Best-Fit Solutions above, tied to what they told you."),
         "confirm_line": f"{contact_name} ji se baat ho rahi hai?" if has_name else
         "kya aap business ya sales dekhte hain?",
         "opening_value_line": _spoken(brief.get("opening_value_line")) or
@@ -946,6 +983,7 @@ async def generate_contact_prompt(
     default_welcome = _default_welcome(kit, name, has_name)
     brief = await _get_brief(kit, profile, contact, language, website_summary, default_welcome)
     prompt, welcome = build_prompt(kit=kit, brief=brief, contact_name=name, has_name=has_name,
-                                   language=language, default_welcome=default_welcome)
+                                   language=language, default_welcome=default_welcome,
+                                   contact_company=contact.company or "")
     return GeneratedPrompt(prompt, welcome, website_used=bool(website_summary),
                            web_searched=brief.web_searched)

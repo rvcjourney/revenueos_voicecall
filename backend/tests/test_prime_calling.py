@@ -111,6 +111,7 @@ def _brief(**overrides):
         "opening_value_line": "Hum gear manufacturing companies ke liye naye buyers laate hain.",
         "opening_question": "Abhi aap naye OEM buyers kaise dhoondhte hain?",
         "qualifying_questions": ["Har mahine kitne naye enquiries aate hain?", "Yeh kaam team karti hai ya koi agency?"],
+        "value_points": ["Hum har mahine aapke liye naye OEM buyers dhoondhenge aur meeting fix karenge."],
         "branch_b_question": "Aap mainly OEMs ko supply karte hain ya aftermarket ko bhi?",
         "gatekeeper_purpose": "Acme ke naye buyers ke silsile mein ek chhoti si baat thi.",
         "why_we_called_answer": "Aap gear manufacturing mein hain, aur hum aise hi businesses ki madad karte hain.",
@@ -122,10 +123,11 @@ def _brief(**overrides):
     return brief
 
 
-def _build(kit=None, brief=None, name="Ravi", has_name=True):
+def _build(kit=None, brief=None, name="Ravi", has_name=True, company="Acme Gears"):
     return prime_prompt.build_prompt(
         kit=kit or _kit(), brief=brief or _brief(), contact_name=name, has_name=has_name,
         language="hinglish", default_welcome="Namaste ji! Main Priya bol rahi hoon MOTM se.",
+        contact_company=company,
     )
 
 
@@ -444,3 +446,23 @@ def test_opening_is_marked_already_spoken_and_llm_welcome_must_use_name():
 def test_upload_finds_person_name_column(columns, expected):
     from app.api.campaigns import find_name_column
     assert find_name_column(columns) == expected
+
+
+def test_booking_asks_only_for_missing_details_and_explains_before_cta():
+    prompt, _ = _build()
+    assert "name — Ravi ji; company — Acme Gears" in prompt
+    assert "Aapka naam aur company ka naam bata dijiye" not in prompt
+    assert "Aapka email ID bata dijiye" in prompt
+    assert "Stage 2 — Show how MOTM works for THEIR business" in prompt
+    assert "Hum har mahine aapke liye naye OEM buyers" in prompt
+    assert prompt.index("Stage 2") < prompt.index("Stage 3 — Offer")
+
+    prompt, _ = _build(name="", has_name=False, company="")
+    assert 'First ask only for the missing naam aur company ka naam' in prompt
+
+
+@pytest.mark.parametrize("raw", ["free demo book karna", "Book a free demo", "ek free demo", "free demo"])
+def test_cta_is_kept_as_a_noun_phrase(raw):
+    prompt, _ = _build(kit=_kit(cta=raw))
+    assert "rakh lein" in prompt and "ek free demo rakh lein" in prompt
+    assert "book karna book karna" not in prompt and "demo book karna rakh" not in prompt
