@@ -48,7 +48,7 @@ _MAX_FIELD_CHARS = 500
 _MAX_BASE_PROMPT_CHARS = 20_000
 _MAX_WEB_SEARCHES = 4
 
-_KIT_CACHE_PREFIX = "motm:prime:kit1:"
+_KIT_CACHE_PREFIX = "motm:prime:kit2:"  # bump when _KIT_INSTRUCTIONS/_KIT_SCHEMA change
 _KIT_CACHE_TTL_SECONDS = 7 * 24 * 3600
 _KIT_LOCK_SECONDS = 240
 _KIT_WAIT_SECONDS = 200  # other contacts in the same campaign wait for the first to build the kit
@@ -224,7 +224,9 @@ _KIT_SCHEMA = _obj({
         "5 common prospect questions with short spoken answers (call language) built only from known "
         "facts: 'Aap log kya karte ho?', 'Yeh free hai kya?', 'Aap kaunse industries ke saath kaam karte "
         "ho?', 'Aapki location kaha hai?', 'Result ka guarantee hai kya?'. Do NOT include 'why did you "
-        "call me' — that one is written per prospect."), "items": _obj({
+        "call me' — that one is written per prospect. Only include a question if the known facts "
+        "actually answer it — SKIP it otherwise; never write answers like 'yeh information mere paas "
+        "nahi hai'."), "items": _obj({
             "question": _str("The question as the prospect would ask it"),
             "answer": _str("Max 2 short spoken sentences"),
         })},
@@ -513,10 +515,37 @@ def _default_welcome(kit: dict, name: str, has_name: bool) -> str:
     female = kit.get("agent_gender") != "male"
     city = _spoken(kit.get("company_city"), 60)
     where = f"{kit['company_name']} se, {city}" if city else f"{kit['company_name']} se"
-    who = f"{name} ji" if has_name else "aapki company ke owner ya sales head"
-    return (f"Namaste ji! Main {_spoken(kit.get('agent_name'), 40) or 'Priya'} bol "
-            f"{'rahi' if female else 'raha'} hoon {where}. Kya main {who} se baat kar "
+    intro = f"Namaste ji! Main {_spoken(kit.get('agent_name'), 40) or 'Priya'} bol " \
+            f"{'rahi' if female else 'raha'} hoon {where}."
+    if has_name:
+        return f"{intro} Kya main {name} ji se baat kar {'rahi' if female else 'raha'} hoon?"
+    return (f"{intro} Kya main aapki company ke owner ya sales head se baat kar "
             f"{'sakti' if female else 'sakta'} hoon?")
+
+
+_PLACEHOLDER_NAMES = ("contact", "unknown", "nan", "none", "na", "n/a", "-")
+_HONORIFIC = re.compile(r"^(?:(?:mr|mrs|ms|miss|dr|shri|shree|smt|kumari|er|prof|sir|madam)\.?\s+)+",
+                        re.IGNORECASE)
+_NOT_PERSON_NAME = ("company", "business", "firm", "organisation", "organization", "brand", "file",
+                    "user", "product", "shop", "store", "city", "industry")
+
+
+def person_first_name(contact: ContactInfo) -> str:
+    """The name to greet them by ("Kamalnath" from "Mr. Kamalnath ampal"), or "" if unknown.
+
+    Falls back to a name-like CSV column (e.g. "person_name") when the upload
+    didn't recognise one and saved the placeholder "Contact".
+    """
+    candidates = [contact.name] + [
+        v for k, v in (contact.custom_fields or {}).items()
+        if "name" in k.lower() and not any(w in k.lower() for w in _NOT_PERSON_NAME)
+    ]
+    for raw in candidates:
+        name = _HONORIFIC.sub("", _spoken(raw, 80)).strip(" .,")
+        if name and name.lower() not in _PLACEHOLDER_NAMES and not any(ch.isdigit() for ch in name):
+            first = name.split()[0]
+            return first[:1].upper() + first[1:]
+    return ""
 
 
 async def _get_brief(kit: dict, profile, contact: ContactInfo, language: str, website_summary: str,
@@ -649,8 +678,13 @@ connected to {{prospect_ref}}.
 
 ## 4. CONVERSATION FLOW (explicit step-by-step — follow this order, do not skip steps, do not jump ahead)
 
-### STEP 1 — OPENING (fixed, always used first)
+### STEP 1 — OPENING (ALREADY SPOKEN — never say it again)
+This line was already said automatically the moment the call connected:
 > "{{welcome}}"
+
+**Never repeat this line or introduce yourself again.** If they only say "hello?", "haan?", "kaun?" \
+or did not hear clearly, answer in one short line — e.g. "Ji, main {{agent}}, {{company}} se — \
+{{confirm_line}}" — then continue.
 
 **As soon as the right person confirms (e.g. "haan", "haan bolo", "bol raha hoon"), go straight into \
 why you called — do NOT ask for their time:**
@@ -721,7 +755,8 @@ aa sake toh?"
 1. "Namaste ji! Main {{agent}} bol [[rahi|raha]] hoon {{company}} se. Kya {{prospect_ask}} se baat \
 ho sakti hai?"
 2. If asked the purpose: "{{gatekeeper_purpose}}"
-3. If connected → return to STEP 1 (Opening, "prospect available" version).
+3. If connected → greet the new person once, briefly ("Namaste ji, main {{agent}}, {{company}} se."), \
+then go straight to the line after STEP 1 (why you called + your opening question).
 4. If not available → "Koi baat nahi. Unka ek convenient time bata sakte hain jab main call kar \
 [[sakti|sakta]] hoon?" → note callback time and go to STEP 4 (Closing — Callback Scheduled).
 
@@ -812,7 +847,8 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
     cta = _spoken(kit.get("cta"), 120) or "free consultation call"
 
     welcome = _spoken(brief.get("welcome_message"), 300)
-    if not welcome or agent.lower() not in welcome.lower():
+    if not welcome or agent.lower() not in welcome.lower() or \
+            (has_name and contact_name.lower() not in welcome.lower()):
         welcome = default_welcome
 
     hook = _spoken(brief.get("timely_hook"))
@@ -860,6 +896,8 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
         "the decision-maker (owner, MD, VP Sales, or whoever handles sales/business development)",
         "prospect_ask": f"{contact_name} ji" if has_name else "owner ya sales head",
         "welcome": welcome,
+        "confirm_line": f"{contact_name} ji se baat ho rahi hai?" if has_name else
+        "kya aap business ya sales dekhte hain?",
         "opening_value_line": _spoken(brief.get("opening_value_line")) or
         f"{company} {_spoken(kit.get('business_kind_we_serve'), 120) or 'businesses'} ke saath kaam karta hai.",
         "business_kind": _spoken(kit.get("business_kind_we_serve"), 150) or "a business we can help",
@@ -903,8 +941,8 @@ async def generate_contact_prompt(
         fetch_site_summary(website) if website else asyncio.sleep(0, result=""),
     )
 
-    name = _spoken(contact.name, 80)
-    has_name = bool(name) and name.lower() not in ("contact", "unknown", "nan")
+    name = person_first_name(contact)
+    has_name = bool(name)
     default_welcome = _default_welcome(kit, name, has_name)
     brief = await _get_brief(kit, profile, contact, language, website_summary, default_welcome)
     prompt, welcome = build_prompt(kit=kit, brief=brief, contact_name=name, has_name=has_name,

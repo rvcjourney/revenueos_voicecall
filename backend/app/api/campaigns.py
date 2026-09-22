@@ -257,7 +257,18 @@ async def list_contacts(
 
 
 # Header names (after lowercase + spaces→"_") recognised as the contact's name
-_NAME_COLUMNS = ("name", "full_name", "contact_name", "first_name", "customer_name", "client_name")
+_NAME_COLUMNS = ("name", "full_name", "contact_name", "first_name", "customer_name", "client_name",
+                 "person_name", "contact_person", "contact_person_name", "person", "owner_name",
+                 "prospect_name", "lead_name")
+# Otherwise any header containing "name" is the person's name — unless it names something else
+_NOT_PERSON_NAME = ("company", "business", "firm", "organisation", "organization", "brand", "file",
+                    "user", "product", "shop", "store", "city", "industry")
+
+
+def find_name_column(columns) -> str | None:
+    return next((c for c in columns if c in _NAME_COLUMNS), None) or next(
+        (c for c in columns if "name" in c and not any(w in c for w in _NOT_PERSON_NAME)), None
+    )
 # Recognised as the phone column only when no header contains "phone"
 _PHONE_FALLBACK_COLUMNS = (
     "contact", "contact_no", "contact_number", "mobile", "mobile_no", "mobile_number",
@@ -291,7 +302,7 @@ async def upload_contacts(
 
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
 
-    name_col = next((c for c in df.columns if c in _NAME_COLUMNS), None)
+    name_col = find_name_column(df.columns)
     phone_col = next((c for c in df.columns if "phone" in c), None) or next(
         (c for c in df.columns if c in _PHONE_FALLBACK_COLUMNS and c != name_col), None
     )

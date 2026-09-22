@@ -410,3 +410,37 @@ def test_spoken_tidies_space_before_punctuation():
 def test_build_prompt_fills_missing_qualifying_questions():
     prompt, _ = _build(brief=_brief(qualifying_questions=["Sirf ek sawaal?"]))
     assert "Sirf ek sawaal?" in prompt and "Abhi yeh kaam aapki team karti hai" in prompt
+
+
+def test_person_first_name_from_person_name_column():
+    # Upload didn't recognise "Person Name" → name saved as "Contact"; the CSV column still has it
+    c = ContactInfo(name="Contact", phone="+91", email=None, company="Aacurate",
+                    custom_fields={"person_name": "Mr. Kamalnath ampal", "company_name": "Aacurate"})
+    assert prime_prompt.person_first_name(c) == "Kamalnath"
+    assert prime_prompt.person_first_name(ContactInfo("Dr. ravi kumar", "+91", None, None, {})) == "Ravi"
+    assert prime_prompt.person_first_name(ContactInfo("Contact", "+91", None, None, {"city": "Pune"})) == ""
+
+
+def test_default_welcome_confirms_the_person_by_name():
+    welcome = prime_prompt._default_welcome(_kit(company_city=""), "Kamalnath", True)
+    assert welcome == "Namaste ji! Main Priya bol rahi hoon MOTM se. Kya main Kamalnath ji se baat kar rahi hoon?"
+    assert "owner ya sales head" in prime_prompt._default_welcome(_kit(), "", False)
+
+
+def test_opening_is_marked_already_spoken_and_llm_welcome_must_use_name():
+    prompt, welcome = _build(brief=_brief(welcome_message="Namaste ji! Main Priya bol rahi hoon MOTM se."))
+    assert welcome == "Namaste ji! Main Priya bol rahi hoon MOTM se."  # default (fixture) since name missing
+    assert "ALREADY SPOKEN — never say it again" in prompt
+    assert "Never repeat this line or introduce yourself again" in prompt
+    assert "Ravi ji se baat ho rahi hai?" in prompt
+
+
+@pytest.mark.parametrize("columns,expected", [
+    (["company_name", "person_name", "phone"], "person_name"),
+    (["company_name", "contact_person", "phone"], "contact_person"),
+    (["name", "person_name"], "name"),
+    (["company_name", "industry", "phone"], None),
+])
+def test_upload_finds_person_name_column(columns, expected):
+    from app.api.campaigns import find_name_column
+    assert find_name_column(columns) == expected
