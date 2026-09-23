@@ -1067,13 +1067,19 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     )
 
                 if not contacts:
-                    no_answer_waiting = await session.scalar(
+                    # Only QUEUE_TIMEOUT contacts ever come back (see
+                    # _next_retry_batch) -- NO_ANSWER is terminal platform-wide, so
+                    # counting it here used to wait for a retry that never came:
+                    # the campaign could neither dial nor complete, and the 60s
+                    # sleep below let the dispatcher lock expire, so the beat task
+                    # re-queued it every ~6 minutes forever.
+                    retry_waiting = await session.scalar(
                         select(func.count()).where(
                             CampaignContact.campaign_id == campaign.id,
-                            CampaignContact.status.in_((ContactStatus.NO_ANSWER, ContactStatus.QUEUE_TIMEOUT)),
+                            CampaignContact.status == ContactStatus.QUEUE_TIMEOUT,
                         )
                     )
-                    if no_answer_waiting:
+                    if retry_waiting:
                         needs_retry_wait = True
                     else:
                         await session.execute(
@@ -1157,6 +1163,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
 
         if needs_retry_wait:
             log.info("no_contacts_ready_waiting_for_retry", campaign_id=campaign_id)
+            await _refresh_lock(campaign_id)  # this dispatcher is alive, just waiting
             await asyncio.sleep(60)
             continue
 

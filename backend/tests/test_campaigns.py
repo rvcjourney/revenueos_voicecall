@@ -100,3 +100,34 @@ async def test_duplicate_campaign_skips_contacts_when_requested(client, db):
         select(CampaignContact).where(CampaignContact.campaign_id == campaign.id)
     )).scalars().all()
     assert len(original_contacts) == 3
+
+
+async def test_campaign_with_only_no_answer_contacts_completes(db_engine, db):
+    """Regression: NO_ANSWER is terminal, so a campaign left with only those
+    contacts must COMPLETE — it used to wait for a retry that never came, and
+    the dispatcher looped forever (watchdog re-queued it every ~6 minutes)."""
+    import asyncio
+    from datetime import time as dt_time
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.models.campaign import ContactStatus
+    from app.workers.tasks import campaign as campaign_task
+
+    org, _, campaign = await _make_campaign_with_contacts(db, contact_count=2)
+    campaign.status = CampaignStatus.RUNNING
+    campaign.calling_window_start = dt_time(0, 0)
+    campaign.calling_window_end = dt_time(23, 59)
+    campaign.calling_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    for contact in (await db.execute(select(CampaignContact))).scalars():
+        contact.status = ContactStatus.NO_ANSWER
+    await db.commit()
+
+    factory = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    with patch.object(campaign_task, "AsyncSessionLocal", factory), \
+            patch.object(campaign_task, "has_credits_remaining", new=AsyncMock(return_value=True)):
+        await asyncio.wait_for(campaign_task._dispatch_loop(None, str(campaign.id)), timeout=10)
+
+    async with factory() as s:
+        assert (await s.get(Campaign, campaign.id)).status == CampaignStatus.COMPLETED
