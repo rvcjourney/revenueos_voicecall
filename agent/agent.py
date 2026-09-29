@@ -22,7 +22,15 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions, stt
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
-from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam, noise_cancellation
+from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
+try:
+    # Separate package (livekit-plugins-noise-cancellation) -- the livekit-agents
+    # "[noise-cancellation]" extra no longer exists in 1.x and pip skips it
+    # silently, which crash-looped the agent on the server (2026-09-29). Optional
+    # so a missing install degrades to no noise removal instead of no calls.
+    from livekit.plugins import noise_cancellation
+except ImportError:
+    noise_cancellation = None
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 import chatterbox_tts
 
@@ -726,6 +734,8 @@ def prewarm(proc: JobProcess) -> None:
         sample_rate             = 8000,
     )
     logger.info("VAD loaded in prewarm ✓")
+    if noise_cancellation is None:
+        logger.warning("livekit-plugins-noise-cancellation not installed — calls run WITHOUT noise removal")
 
 
 # =============================================================================
@@ -1836,7 +1846,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 # BVCTelephony is the variant tuned for narrowband SIP phone audio.
                 # Requires LiveKit Cloud; without it min_words=0 above reacts to noise.
                 audio_input          = AudioInputOptions(
-                    noise_cancellation=noise_cancellation.BVCTelephony(),
+                    noise_cancellation=noise_cancellation.BVCTelephony() if noise_cancellation else None,
                 ),
             ),
         )

@@ -1,4 +1,5 @@
 livekit-agents[groq,silero,elevenlabs,cartesia,sarvam,noise-cancellation,turn-detector]>=0.12.16
+livekit-plugins-noise-cancellation>=0.2.0
 livekit>=0.18.0
 python-dotenv>=1.0.0
 certifi>=2024.0.0
