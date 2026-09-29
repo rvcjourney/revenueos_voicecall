@@ -19,7 +19,7 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions
+from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions, stt
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam, noise_cancellation
@@ -474,6 +474,38 @@ def _digit_spellout_transform():
 
     return _filter
 
+# Listening sounds ("backchannels") a caller makes WHILE the agent is talking —
+# "haan", "hmm", "achha", "theek hai", "yes" — which mean "go on", not "stop".
+# A transcript made up ONLY of these words (Roman + Devanagari, since Sarvam
+# codemix outputs either) is dropped in VoiceAgent.stt_node while the agent is
+# mid-sentence. Deliberately excludes anything that changes direction: "nahi",
+# "no", "ruko", "wait", "kya", "lekin"/"but" — one such word anywhere in the
+# utterance ("haan lekin...") and it's a real interruption.
+_BACKCHANNEL_WORDS = frozenset({
+    # English
+    "hm", "hmm", "hmmm", "mm", "mmm", "mhm", "uh", "huh", "ok", "okay", "okey",
+    "yes", "yeah", "yep", "yup", "ya", "right", "sure", "correct", "alright",
+    "got", "it", "go", "ahead",
+    # Hindi, Roman script
+    "haan", "han", "haa", "ha", "haanji", "hanji", "ji", "jee", "achha", "acha",
+    "accha", "achchha", "theek", "thik", "hai", "sahi", "bilkul", "boliye", "bolo",
+    "bataiye",
+    # Hindi, Devanagari
+    "हाँ", "हां", "हा", "हाँजी", "हांजी", "हम्म", "हम", "जी", "अच्छा", "अच्छा", "ठीक",
+    "है", "सही", "बिल्कुल", "बिलकुल", "बोलिए", "बोलो", "बताइए", "ओके", "यस", "राइट", "श्योर",
+})
+_BACKCHANNEL_MAX_WORDS = 6
+# Splits on anything but letters/digits/Devanagari. The explicit Devanagari
+# range is needed because Python's \w doesn't match vowel signs (ा ं ्), but it
+# skips U+0964/U+0965 so the danda "।" / "॥" still counts as punctuation.
+_BACKCHANNEL_SPLIT_RE = re.compile(r"[^\wऀ-ॣ०-ॿ]+")
+
+
+def _is_backchannel(text: str) -> bool:
+    """True if `text` is only listening sounds (see _BACKCHANNEL_WORDS)."""
+    words = [w for w in _BACKCHANNEL_SPLIT_RE.split(text.lower()) if w]
+    return 0 < len(words) <= _BACKCHANNEL_MAX_WORDS and all(w in _BACKCHANNEL_WORDS for w in words)
+
 _VOICEMAIL_RE = re.compile(
     r"\b("
     r"please leave (a |your )?message"
@@ -864,6 +896,42 @@ class VoiceAgent(Agent):
             logger.warning("Max call duration reached — auto-hangup")
             self._ending = True
             await self._do_hangup()
+
+    async def stt_node(self, audio, model_settings):
+        # Drops pure listening sounds ("haan", "hmm", "yes"...) said while the agent
+        # is mid-sentence, so they never reach the SDK as a transcript. Without this,
+        # a final transcript of "haan" both cuts the agent's speech for good
+        # (on_final_transcript -> _cancel_speech_pause) and commits it as a user turn
+        # the LLM then replies to -- breaking the pitch on every "hmm".
+        # With it: VAD still pauses the audio briefly (interruption.min_duration),
+        # no transcript follows, and false_interruption_timeout resumes the sentence.
+        # Filtering has to happen here rather than via interruption.min_words: Sarvam
+        # only emits FINAL transcripts (no interims), so a word gate would make every
+        # real interruption wait until the caller finished talking.
+        # "haan" after the agent's speech has finished (answering its question) is
+        # untouched -- current_speech is done by then.
+        async for ev in Agent.default.stt_node(self, audio, model_settings):
+            if (
+                isinstance(ev, stt.SpeechEvent)
+                and ev.type in (
+                    stt.SpeechEventType.FINAL_TRANSCRIPT,
+                    stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                    stt.SpeechEventType.PREFLIGHT_TRANSCRIPT,
+                )
+                and ev.alternatives
+                and self._agent_mid_speech()
+                and _is_backchannel(ev.alternatives[0].text)
+            ):
+                logger.info("Backchannel ignored while agent speaking: %r", ev.alternatives[0].text)
+                continue
+            yield ev
+
+    def _agent_mid_speech(self) -> bool:
+        # current_speech stays set (not interrupted, not done) while its audio is
+        # merely paused by a possible interruption, which is exactly the window a
+        # backchannel's transcript lands in.
+        speech = self.session.current_speech
+        return speech is not None and not speech.interrupted and not speech.done()
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         if self._ending:
