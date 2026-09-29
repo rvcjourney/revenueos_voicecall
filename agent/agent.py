@@ -21,8 +21,8 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 from livekit import agents
 from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions
 from livekit.agents.llm import ChatContext
-from livekit.agents.voice.room_io import RoomOptions
-from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
+from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
+from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 import chatterbox_tts
 
@@ -1671,14 +1671,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # activity alone -- true human-conversation-style barge-in, at the
                                       # cost of occasionally reacting to a loud breath/cough/background
                                       # noise VAD mistakes for speech (no longer filtered by a real word).
-                "false_interruption_timeout": None,  # SDK default (2.0) PAUSES the agent's audio on a
-                                      # detected interruption and silently RESUMES it from where it left
-                                      # off if a full turn doesn't confirm within 2s — audibly identical to
-                                      # "the agent just kept talking" even though an interruption fired.
-                                      # min_duration + min_words above already require 600ms of sustained,
-                                      # transcribed speech before triggering, so a second false-positive
-                                      # safety net isn't needed — disabling it (None) makes every detected
-                                      # interruption cut the agent off for good, immediately.
+                "false_interruption_timeout": 1.0,  # Safety net for min_words=0 above: a detected
+                                      # interruption PAUSES the agent's audio, and if the caller produced
+                                      # no real transcribed turn within 1s (cough, horn, background
+                                      # voice, line echo) the agent RESUMES from where it paused instead
+                                      # of going silent. A real "ruko"/"wait" transcribes well inside 1s
+                                      # and cuts the agent off for good. Was None (disabled) back when
+                                      # interruptions needed 600ms + a recognised word; once those gates
+                                      # were dropped to 0.35s/0 words, every noise burst killed the
+                                      # sentence permanently. Was 2.0 (SDK default) before that, which
+                                      # paused long enough to sound like the agent ignored the caller --
+                                      # 1.0 matches Vapi's backoffSeconds recovery window.
+                "resume_false_interruption": True,  # SDK default, pinned explicitly: the resume half
+                                      # of false_interruption_timeout above.
             },
             preemptive_generation={
                 "preemptive_tts": True,  # SDK default False. LLM text-generation already starts
@@ -1758,6 +1763,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             room_options= RoomOptions(
                 close_on_disconnect  = False,
                 delete_room_on_close = True,
+                # Strips traffic/TV/background voices from the caller's audio BEFORE
+                # VAD and the interruption check hear it (same role as Krisp in Vapi).
+                # BVCTelephony is the variant tuned for narrowband SIP phone audio.
+                # Requires LiveKit Cloud; without it min_words=0 above reacts to noise.
+                audio_input          = AudioInputOptions(
+                    noise_cancellation=noise_cancellation.BVCTelephony(),
+                ),
             ),
         )
         logger.info("Agent session started ✓")
