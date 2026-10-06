@@ -76,6 +76,13 @@ async def _active_subscription(db: AsyncSession, org_id) -> Subscription | None:
     )
 
 
+@router.get("/enabled")
+async def get_billing_enabled(token: TokenPayload = Depends(get_current_user)):
+    """Whether credits and payments are in force (settings.BILLING_ENABLED) — the
+    dashboard hides its Billing pages and the "subscription inactive" banner when not."""
+    return {"enabled": settings.BILLING_ENABLED}
+
+
 @router.get("/current", response_model=BillingCurrentOut)
 async def get_current_billing(
     token: TokenPayload = Depends(get_current_user),

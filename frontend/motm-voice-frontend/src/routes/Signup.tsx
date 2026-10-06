@@ -16,7 +16,7 @@ import { PlanPicker } from "@/components/billing/PlanPicker";
 import { BillingAddressForm } from "@/components/billing/BillingAddressForm";
 import { OtpEntry } from "@/components/auth/OtpEntry";
 import { useAuth } from "@/lib/auth";
-import { apiErrorMessage } from "@/lib/api";
+import { apiErrorMessage, billingApi } from "@/lib/api";
 import { useBillingAddress, useCheckout, useVerifyPayment } from "@/lib/hooks";
 import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
 import type { PublicPlan } from "@/lib/types";
@@ -192,6 +192,14 @@ function CreateOrgForm() {
 
   async function onOtpVerified() {
     if (!orgValues) return;
+    // No plan to pick when billing is switched off on the server. Asked here,
+    // not at mount, because /api/billing/enabled needs the session OTP just created.
+    const billingOn = await billingApi.enabled().then((r) => r.data.enabled).catch(() => true);
+    if (!billingOn) {
+      toast.success(`Welcome, ${orgValues.full_name}!`);
+      navigate("/dashboard");
+      return;
+    }
     setStep("plan");
     toast.success(`Welcome, ${orgValues.full_name}! Pick a plan to activate ${orgValues.company_name}.`);
   }

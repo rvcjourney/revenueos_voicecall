@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period, reset_credit_period_if_stale
 from app.core.invoicing import generate_invoice_for_charge
@@ -392,7 +393,8 @@ async def razorpay_webhook(
 
         elif event in ("subscription.halted", "subscription.cancelled"):
             sub.status = "cancelled" if event == "subscription.cancelled" else "halted"
-            if org:
+            # With billing switched off, a lapsed subscription no longer suspends the org.
+            if org and settings.BILLING_ENABLED:
                 org.is_active = False
 
         elif event == "subscription.pending":

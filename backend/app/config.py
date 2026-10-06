@@ -23,6 +23,7 @@ _SECRET_FIELDS = frozenset({
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64",
+    "REVENUEOS_API_KEY",
 })
 
 
@@ -169,6 +170,24 @@ class Settings(BaseSettings):
     # subscription.status still says; a later subscription.charged webhook
     # reactivates it and pushes current_period_end forward again either way.
     BILLING_GRACE_PERIOD_DAYS: int = 3
+    # Platform-wide switch for credits and payments. False = no org is ever
+    # blocked for credits or an unpaid subscription: new sign-ups start active,
+    # has_credits_remaining() (app/core/credits.py) always allows the call, and
+    # the Razorpay reconcile/expiry beat tasks do nothing. Call minutes are
+    # still counted. A superadmin suspending an org (is_active) still applies.
+    BILLING_ENABLED: bool = True
+
+    # ── RevenueOS Brain integration (app/api/revenueos.py) ────────────────────
+    # Shared secret Brain sends in the X-RevenueOS-Key header. Blank = every
+    # RevenueOS route answers 503.
+    REVENUEOS_API_KEY: str = ""
+    # Lets the key create accounts, numbers, agents and campaigns (as drafts).
+    REVENUEOS_LAUNCH_ENABLED: bool = False
+    # Lets a launch with auto_start=true begin dialling real people with no
+    # person reviewing it. Needs REVENUEOS_LAUNCH_ENABLED as well.
+    REVENUEOS_AUTO_START_ENABLED: bool = False
+    # Most contacts accepted in one launch request.
+    REVENUEOS_MAX_CONTACTS: int = 500
 
     # ── Storage ───────────────────────────────────────────────────────────────
     STORAGE_BACKEND: Literal["minio", "s3"] = "minio"
@@ -265,6 +284,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"STORAGE_SSE_C_KEY_B64 must decode to exactly 32 bytes for AES-256 (got {len(raw)})"
             )
+        return v
+
+    @field_validator("REVENUEOS_API_KEY")
+    @classmethod
+    def _validate_revenueos_key(cls, v: str) -> str:
+        if v and len(v) < 32:
+            raise ValueError("REVENUEOS_API_KEY must be at least 32 characters (or blank to disable)")
         return v
 
     @model_validator(mode="after")

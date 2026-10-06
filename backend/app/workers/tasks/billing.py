@@ -100,6 +100,8 @@ async def _reconcile_async() -> None:
 @celery_app.task(name="app.workers.tasks.billing.reconcile_razorpay_subscriptions", bind=True)
 def reconcile_razorpay_subscriptions(self) -> None:
     """Beat task (daily): correct any local Subscription/org state that drifted from a missed webhook."""
+    if not settings.BILLING_ENABLED:
+        return
     asyncio.run(_reconcile_async())
 
 
@@ -178,4 +180,6 @@ def expire_lapsed_subscriptions(self) -> None:
     a renewal charge extending it -- the backstop described in this module's
     docstring.
     """
+    if not settings.BILLING_ENABLED:
+        return
     asyncio.run(_expire_lapsed_async())

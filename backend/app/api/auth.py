@@ -71,8 +71,9 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         # payment succeeds — the webhook (POST /webhooks/razorpay:
         # subscription.activated/charged) flips this true. Orgs a superadmin
         # creates directly (app/api/platform.py) are unaffected by this and
-        # keep the column's normal default of active.
-        is_active=False,
+        # keep the column's normal default of active. With billing switched
+        # off (settings.BILLING_ENABLED) there is no payment to wait for.
+        is_active=not settings.BILLING_ENABLED,
     )
     db.add(org)
     await db.flush()

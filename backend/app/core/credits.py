@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.user import Organization
@@ -196,7 +197,12 @@ async def has_credits_remaining(db: AsyncSession, org_id: UUID) -> bool:
     check this before dialing; it does not retroactively affect a call
     that's already connected when the org crosses the line, only whether
     the *next* one is allowed to start.
+
+    Always True when settings.BILLING_ENABLED is off (credits not enforced).
     """
+    if not settings.BILLING_ENABLED:
+        return True
+
     org = await db.get(Organization, org_id)
     if org is None:
         return True  # fail open — a missing org row is not this check's problem to catch

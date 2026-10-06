@@ -18,3 +18,4 @@ from app.models.cloned_voice import ClonedVoice  # noqa: F401
 from app.models.prompt_library import PromptLibraryEntry, PromptLibraryVersion  # noqa: F401
 from app.models.invoice import Invoice, InvoiceCounter  # noqa: F401
 from app.models.company_profile import OrgCompanyProfile  # noqa: F401
+from app.models.revenueos import RevenueOSClient, RevenueOSLaunch  # noqa: F401

@@ -51,6 +51,20 @@ async def get_org_profile(db: AsyncSession, org_id) -> OrgCompanyProfile | None:
     return await db.scalar(select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == org_id))
 
 
+async def save_org_profile(db: AsyncSession, org_id, body: CompanyProfileIn) -> OrgCompanyProfile:
+    """Create or replace the org's profile. Shared with app/integrations/revenueos.py."""
+    profile = await get_org_profile(db, org_id)
+    if profile is None:
+        profile = OrgCompanyProfile(org_id=org_id)
+        db.add(profile)
+    for field, value in body.model_dump().items():
+        setattr(profile, field, value.strip() if isinstance(value, str) else value)
+    profile.company_name = profile.company_name or ""
+    await db.commit()
+    await db.refresh(profile)
+    return profile
+
+
 @router.get("", response_model=CompanyProfileOut)
 async def get_company_profile(
     token: TokenPayload = Depends(get_current_user),
@@ -65,13 +79,4 @@ async def save_company_profile(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    profile = await get_org_profile(db, token.org_id)
-    if profile is None:
-        profile = OrgCompanyProfile(org_id=token.org_id)
-        db.add(profile)
-    for field, value in body.model_dump().items():
-        setattr(profile, field, value.strip() if isinstance(value, str) else value)
-    profile.company_name = profile.company_name or ""
-    await db.commit()
-    await db.refresh(profile)
-    return _to_out(profile)
+    return _to_out(await save_org_profile(db, token.org_id, body))

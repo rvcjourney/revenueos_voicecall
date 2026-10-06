@@ -66,10 +66,10 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     Orchestrates a batch of outbound AI calls.
     Soft-deleted: spec requires "soft delete only if no active calls".
     Stats counters (interested_count, etc.) are updated atomically via
-    UPDATE campaigns SET interested_count = interested_count + 1 WHERE id = :id
+    UPDATE voice_campaigns SET interested_count = interested_count + 1 WHERE id = :id
     Never read-modify-write them in Python — concurrent workers would race.
     """
-    __tablename__ = "campaigns"
+    __tablename__ = "voice_campaigns"
     __table_args__ = (
         Index("ix_campaigns_org_status", "org_id", "status"),
     )
@@ -197,7 +197,7 @@ class CampaignContact(Base, TimestampMixin):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
     campaign_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        ForeignKey("voice_campaigns.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

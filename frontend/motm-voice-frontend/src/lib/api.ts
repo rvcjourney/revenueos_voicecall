@@ -316,6 +316,7 @@ export const plansApi = {
 };
 
 export const billingApi = {
+  enabled: () => api.get<{ enabled: boolean }>("/api/billing/enabled"),
   current: () => api.get<BillingCurrent>("/api/billing/current"),
   checkout: (planId: string) => api.post<CheckoutResponse>("/api/billing/checkout", { plan_id: planId }),
   verifyPayment: (data: VerifyPaymentRequest) =>

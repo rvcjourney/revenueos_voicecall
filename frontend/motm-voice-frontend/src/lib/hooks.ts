@@ -49,8 +49,23 @@ export function usePublicPlans() {
   return useQuery({ queryKey: ["public-plans"], queryFn: () => plansApi.list().then((r) => r.data) });
 }
 
-export function useBillingCurrent() {
-  return useQuery({ queryKey: ["billing-current"], queryFn: () => billingApi.current().then((r) => r.data) });
+// Whether credits and payments are in force on this server (BILLING_ENABLED).
+// Treated as on until the answer arrives, and if the request fails.
+export function useBillingEnabled() {
+  const q = useQuery({
+    queryKey: ["billing-enabled"],
+    queryFn: () => billingApi.enabled().then((r) => r.data.enabled),
+    staleTime: Infinity,
+  });
+  return q.data ?? true;
+}
+
+export function useBillingCurrent(enabled = true) {
+  return useQuery({
+    queryKey: ["billing-current"],
+    queryFn: () => billingApi.current().then((r) => r.data),
+    enabled,
+  });
 }
 
 export function useInvoices() {

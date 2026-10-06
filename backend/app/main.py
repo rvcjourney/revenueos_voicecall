@@ -126,12 +126,20 @@ def _register_exception_handlers(app: FastAPI) -> None:
     async def pydantic_validation_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        errors = exc.errors()
+        if request.url.path.startswith("/api/integrations/"):
+            # These requests carry a password and a Vobiz token. Pydantic's
+            # errors repeat the rejected input, so keep only where and why.
+            errors = [
+                {"field": ".".join(str(p) for p in e.get("loc", ()) if p != "body"), "message": e.get("msg", "")}
+                for e in errors
+            ]
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "detail": "Request validation failed.",
                 "code": "VALIDATION_ERROR",
-                "errors": exc.errors(),
+                "errors": errors,
             },
         )
 
@@ -297,6 +305,7 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.billing import router as billing_router
     from app.api.prompt_library import router as prompt_library_router
     from app.api.company_profile import router as company_profile_router
+    from app.api.revenueos import router as revenueos_router
 
     app.include_router(auth_router,        prefix="/api/auth",        tags=["auth"])
     app.include_router(admin_router,       prefix="/api/admin",       tags=["admin"])
@@ -316,6 +325,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(billing_router,     prefix="/api/billing",     tags=["billing"])
     app.include_router(prompt_library_router, prefix="/api/prompt-library", tags=["prompt-library"])
     app.include_router(company_profile_router, prefix="/api/company-profile", tags=["prime-calling"])
+    app.include_router(revenueos_router,   prefix="/api/integrations/revenueos", tags=["revenueos"])
 
 
 app = create_app()

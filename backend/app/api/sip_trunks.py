@@ -283,12 +283,16 @@ async def create_trunk(
 
 # ── Admin: self-serve Vobiz connect ───────────────────────────────────────────
 
-@router.post("/connect-vobiz", response_model=ConnectVobizResponse, status_code=201)
-async def connect_vobiz(
-    body: ConnectVobizBody,
-    token: TokenPayload = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
+def normalize_did(did: str) -> str:
+    did = did.strip().replace(" ", "")
+    if not did.startswith("+"):
+        did = "+91" + did.lstrip("0")
+    return did
+
+
+async def connect_vobiz_trunk(
+    db: AsyncSession, *, org_id: UUID, body: ConnectVobizBody, activate: bool = False
+) -> SipTrunk:
     """
     Self-serve trunk provisioning: validate the org's own Vobiz credentials +
     DID ownership, create a dedicated outbound trunk on the org's own Vobiz
@@ -296,10 +300,14 @@ async def connect_vobiz(
     manual Vobiz console step required from the admin), create a matching
     LiveKit outbound SIP trunk pointed at it, and store it inactive
     (is_active=false) until POST /{trunk_id}/test confirms it works.
+
+    activate=True skips that test step and stores the trunk active straight
+    away — used only by the RevenueOS integration (app/integrations/revenueos.py),
+    where no person is there to press Test.
+
+    Shared by POST /connect-vobiz below and the RevenueOS integration.
     """
-    did = body.did.strip().replace(" ", "")
-    if not did.startswith("+"):
-        did = "+91" + did.lstrip("0")
+    did = normalize_did(body.did)
 
     # 1. Validate Vobiz credentials + DID ownership before creating anything
     try:
@@ -368,7 +376,7 @@ async def connect_vobiz(
     # campaign ends up trying to call through a number that doesn't work.
     trunk = SipTrunk(
         id=trunk_id,
-        org_id=token.org_id,
+        org_id=org_id,
         name=f"Vobiz {did}",
         livekit_trunk_id=trunk_info.sip_trunk_id,
         sip_domain=vobiz_sip_domain,
@@ -377,15 +385,27 @@ async def connect_vobiz(
         caller_id=did,
         transport=SipTransport.TCP,
         is_default=False,
-        is_active=False,
+        is_active=activate,
     )
     trunk.vobiz_auth_id = body.auth_id
     trunk.vobiz_auth_token = body.auth_token
     db.add(trunk)
+    if activate:
+        await db.flush()
+        await _rebalance_default(db, org_id)
     await db.commit()
     await db.refresh(trunk)
+    return trunk
 
-    return ConnectVobizResponse(trunk_id=str(trunk.id), status="pending_test", did=did)
+
+@router.post("/connect-vobiz", response_model=ConnectVobizResponse, status_code=201)
+async def connect_vobiz(
+    body: ConnectVobizBody,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    trunk = await connect_vobiz_trunk(db, org_id=token.org_id, body=body)
+    return ConnectVobizResponse(trunk_id=str(trunk.id), status="pending_test", did=trunk.caller_id)
 
 
 # ── Admin: test a trunk ───────────────────────────────────────────────────────
