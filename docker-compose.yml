@@ -13,6 +13,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: revenueos-voice-api
     container_name: revenueos-voice-api
     restart: always
     env_file: ./backend/.env
@@ -61,6 +62,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: revenueos-voice-worker
     container_name: revenueos-voice-worker
     restart: always
     env_file: ./backend/.env
@@ -138,6 +140,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: revenueos-voice-beat
     container_name: revenueos-voice-beat
     restart: always
     env_file: ./backend/.env
@@ -192,6 +195,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: https://revenueoscall.b2botix.ai
+    image: revenueos-voice-frontend
     container_name: revenueos-voice-frontend
     restart: always
     ports:
@@ -209,6 +213,7 @@ services:
     build:
       context: ./agent
       dockerfile: Dockerfile
+    image: revenueos-voice-agent
     # No fixed container_name -- required for replicas: 2 below (Compose can't
     # give two containers the same explicit name; it auto-names each replica
     # instead, e.g. motmvoice-agent-1/-2). Nothing else in this repo referenced
@@ -294,7 +299,11 @@ services:
 
   # ── MinIO (object storage) ───────────────────────────────────────────────────
   minio:
-    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    # MinIO's public images are no longer downloadable from Docker Hub, so this
+    # is a local tag: copy an existing image to this name on the server first
+    # (docker tag <existing minio image> revenueos-voice-minio:RELEASE.2024-11-07T00-52-20Z).
+    image: revenueos-voice-minio:RELEASE.2024-11-07T00-52-20Z
+    pull_policy: never
     container_name: revenueos-voice-minio
     restart: always
     command: server /data --console-address ":9001"
