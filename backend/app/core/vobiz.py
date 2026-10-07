@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 from urllib.parse import quote
 
 import aiohttp
@@ -117,6 +119,57 @@ class VobizTrunkCreateError(VobizValidationError):
     """Could not create an outbound trunk on the org's own Vobiz account."""
 
 
+class VobizOutboundTrunk(NamedTuple):
+    """An outbound trunk on Vobiz and the SIP login LiveKit must use to dial through it."""
+    domain: str
+    sip_username: str
+    sip_password: str
+
+
+async def _create_vobiz_sip_credential(
+    http: aiohttp.ClientSession,
+    *,
+    auth_id: str,
+    auth_token: str,
+    did: str,
+) -> tuple[str, str, str]:
+    """
+    Create a SIP credential (username + password) on the org's Vobiz account.
+
+    Vobiz authenticates an outbound trunk by a SIP credential or an IP list
+    attached to it (credential_uuid / ipacl_uuid in its trunk API) — the REST
+    auth_id/auth_token are not SIP credentials. A trunk with neither attached
+    silently ignores every INVITE, which LiveKit reports as
+    "sip request timed out".
+
+    Returns (credential_id, username, password).
+    """
+    username = f"motm{did.lstrip('+')}{secrets.token_hex(3)}"
+    password = secrets.token_urlsafe(24)
+    try:
+        async with http.post(
+            f"{_BASE}/Account/{auth_id}/credentials",
+            headers=_headers(auth_id, auth_token),
+            json={"username": username, "password": password},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            body_text = await resp.text()
+            if resp.status not in (200, 201):
+                log.warning("vobiz_credential_create_error", status=resp.status, body=body_text[:500])
+                raise VobizTrunkCreateError(f"Vobiz rejected SIP credential creation (status {resp.status})")
+            data = await resp.json(content_type=None)
+    except VobizValidationError:
+        raise
+    except Exception as exc:
+        log.warning("vobiz_credential_create_failed", error=str(exc))
+        raise VobizTrunkCreateError("Could not reach Vobiz to create the SIP credential") from exc
+
+    credential_id = (data or {}).get("id")
+    if not credential_id:
+        raise VobizTrunkCreateError("Vobiz did not return a SIP credential id")
+    return str(credential_id), username, password
+
+
 async def create_vobiz_outbound_trunk(
     http: aiohttp.ClientSession,
     *,
@@ -124,16 +177,21 @@ async def create_vobiz_outbound_trunk(
     auth_token: str,
     did: str,
     webhook_url: str,
-) -> str:
+) -> VobizOutboundTrunk:
     """
     Create a dedicated outbound SIP trunk on the org's own Vobiz account, with
-    call recording and the recording webhook pre-enabled in the same request —
-    so a non-technical admin never has to open Vobiz's console to turn either
-    on manually; self-serve "Connect your number" does it automatically.
+    its own SIP credential attached and call recording + the recording webhook
+    pre-enabled in the same request — so a non-technical admin never has to
+    open Vobiz's console; self-serve "Connect your number" does it all.
 
-    Returns the trunk's assigned SIP domain (e.g. "ae06f8a1.sip.vobiz.ai").
+    Returns the trunk's assigned SIP domain (e.g. "ae06f8a1.sip.vobiz.ai") and
+    the SIP username/password to give LiveKit.
     Raises VobizTrunkCreateError on failure.
     """
+    credential_id, sip_username, sip_password = await _create_vobiz_sip_credential(
+        http, auth_id=auth_id, auth_token=auth_token, did=did,
+    )
+
     hdrs = _headers(auth_id, auth_token)
     try:
         async with http.post(
@@ -143,6 +201,7 @@ async def create_vobiz_outbound_trunk(
                 "name": f"motmvoice-{did.lstrip('+')}",
                 "trunk_direction": "outbound",
                 "transport": "tcp",
+                "credential_uuid": credential_id,
                 "recording": True,
                 "recording_webhook_enabled": True,
                 "webhook_url": webhook_url,
@@ -164,7 +223,7 @@ async def create_vobiz_outbound_trunk(
     trunk_domain = data.get("trunk_domain")
     if not trunk_domain:
         raise VobizTrunkCreateError("Vobiz did not return a trunk domain")
-    return trunk_domain
+    return VobizOutboundTrunk(domain=trunk_domain, sip_username=sip_username, sip_password=sip_password)
 
 
 async def create_vobiz_inbound_trunk(

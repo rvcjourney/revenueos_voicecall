@@ -333,7 +333,7 @@ async def connect_vobiz_trunk(
     #    recording + the recording webhook pre-enabled in the same request.
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-            vobiz_sip_domain = await create_vobiz_outbound_trunk(
+            vobiz_trunk = await create_vobiz_outbound_trunk(
                 http,
                 auth_id=body.auth_id,
                 auth_token=body.auth_token,
@@ -351,10 +351,10 @@ async def connect_vobiz_trunk(
             lk_api.CreateSIPOutboundTrunkRequest(
                 trunk=lk_api.SIPOutboundTrunkInfo(
                     name=f"vobiz-{did}",
-                    address=vobiz_sip_domain,
+                    address=vobiz_trunk.domain,
                     numbers=[did],
-                    auth_username=body.auth_id,
-                    auth_password=body.auth_token,
+                    auth_username=vobiz_trunk.sip_username,
+                    auth_password=vobiz_trunk.sip_password,
                     transport=LKSIPTransport.SIP_TRANSPORT_TCP,
                 )
             )
@@ -364,12 +364,11 @@ async def connect_vobiz_trunk(
     finally:
         await lk.aclose()
 
-    # 4. Store the trunk — inactive until /test succeeds. Vobiz's auth_id/token
-    #    doubles as the SIP auth passed to LiveKit above (Vobiz's SIP registration
-    #    and its REST API appear to share one credential pair); vobiz_auth_id/
-    #    vobiz_auth_token are stored explicitly too so future Vobiz API calls
-    #    (e.g. re-validating the DID, recording lookups) don't need to reuse
-    #    the sip_* fields.
+    # 4. Store the trunk — inactive until /test succeeds. sip_username/
+    #    sip_password are the SIP credential created on Vobiz for this trunk
+    #    and passed to LiveKit above; vobiz_auth_id/vobiz_auth_token are the
+    #    separate REST API credentials, kept for later Vobiz API calls (e.g.
+    #    re-validating the DID, recording lookups).
     # is_default is NOT set here — it's only ever assigned once a trunk
     # passes /test and _rebalance_default confirms it's the org's sole
     # working number. Defaulting an untested trunk is exactly how a
@@ -379,9 +378,9 @@ async def connect_vobiz_trunk(
         org_id=org_id,
         name=f"Vobiz {did}",
         livekit_trunk_id=trunk_info.sip_trunk_id,
-        sip_domain=vobiz_sip_domain,
-        sip_username=body.auth_id,
-        sip_password=body.auth_token,
+        sip_domain=vobiz_trunk.domain,
+        sip_username=vobiz_trunk.sip_username,
+        sip_password=vobiz_trunk.sip_password,
         caller_id=did,
         transport=SipTransport.TCP,
         is_default=False,

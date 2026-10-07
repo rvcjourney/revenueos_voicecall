@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.core.credits import has_credits_remaining
 from app.core.security import verify_password
-from app.core.vobiz import VobizAuthError
+from app.core.vobiz import VobizAuthError, VobizOutboundTrunk
 from app.models.agent import AgentTemplate
 from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus
@@ -77,7 +77,7 @@ def _outside_world(*, vobiz_error: Exception | None = None):
     dispatch = MagicMock()
     validate = AsyncMock(side_effect=vobiz_error) if vobiz_error else AsyncMock(return_value=None)
     with patch("app.api.sip_trunks.validate_vobiz_account_and_did", new=validate), \
-         patch("app.api.sip_trunks.create_vobiz_outbound_trunk", new=AsyncMock(return_value="x.sip.vobiz.ai")), \
+         patch("app.api.sip_trunks.create_vobiz_outbound_trunk", new=AsyncMock(return_value=VobizOutboundTrunk("x.sip.vobiz.ai", "sip_user", "sip-credential-password"))), \
          patch("app.api.sip_trunks.LiveKitAPI", return_value=lk), \
          patch("app.workers.tasks.campaign.run_campaign.apply_async", dispatch):
         yield lk, dispatch

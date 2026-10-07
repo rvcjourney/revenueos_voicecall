@@ -13,7 +13,7 @@ from uuid import UUID
 
 from app.config import settings
 from app.core.security import create_access_token, hash_password, verify_vobiz_webhook_token
-from app.core.vobiz import VobizAuthError, VobizDidNotOwnedError
+from app.core.vobiz import VobizAuthError, VobizDidNotOwnedError, VobizOutboundTrunk
 from app.models.sip import SipTrunk
 from app.models.user import Organization, User, UserRole
 
@@ -97,7 +97,7 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
     with patch("app.api.sip_trunks.validate_vobiz_account_and_did", new=AsyncMock(return_value=None)), \
          patch(
              "app.api.sip_trunks.create_vobiz_outbound_trunk",
-             new=AsyncMock(return_value="abc123.sip.vobiz.ai"),
+             new=AsyncMock(return_value=VobizOutboundTrunk("abc123.sip.vobiz.ai", "sip_user", "sip-credential-password")),
          ) as mock_create_trunk, \
          patch("app.api.sip_trunks.LiveKitAPI", return_value=fake_lk):
         resp = await client.post(
@@ -134,7 +134,8 @@ async def test_connect_vobiz_happy_path_creates_inactive_trunk_with_encrypted_pa
     assert "super-secret-vobiz-token" not in trunk.sip_password_encrypted
     assert "super-secret-vobiz-token" not in trunk.vobiz_auth_token_encrypted
     # ...but decrypting it must round-trip correctly.
-    assert trunk.sip_password == "super-secret-vobiz-token"
+    assert trunk.sip_username == "sip_user"
+    assert trunk.sip_password == "sip-credential-password"
     assert trunk.vobiz_auth_token == "super-secret-vobiz-token"
 
 
