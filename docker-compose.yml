@@ -299,11 +299,12 @@ services:
 
   # ── MinIO (object storage) ───────────────────────────────────────────────────
   minio:
-    # MinIO's public images are no longer downloadable from Docker Hub, so this
-    # is a local tag: copy an existing image to this name on the server first
-    # (docker tag <existing minio image> revenueos-voice-minio:RELEASE.2024-11-07T00-52-20Z).
+    # Built from source: MinIO's public images are no longer downloadable
+    # (see minio/Dockerfile).
+    build:
+      context: ./minio
+      dockerfile: Dockerfile
     image: revenueos-voice-minio:RELEASE.2024-11-07T00-52-20Z
-    pull_policy: never
     container_name: revenueos-voice-minio
     restart: always
     command: server /data --console-address ":9001"
