@@ -48,7 +48,7 @@ const agent: AgentTemplate = {
   system_prompt: "Be helpful.",
   voice_id: "voice-1",
   voice_provider: "elevenlabs",
-  llm_model: "qwen/qwen3.6-27b",
+  llm_model: "qwen/qwen3.8-27b",
   llm_temperature: 0.7,
   max_call_duration_seconds: 600,
   created_at: "2026-01-01T00:00:00Z",

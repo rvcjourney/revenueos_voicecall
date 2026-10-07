@@ -82,12 +82,12 @@ class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     )
 
     # ── LLM configuration ─────────────────────────────────────────────────────
-    # Platform-wide: "qwen/qwen3.6-27b" is the only allowed value (enforced by
+    # Platform-wide: "qwen/qwen3.8-27b" is the only allowed value (enforced by
     # AgentCreate/AgentUpdate's Literal type in app/schemas/agent.py) -- still a
     # plain string column since a DB CHECK constraint on this would need its own
     # migration to change if the platform's model choice ever changes again.
     llm_model: Mapped[str] = mapped_column(
-        String(100), nullable=False, server_default="qwen/qwen3.6-27b"
+        String(100), nullable=False, server_default="qwen/qwen3.8-27b"
     )
     # Stored as float; Groq/OpenAI APIs accept float. Range: 0.0–2.0.
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")

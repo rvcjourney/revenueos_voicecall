@@ -71,7 +71,7 @@ async def test_try_now_places_call_on_default_trunk(client, db, fake_redis):
     assert kwargs["livekit_trunk_id"] == "ST_default_demo"
     assert kwargs["sip_caller_id"] == "+910000000000"
     assert kwargs["system_prompt"]  # the fixed demo persona, not empty
-    assert kwargs["llm_model"] == "qwen/qwen3.6-27b"
+    assert kwargs["llm_model"] == "qwen/qwen3.8-27b"
 
     # The one invariant that must never regress: never charged.
     mock_credits.assert_not_called()

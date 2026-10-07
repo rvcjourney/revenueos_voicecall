@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS agent_templates (
     system_prompt             TEXT         NOT NULL DEFAULT '',
     voice_id                  VARCHAR(100) NOT NULL DEFAULT '9BWtsMINqrJLrRacOk9x',
     voice_provider            VARCHAR(32)  NOT NULL DEFAULT 'elevenlabs',
-    llm_model                 VARCHAR(100) NOT NULL DEFAULT 'qwen/qwen3.6-27b',
+    llm_model                 VARCHAR(100) NOT NULL DEFAULT 'qwen/qwen3.8-27b',
     llm_temperature           FLOAT        NOT NULL DEFAULT 0.7,
     max_call_duration_seconds INTEGER      NOT NULL DEFAULT 600,
     created_at                TIMESTAMPTZ  NOT NULL DEFAULT now(),

@@ -25,7 +25,7 @@ import { formatDate } from "@/lib/utils";
 import type { InboundAgent, InboundAgentCreate } from "@/lib/types";
 
 const VOICE_PROVIDERS = ["elevenlabs", "cartesia", "sarvam", "chatterbox"];
-const LLM_MODELS = ["qwen/qwen3.6-27b"];
+const LLM_MODELS = ["qwen/qwen3.8-27b"];
 
 const emptyForm: InboundAgentCreate = {
   name: "",
@@ -35,7 +35,7 @@ const emptyForm: InboundAgentCreate = {
   system_prompt: "",
   voice_id: "",
   voice_provider: "elevenlabs",
-  llm_model: "qwen/qwen3.6-27b",
+  llm_model: "qwen/qwen3.8-27b",
   llm_temperature: 0.7,
   max_call_duration_seconds: 600,
 };

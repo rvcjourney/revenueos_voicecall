@@ -7,7 +7,7 @@ from pydantic import BaseModel, field_validator
 
 # Platform-wide: Qwen is the only LLM choice, for every agent (outbound and
 # inbound alike) -- see also backend/app/schemas/inbound_agent.py.
-LLM_MODEL = Literal["qwen/qwen3.6-27b"]
+LLM_MODEL = Literal["qwen/qwen3.8-27b"]
 
 
 class AgentOut(BaseModel):
@@ -74,7 +74,7 @@ class AgentCreate(BaseModel):
     system_prompt: str = ""
     voice_id: str = "9BWtsMINqrJLrRacOk9x"
     voice_provider: str = "elevenlabs"
-    llm_model: LLM_MODEL = "qwen/qwen3.6-27b"
+    llm_model: LLM_MODEL = "qwen/qwen3.8-27b"
     llm_temperature: float = 0.7
     max_call_duration_seconds: int = 600
 

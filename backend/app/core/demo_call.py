@@ -74,7 +74,7 @@ restarting, never robotic or scripted-sounding.
 DEMO_VOICE_ID = "XO3tSLyh5E7dEilRBQJG"  # curated platform voice (ElevenLabs default)
 DEMO_VOICE_PROVIDER = "elevenlabs"
 DEMO_LANGUAGE = "hinglish"
-DEMO_LLM_MODEL = "qwen/qwen3.6-27b"  # non-thinking mode via Groq — see agent.py's
+DEMO_LLM_MODEL = "qwen/qwen3.8-27b"  # non-thinking mode via Groq — see agent.py's
                                      # _REASONING_EFFORT_OVERRIDES / _NEEDS_SYNTHETIC_FIRST_TURN
                                      # for the model-specific handling this already gets
 DEMO_LLM_TEMPERATURE = 0.7

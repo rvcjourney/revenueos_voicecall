@@ -210,14 +210,14 @@ async def _resolve_inbound_call(meta: dict, participant, room_name: str) -> dict
 # even at their lowest setting -- openai/gpt-oss-20b/120b can only go as low as
 # "low" (confirmed in the installed livekit-plugins-groq SDK, which auto-sets
 # reasoning_effort="low" for those two models and nothing lower is available),
-# which measured as an 18s+ welcome-message delay in real testing. qwen/qwen3.6-27b
+# which measured as an 18s+ welcome-message delay in real testing. qwen/qwen3.8-27b
 # is the one model on this list that supports a genuine non-thinking mode via
 # reasoning_effort="none" -- explicitly forced here since the installed SDK
 # version predates this model and has no built-in default for it (it would
 # otherwise fall through to Groq's server-side default, which is "default"/
 # thinking-mode-on).
 _REASONING_EFFORT_OVERRIDES = {
-    "qwen/qwen3.6-27b": "none",
+    "qwen/qwen3.8-27b": "none",
 }
 
 # Confirmed via a real 400 from Groq: "failed to template request: ... minijinja:
@@ -226,7 +226,7 @@ _REASONING_EFFORT_OVERRIDES = {
 # and no user turn, which is exactly how the welcome message is generated (no
 # customer has spoken yet). Every other model tolerates this; only listing the
 # ones confirmed to need the workaround in on_enter() below.
-_NEEDS_SYNTHETIC_FIRST_TURN = {"qwen/qwen3.6-27b"}
+_NEEDS_SYNTHETIC_FIRST_TURN = {"qwen/qwen3.8-27b"}
 
 
 class _CappedGroqLLM(groq.LLM):

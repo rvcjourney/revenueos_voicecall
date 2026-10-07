@@ -53,7 +53,7 @@ SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
 # Post-call outcome classification/summarization model (agent.py's _send_report).
 # Separate from GROQ_MODEL (the live conversation model) -- was a hardcoded

@@ -35,7 +35,7 @@ class InboundAgentCreate(BaseModel):
     system_prompt: str = ""
     voice_id: str = "9BWtsMINqrJLrRacOk9x"
     voice_provider: str = "elevenlabs"
-    llm_model: LLM_MODEL = "qwen/qwen3.6-27b"
+    llm_model: LLM_MODEL = "qwen/qwen3.8-27b"
     llm_temperature: float = 0.7
     max_call_duration_seconds: int = 600
 

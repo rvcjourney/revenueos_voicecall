@@ -54,7 +54,7 @@ import { formatDate } from "@/lib/utils";
 import type { AgentCreate, AgentTemplate } from "@/lib/types";
 
 const VOICE_PROVIDERS = ["elevenlabs", "sarvam"];
-const LLM_MODELS = ["qwen/qwen3.6-27b"];
+const LLM_MODELS = ["qwen/qwen3.8-27b"];
 
 // Sarvam's Bulbul v3 speaker catalog is a fixed, documented set (not a live
 // per-account list the way ElevenLabs' is) — sourced directly from the
@@ -127,7 +127,7 @@ const emptyForm: AgentCreate = {
   system_prompt: "",
   voice_id: "",
   voice_provider: "elevenlabs",
-  llm_model: "qwen/qwen3.6-27b",
+  llm_model: "qwen/qwen3.8-27b",
   llm_temperature: 0.7,
   max_call_duration_seconds: 600,
 };

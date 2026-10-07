@@ -1,4 +1,4 @@
--- Voice schema for a shared database (RevenueOSDatabase), equal to alembic head 0040.
+-- Voice schema for a shared database (RevenueOSDatabase), equal to alembic head 0041.
 -- The voice campaigns table is voice_campaigns so it does not clash with the
 -- email tool's campaigns table. RLS is on for every table, no policies.
 -- Run once, as one transaction, on a database that has none of these tables.
@@ -42,7 +42,7 @@ CREATE TABLE public.agent_templates (
     system_prompt text DEFAULT ''::text NOT NULL,
     voice_id character varying(100) DEFAULT '9BWtsMINqrJLrRacOk9x'::character varying NOT NULL,
     voice_provider character varying(32) DEFAULT 'elevenlabs'::character varying NOT NULL,
-    llm_model character varying(100) DEFAULT 'qwen/qwen3.6-27b'::character varying NOT NULL,
+    llm_model character varying(100) DEFAULT 'qwen/qwen3.8-27b'::character varying NOT NULL,
     llm_temperature double precision DEFAULT '0.7'::double precision NOT NULL,
     max_call_duration_seconds integer DEFAULT 600 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -176,7 +176,7 @@ CREATE TABLE public.inbound_agent_templates (
     system_prompt text DEFAULT ''::text NOT NULL,
     voice_id character varying(100) DEFAULT 'C8R8ahkE5XosZ8qPpSPy'::character varying NOT NULL,
     voice_provider character varying(32) DEFAULT 'elevenlabs'::character varying NOT NULL,
-    llm_model character varying(100) DEFAULT 'qwen/qwen3.6-27b'::character varying NOT NULL,
+    llm_model character varying(100) DEFAULT 'qwen/qwen3.8-27b'::character varying NOT NULL,
     llm_temperature double precision DEFAULT '0.7'::double precision NOT NULL,
     max_call_duration_seconds integer DEFAULT 600 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -790,6 +790,6 @@ ALTER TABLE public.sip_trunks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.system_dnc_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.voice_campaigns ENABLE ROW LEVEL SECURITY;
-INSERT INTO public.alembic_version (version_num) VALUES ('0040');
+INSERT INTO public.alembic_version (version_num) VALUES ('0041');
 INSERT INTO public.platform_cost_settings (id, cost_per_minute_minor, currency) VALUES (1, 0, 'INR');
 COMMIT;

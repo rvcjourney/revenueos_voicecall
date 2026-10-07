@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     # supported models anyway so wiring these up later doesn't inherit a
     # deprecated default. Both llama-3.1-8b-instant and llama-3.1-70b-versatile
     # were deprecated by Groq in 2026.
-    GROQ_MODEL: str = "qwen/qwen3.6-27b"
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
     GROQ_SUMMARY_MODEL: str = "openai/gpt-oss-120b"
 
     # ── OpenAI (Prime Calling research + prompt writing) ─────────────────────
