@@ -113,7 +113,7 @@ jobs:
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
           set -e
-          cd ~/motmvoice/motmvoice
+          cd ~/revenueos_voicecall
 
           # Diff against what THIS SERVER currently has checked out, not what
           # GitHub Actions assumes (previously `HEAD~1 HEAD` in a separate job
@@ -129,7 +129,7 @@ jobs:
           # 'origin' remote — that used to overwrite any manually-configured PAT
           # (used for ad-hoc pulls on the VPS) with this run's short-lived CI token,
           # breaking manual `git pull` once the CI token expired (~1h).
-          git pull "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/motmautomation2026/MOTM-AI-VOICE-CALL.git" main
+          git pull "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/rvcjourney/revenueos_voicecall.git" main
 
           CHANGED=$(git diff --name-only "$PRE_PULL_SHA" HEAD)
           echo "Changed since last deploy:"
@@ -145,19 +145,15 @@ jobs:
           docker compose run --rm --no-deps api alembic upgrade head
           echo "Migrations complete ✓"
 
-          BUILD_AGENT=0; BUILD_BACKEND=0; BUILD_FRONTEND=0; BUILD_LANDING=0
+          BUILD_AGENT=0; BUILD_BACKEND=0; BUILD_FRONTEND=0
           echo "$CHANGED" | grep -q '^agent/'         && BUILD_AGENT=1
           echo "$CHANGED" | grep -q '^backend/'       && BUILD_BACKEND=1
           echo "$CHANGED" | grep -q '^frontend/'      && BUILD_FRONTEND=1
-          # Note the space in the path itself ("landing page/") -- quoted so
-          # grep matches it literally instead of treating it as two patterns.
-          echo "$CHANGED" | grep -q '^landing page/'  && BUILD_LANDING=1
 
           SERVICES=""
           [ "$BUILD_AGENT"    = "1" ] && SERVICES="$SERVICES agent"
           [ "$BUILD_BACKEND"  = "1" ] && SERVICES="$SERVICES api worker beat"
           [ "$BUILD_FRONTEND" = "1" ] && SERVICES="$SERVICES frontend"
-          [ "$BUILD_LANDING"  = "1" ] && SERVICES="$SERVICES landing"
 
           if [ -n "$SERVICES" ]; then
             echo "Rebuilding:$SERVICES"
