@@ -353,6 +353,10 @@ async def connect_vobiz_trunk(
                     name=f"vobiz-{did}",
                     address=vobiz_trunk.domain,
                     numbers=[did],
+                    # Vobiz is an Indian carrier: without this LiveKit Cloud may
+                    # originate the call from outside India, and the INVITE is
+                    # never answered ("sip request timed out").
+                    destination_country="in",
                     auth_username=vobiz_trunk.sip_username,
                     auth_password=vobiz_trunk.sip_password,
                     transport=LKSIPTransport.SIP_TRANSPORT_TCP,
