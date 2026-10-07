@@ -300,6 +300,12 @@ class Settings(BaseSettings):
                 raise ValueError("DEBUG must be False in production")
             if self.DOCS_ENABLED:
                 raise ValueError("DOCS_ENABLED must be False in production")
+            # .env.example's placeholders are long enough to pass the length
+            # checks above, and they are public — anyone could sign a login
+            # token or an agent report with them.
+            for name in ("SECRET_KEY", "AGENT_WEBHOOK_SECRET", "FERNET_KEY"):
+                if getattr(self, name).upper().startswith("CHANGE_ME"):
+                    raise ValueError(f"{name} is still the .env.example placeholder — set a real value")
             if not self.SENTRY_DSN:
                 warnings.warn(
                     "SENTRY_DSN is not configured in production — errors will not be tracked",
