@@ -170,6 +170,7 @@ export interface Campaign {
   created_at: string;
   created_by_name: string | null;
   is_prime: boolean;
+  language?: string | null;
 }
 
 export interface CampaignCreate {
@@ -190,6 +191,8 @@ export interface CampaignCreate {
   start_time?: string;
   end_time?: string;
   is_prime?: boolean;
+  /** Speak this campaign in another language than the agent's own. Omit to inherit it. */
+  language?: string;
 }
 
 export interface CampaignContact {

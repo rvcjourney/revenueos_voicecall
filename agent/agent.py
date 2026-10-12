@@ -23,6 +23,8 @@ from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHa
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
+
+import languages
 try:
     # Separate package (livekit-plugins-noise-cancellation) -- the livekit-agents
     # "[noise-cancellation]" extra no longer exists in 1.x and pip skips it
@@ -44,6 +46,7 @@ from config import (
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL_ID,
+    ELEVENLABS_MULTILINGUAL_MODEL,
     CARTESIA_API_KEY,
     CARTESIA_VOICE_ID,
     CARTESIA_MODEL_ID,
@@ -59,6 +62,7 @@ from config import (
     SARVAM_STT_MODEL,
     SARVAM_STT_MODE,
     SARVAM_STT_LANGUAGE,
+    SARVAM_REGIONAL_SPEAKER,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
     FAILED_REPORTS_PATH,
@@ -585,6 +589,42 @@ _END_CALL_STRIP_RE = re.compile(
 )
 
 
+# The LLM emits [lang:tamil] when the customer asks it to switch language. Like
+# [end_call] it is a silent control marker: stripped here, never spoken, and it
+# re-points both TTS and STT at that language for the rest of the call.
+_LANG_SWITCH_RE = re.compile(r"[\[\(]\s*lang\s*[:=]\s*([A-Za-zऀ-ൿ ]{2,20})\s*[\]\)]", re.IGNORECASE)
+
+
+def _language_switch_filter_transform(switch_fn):
+    """Strip [lang:x] markers from spoken text and apply the switch."""
+    tail = len("[lang:gujarati]") - 1  # rolling buffer so a split marker isn't missed
+
+    async def _filter(text_stream):
+        buf = ""
+        async for chunk in text_stream:
+            buf += chunk
+            match = _LANG_SWITCH_RE.search(buf)
+            while match:
+                _safe_task(switch_fn(match.group(1)), "language-switch")
+                # No strip(): the buffer is mid-stream, and trimming its edges
+                # would glue the words on either side of the marker together.
+                buf = buf[:match.start()] + " " + buf[match.end():]
+                match = _LANG_SWITCH_RE.search(buf)
+            if len(buf) > tail:
+                yield buf[:-tail]
+                buf = buf[-tail:]
+        if buf:
+            match = _LANG_SWITCH_RE.search(buf)
+            while match:
+                _safe_task(switch_fn(match.group(1)), "language-switch")
+                buf = buf[:match.start()] + " " + buf[match.end():]
+                match = _LANG_SWITCH_RE.search(buf)
+            if buf:
+                yield buf
+
+    return _filter
+
+
 def _end_call_filter_transform(hangup_fn):
     tail = len("end_call") - 1  # rolling buffer so split tokens aren't missed
 
@@ -642,10 +682,17 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "6. If unsure about anything: politely say you will confirm and get back.\n"
         "7. Never ask more than ONE question per reply.\n"
         "8. Stay in character at ALL times as described in your instructions.\n"
-        f"9. LANGUAGE — you MUST speak in {language.upper()} for the ENTIRE call. "
-        "Never switch language mid-conversation regardless of what the customer speaks. "
-        "If the customer speaks English, Hindi, or anything else — you still respond in "
-        f"{language.upper()} only. Consistent language from first word to last.\n"
+        f"9. LANGUAGE — speak {language.upper()} for the whole call. Do NOT drift into another "
+        "language just because the customer replies in one; stay consistent.\n"
+        "9a. LANGUAGE CHANGE — the ONE exception: if the customer explicitly ASKS you to speak "
+        f"another language (e.g. 'Tamil mein baat kijiye', 'can you speak Marathi?'), and it is one of: "
+        f"{languages.spoken_list()} — then output the silent marker [lang:<language>] "
+        "(e.g. [lang:tamil]) ONCE, at the very START of that reply, and speak that reply and every "
+        "reply after it in the new language. The marker is never spoken aloud; it only switches the "
+        "voice. Do not mention markers, settings or systems.\n"
+        "9b. If they ask for a language NOT on that list, do not output any marker — apologise "
+        "briefly in the current language (e.g. 'Maaf kijiye ji, main us bhasha mein baat nahi kar "
+        "paaungi') and politely continue in the current one.\n"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
         "11. To end the call: first say a complete warm goodbye OUT LOUD "
         "(e.g. 'Bahut shukriya ji, koi zaroorat ho toh zaroor call karein, take care!'), "
@@ -1515,7 +1562,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         else SARVAM_VOICE_ID if voice_provider == "sarvam"
         else ELEVENLABS_VOICE_ID
     )
-    language        = (meta.get("language") or "hinglish").lower()
+    language        = (meta.get("language") or languages.DEFAULT_LANGUAGE).lower()
+    lang_cfg        = languages.get(language)
     tts_model_id    = meta.get("tts_model_id") or ELEVENLABS_MODEL_ID
     llm_model       = meta.get("llm_model") or GROQ_MODEL
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
@@ -1635,16 +1683,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             voice_mode  = CHATTERBOX_VOICE_MODE,
         )
         logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s mode=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language, CHATTERBOX_VOICE_MODE)
-    elif voice_provider == "sarvam":
-        # Sarvam's Bulbul models are native to Indian languages — no English fallback
-        # needed the way Cartesia/Chatterbox require, but still map cleanly per language.
-        _sarvam_lang_map = {
-            "english":  "en-IN",
-            "hindi":    "hi-IN",
-            "hinglish": "hi-IN",
-            "marathi":  "mr-IN",
-        }
-        sarvam_language = _sarvam_lang_map.get(language, "hi-IN")
+    elif voice_provider == "sarvam" or languages.uses_sarvam_voice(language):
+        # Sarvam's Bulbul models are native to all 10 platform languages, so every
+        # regional language (Tamil, Telugu, Bengali…) speaks through Sarvam even when
+        # the agent is configured for ElevenLabs, whose Indian voices are Hindi /
+        # Indian-English only. Hindi, Hinglish and English keep their own provider.
+        sarvam_language = lang_cfg.sarvam_tts
+        if voice_provider != "sarvam":
+            voice_id = SARVAM_REGIONAL_SPEAKER
+            logger.info("Regional language %s — using Sarvam voice '%s' instead of %s",
+                        language, voice_id, voice_provider)
         # NOTE: pitch/loudness are silently ignored by Sarvam's API on bulbul:v3 and
         # v3-beta (only bulbul:v2 honors them) — so tuning pitch here would do nothing.
         # temperature controls per-utterance sampling randomness. Every conversational
@@ -1691,6 +1739,47 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name)
     digit_spellout_transform = _digit_spellout_transform()
 
+    # STT follows the agent's language; "codemix" only exists for the Hindi model,
+    # which is also the one that handles the Hindi/English mixing in real calls.
+    stt_engine = sarvam.STT(
+        api_key  = SARVAM_API_KEY,
+        language = lang_cfg.sarvam_stt,
+        model    = SARVAM_STT_MODEL,     # saaras:v3 — WebSocket streaming, sub-200ms
+        mode     = SARVAM_STT_MODE if lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
+    )
+
+    async def _switch_language(spoken_name: str) -> None:
+        """Apply a [lang:x] marker: re-point TTS and STT at that language.
+
+        Only ever called for a language the prompt lists as supported — anything
+        else the LLM is told to apologise for instead, so this just logs and
+        leaves the call as it is.
+        """
+        target = languages.resolve(spoken_name)
+        if target is None:
+            logger.warning("Language switch requested for unsupported '%s' — ignored", spoken_name)
+            return
+        try:
+            if isinstance(tts, sarvam.TTS):
+                tts.update_options(target_language_code=target.sarvam_tts)
+            else:
+                # Same ElevenLabs voice, but the configured model may not cover this
+                # language (eleven_turbo_v2_5 = Hindi/Tamil only), so move that call
+                # to the multilingual turbo model for the rest of the conversation.
+                tts.update_options(model=ELEVENLABS_MULTILINGUAL_MODEL,
+                                   language=target.sarvam_tts.split("-")[0])
+            stt_engine.update_options(
+                language = target.sarvam_stt,
+                model    = SARVAM_STT_MODEL,
+                mode     = SARVAM_STT_MODE if target.sarvam_stt == "hi-IN" else "transcribe",
+            )
+            logger.info("Language switched mid-call → %s (tts=%s stt=%s)",
+                        target.display, target.sarvam_tts, target.sarvam_stt)
+        except Exception as exc:
+            logger.error("Language switch to %s failed: %s", spoken_name, exc)
+
+    language_switch_transform = _language_switch_filter_transform(_switch_language)
+
     def _log_tts_ttfb(metrics) -> None:
         # ttfb = seconds from "synthesis requested" to "first audio byte back
         # from the provider" -- the number that actually answers "did the
@@ -1708,12 +1797,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     tts.on("metrics_collected", _log_tts_ttfb)
 
     session = AgentSession(
-        stt=sarvam.STT(
-            api_key  = SARVAM_API_KEY,
-            language = SARVAM_STT_LANGUAGE,  # hi-IN — same "Hindi model handles English naturally" reasoning as before
-            model    = SARVAM_STT_MODEL,     # saaras:v3 — WebSocket streaming, sub-200ms
-            mode     = SARVAM_STT_MODE,      # codemix — tuned for Hindi/English code-switching (heavy in real transcripts)
-        ),
+        stt=stt_engine,
         llm=llm,
         tts=tts,
         vad=ctx.proc.userdata["vad"],
@@ -1776,7 +1860,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # synthesis call on a discarded guess.
             },
         ),
-        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, end_call_transform],
+        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, language_switch_transform, end_call_transform],
     )
 
     def _on_user_state_changed(ev) -> None:

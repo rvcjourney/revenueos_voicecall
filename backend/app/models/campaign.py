@@ -115,6 +115,10 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # message generated just before their call (see _prepare_prime_prompt in
     # app/workers/tasks/campaign.py). False = classic campaign, one agent prompt for all.
     is_prime: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Spoken language for this campaign's calls; NULL = use the agent template's
+    # own language. Lets one agent run in Tamil for one campaign and Hindi for
+    # another (values: AgentLanguage in app/models/agent.py).
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,

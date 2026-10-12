@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LANGUAGES, usesSarvamVoice } from "@/lib/languages";
 import {
   Dialog,
   DialogContent,
@@ -432,7 +433,20 @@ function AgentEditorDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>Language</Label>
-                <Input value={form.language} onChange={(e) => update("language", e.target.value)} placeholder="hinglish" />
+                <Select value={form.language} onValueChange={(v) => update("language", v)}>
+                  <SelectTrigger><SelectValue placeholder="Choose a language" /></SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map((l) => (
+                      <SelectItem key={l.value} value={l.value}>{l.label} · {l.native}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {usesSarvamVoice(form.language) && (
+                  <p className="text-xs text-muted-foreground">
+                    Spoken by an Indian-language voice — the voice chosen below only applies to Hindi,
+                    Hinglish and English agents.
+                  </p>
+                )}
               </div>
             </div>
           )}

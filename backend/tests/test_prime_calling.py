@@ -466,3 +466,21 @@ def test_cta_is_kept_as_a_noun_phrase(raw):
     prompt, _ = _build(kit=_kit(cta=raw))
     assert "rakh lein" in prompt and "ek free demo rakh lein" in prompt
     assert "book karna book karna" not in prompt and "demo book karna rakh" not in prompt
+
+
+def test_regional_language_welcome_in_native_script_is_kept():
+    """A Tamil welcome spells the names in Tamil script, so the Roman-script name
+    check must not reject it and fall back to the Hinglish default."""
+    tamil = "வணக்கம்! நான் பிரியா பேசுகிறேன். முருகன் ஜி உடன் பேசுகிறேனா?"
+    _, welcome = prime_prompt.build_prompt(
+        kit=_kit(), brief=_brief(welcome_message=tamil), contact_name="Murugan", has_name=True,
+        language="tamil", default_welcome="Namaste ji! Main Priya bol rahi hoon MOTM se.",
+    )
+    assert welcome == tamil
+
+    # Hinglish still requires both names, so a broken opening falls back
+    _, hinglish = prime_prompt.build_prompt(
+        kit=_kit(), brief=_brief(welcome_message="Namaste ji! Main bol rahi hoon."), contact_name="Ravi",
+        has_name=True, language="hinglish", default_welcome="Namaste ji! Main Priya bol rahi hoon MOTM se.",
+    )
+    assert hinglish == "Namaste ji! Main Priya bol rahi hoon MOTM se."

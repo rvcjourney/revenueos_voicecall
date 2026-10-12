@@ -131,3 +131,28 @@ async def test_campaign_with_only_no_answer_contacts_completes(db_engine, db):
 
     async with factory() as s:
         assert (await s.get(Campaign, campaign.id)).status == CampaignStatus.COMPLETED
+
+
+async def test_campaign_language_is_saved_validated_and_copied(client, db):
+    """A campaign can run its agent in another language (Tamil campaign, Hindi agent)."""
+    org, user, campaign = await _make_campaign_with_contacts(db, contact_count=1)
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"name": "Tamil Nadu outreach", "agent_template_id": str(campaign.agent_template_id)}
+
+    created = await client.post("/api/campaigns", json={**body, "language": "tamil"}, headers=headers)
+    assert created.status_code == 201, created.text
+    assert created.json()["language"] == "tamil"
+
+    # Blank/omitted = inherit the agent template's own language
+    inherited = await client.post("/api/campaigns", json={**body, "language": ""}, headers=headers)
+    assert inherited.status_code == 201 and inherited.json()["language"] is None
+    assert (await client.post("/api/campaigns", json=body, headers=headers)).json()["language"] is None
+
+    # Unsupported languages are rejected, not silently stored
+    rejected = await client.post("/api/campaigns", json={**body, "language": "french"}, headers=headers)
+    assert rejected.status_code in (400, 422)
+
+    # Duplicating a campaign keeps its language
+    dup = await client.post(f"/api/campaigns/{created.json()['id']}/duplicate", headers=headers)
+    assert dup.status_code == 201 and dup.json()["language"] == "tamil"

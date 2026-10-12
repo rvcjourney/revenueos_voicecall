@@ -841,6 +841,9 @@ they are busy, offer to call back at a better time.
 to send an email instead."""
 
 _LANGUAGE_NAMES = {"hinglish": "Hinglish (natural Hindi-English mix)"}
+# Languages whose spoken lines are written in Roman script, so the agent's and
+# prospect's names appear verbatim in a correct welcome message.
+_ROMAN_SCRIPT_LANGUAGES = frozenset({"hinglish", "english"})
 
 
 def _bullets(items, fallback: str = "- (not known)") -> str:
@@ -879,8 +882,16 @@ def build_prompt(*, kit: dict, brief: dict, contact_name: str, has_name: bool, l
                  _spoken(kit.get("cta"), 120), flags=re.IGNORECASE).strip() or "free consultation call"
 
     welcome = _spoken(brief.get("welcome_message"), 300)
-    if not welcome or agent.lower() not in welcome.lower() or \
-            (has_name and contact_name.lower() not in welcome.lower()):
+    # The agent's and prospect's names only survive as written text in Roman-script
+    # languages; in Tamil/Bengali/… a correct opening spells them in that script, so
+    # checking for them there would reject every good welcome and fall back to
+    # Hinglish (which is exactly what happened to the first Tamil call).
+    if language in _ROMAN_SCRIPT_LANGUAGES:
+        ok = bool(welcome) and agent.lower() in welcome.lower() and \
+            (not has_name or contact_name.lower() in welcome.lower())
+    else:
+        ok = bool(welcome)
+    if not ok:
         welcome = default_welcome
 
     hook = _spoken(brief.get("timely_hook"))

@@ -63,6 +63,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         created_at=c.created_at,
         created_by_name=created_by_name,
         is_prime=c.is_prime,
+        language=c.language,
     )
 
 
@@ -143,6 +144,15 @@ async def create_campaign(
         if not assignment:
             raise AppValidationError(
                 "This phone number is not assigned to you. Ask your admin to assign it.",
+                errors=[],
+            )
+
+    if body.language:
+        from app.models.agent import AgentLanguage
+        allowed = [l.value for l in AgentLanguage]
+        if body.language not in allowed:
+            raise AppValidationError(
+                f"'{body.language}' is not a supported language. Choose one of: {', '.join(allowed)}.",
                 errors=[],
             )
 
@@ -760,6 +770,7 @@ async def duplicate_campaign(
         max_retries=original.max_retries,
         retry_after_minutes=original.retry_after_minutes,
         is_prime=original.is_prime,
+        language=original.language,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)
@@ -852,7 +863,7 @@ async def prime_preview(
         result = await generate_contact_prompt(
             profile=profile,
             base_prompt=(tmpl.system_prompt or "") if tmpl else "",
-            language=str(tmpl.language) if tmpl else "hinglish",
+            language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
             contact=ContactInfo(
                 name=contact.name, phone=contact.phone, email=contact.email,
                 company=contact.company, custom_fields=contact.custom_fields or {},

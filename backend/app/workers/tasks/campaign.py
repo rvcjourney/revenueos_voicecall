@@ -1114,7 +1114,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         welcome_message=(tmpl.welcome_message or "") if tmpl else "",
                         voice_id=(tmpl.voice_id or "") if tmpl else "",
                         voice_provider=str(tmpl.voice_provider) if tmpl else "elevenlabs",
-                        language=str(tmpl.language) if tmpl else "hinglish",
+                        # Campaign language wins; NULL falls back to the agent's own
+                        language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
                         llm_model=(tmpl.llm_model or "") if tmpl else "",
                         llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
                         timezone_name=campaign.timezone or "",

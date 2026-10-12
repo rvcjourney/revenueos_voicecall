@@ -50,6 +50,7 @@ class CampaignOut(BaseModel):
     created_at: datetime
     created_by_name: str | None = None
     is_prime: bool = False
+    language: str | None = None
 
 
 class CampaignListResponse(BaseModel):
@@ -75,6 +76,16 @@ class CampaignCreate(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
     is_prime: bool = False
+    language: str | None = None
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _normalise_language(cls, v: object) -> object:
+        """None/"" = inherit the agent template's language. The value itself is
+        checked in the create endpoint, which can return a readable message."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return str(v).strip().lower()
 
     @field_validator("calling_window_start", "calling_window_end", mode="before")
     @classmethod

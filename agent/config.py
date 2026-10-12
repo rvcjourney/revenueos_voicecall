@@ -22,6 +22,9 @@ LIVEKIT_AGENT_NAME = os.getenv("LIVEKIT_AGENT_NAME", "voice-call-agent")
 ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "6h2Hja4LgQR8wIIv3XXW")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+# Switched to only when a call changes language mid-conversation: the default model
+# above covers Hindi/Tamil, this one covers every language we offer.
+ELEVENLABS_MULTILINGUAL_MODEL = os.getenv("ELEVENLABS_MULTILINGUAL_MODEL", "eleven_v4_turbo")
 
 # ── Cartesia TTS ───────────────────────────────────────────────────────────────
 CARTESIA_API_KEY   = os.getenv("CARTESIA_API_KEY", "")
@@ -49,7 +52,10 @@ SARVAM_SAMPLE_RATE  = int(os.getenv("SARVAM_SAMPLE_RATE", "24000"))
 # plain "transcribe" mode isn't tuned for that.
 SARVAM_STT_MODEL    = os.getenv("SARVAM_STT_MODEL", "saaras:v3")
 SARVAM_STT_MODE     = os.getenv("SARVAM_STT_MODE", "codemix")
-SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")
+SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")  # default only; per-agent language wins
+# Voice used when a regional-language agent (Tamil, Telugu, ...) is configured for
+# ElevenLabs: those voices are Hindi/Indian-English only, so Bulbul speaks instead.
+SARVAM_REGIONAL_SPEAKER = os.getenv("SARVAM_REGIONAL_SPEAKER", "ritu")  # female, matches the usual persona
 
 # ── Groq LLM ──────────────────────────────────────────────────────────────────
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")

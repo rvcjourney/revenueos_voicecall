@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { LANGUAGES, languageLabel, usesSarvamVoice } from "@/lib/languages";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAccessBadge } from "@/components/shared/StatusBadge";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -55,6 +56,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
     goal: "lead_generation" as CampaignGoal,
     folder_id: "",
     agent_template_id: "",
+    language: "",          // "" = use the agent's own language
     sip_trunk_id: "",
     calling_window_start: "10:00",
     calling_window_end: "18:00",
@@ -108,6 +110,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
         folder_id: form.folder_id || undefined,
         agent_template_id: form.agent_template_id,
         sip_trunk_id: form.sip_trunk_id || undefined,
+        language: form.language || undefined,
         is_prime: prime,
       });
       setCampaignId(res.data.id);
@@ -283,6 +286,30 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 {agents.data?.length === 0 && (
                   <p className="text-xs text-muted-foreground">No agents yet. Create one from the AI Agents page first.</p>
                 )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Language for this campaign</Label>
+                <Select value={form.language || "agent"} onValueChange={(v) => update("language", v === "agent" ? "" : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Use the agent's own language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">
+                      Use the agent's own language{selectedAgent ? ` (${languageLabel(selectedAgent.language)})` : ""}
+                    </SelectItem>
+                    {LANGUAGES.map((l) => (
+                      <SelectItem key={l.value} value={l.value}>
+                        {l.label} · {l.native}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {usesSarvamVoice(form.language)
+                    ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent?.voice_provider ?? "the agent"}'s voices only cover Hindi and Indian English.`
+                    : "The agent speaks this language for the whole call. If the customer asks it to switch to another language on this list, it switches mid-call."}
+                </p>
               </div>
 
               <div className="space-y-1.5">
