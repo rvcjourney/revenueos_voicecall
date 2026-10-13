@@ -29,19 +29,27 @@ class Language:
     sarvam_tts: str   # Bulbul target_language_code
     sarvam_stt: str   # Saaras streaming language code
     native_script: bool = True   # False = spoken/written in Roman script (Hinglish, English)
+    # Respectful address term the agent appends to the customer's name / uses
+    # standalone ("Ravi ji", "haan ji"). "ji" is a Hindi-origin word, naturally
+    # used across most Indo-Aryan languages (Hindi, Marathi, Punjabi) but NOT a
+    # real part of Dravidian languages (Tamil, Telugu, Kannada) or Bengali — on
+    # those calls it was the one Hindi word leaking into every reply (reported
+    # as "speaking Hindi + Gujarati" / "Hindi + Telugu"). "" = no honorific
+    # particle; the agent uses the customer's name on its own instead.
+    honorific: str = "ji"
 
 
 LANGUAGES: dict[str, Language] = {
-    "hinglish": Language("hinglish", "Hinglish (Hindi-English mix)", "hi-IN", "hi-IN", native_script=False),
-    "hindi":    Language("hindi", "Hindi", "hi-IN", "hi-IN"),
-    "english":  Language("english", "English", "en-IN", "en-IN", native_script=False),
-    "marathi":  Language("marathi", "Marathi", "mr-IN", "mr-IN"),
-    "tamil":    Language("tamil", "Tamil", "ta-IN", "ta-IN"),
-    "telugu":   Language("telugu", "Telugu", "te-IN", "te-IN"),
-    "bengali":  Language("bengali", "Bengali", "bn-IN", "bn-IN"),
-    "gujarati": Language("gujarati", "Gujarati", "gu-IN", "gu-IN"),
-    "kannada":  Language("kannada", "Kannada", "kn-IN", "kn-IN"),
-    "punjabi":  Language("punjabi", "Punjabi", "pa-IN", "pa-IN"),
+    "hinglish": Language("hinglish", "Hinglish (Hindi-English mix)", "hi-IN", "hi-IN", native_script=False, honorific="ji"),
+    "hindi":    Language("hindi", "Hindi", "hi-IN", "hi-IN", honorific="ji"),
+    "english":  Language("english", "English", "en-IN", "en-IN", native_script=False, honorific=""),
+    "marathi":  Language("marathi", "Marathi", "mr-IN", "mr-IN", honorific="ji"),
+    "tamil":    Language("tamil", "Tamil", "ta-IN", "ta-IN", honorific=""),
+    "telugu":   Language("telugu", "Telugu", "te-IN", "te-IN", honorific=""),
+    "bengali":  Language("bengali", "Bengali", "bn-IN", "bn-IN", honorific=""),
+    "gujarati": Language("gujarati", "Gujarati", "gu-IN", "gu-IN", honorific=""),
+    "kannada":  Language("kannada", "Kannada", "kn-IN", "kn-IN", honorific=""),
+    "punjabi":  Language("punjabi", "Punjabi", "pa-IN", "pa-IN", honorific="ji"),
 }
 
 DEFAULT_LANGUAGE = "hinglish"

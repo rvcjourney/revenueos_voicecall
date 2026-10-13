@@ -378,12 +378,19 @@ _HONORIFIC_GREETING_RE = re.compile(
 )
 
 
-def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
+def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata", honorific: str = "ji"):
     """Backstop for the LIVE TTS stream, not just the pre-corrected welcome_message text.
     Guardrail 1a tells the LLM not to say "Sir"/"Ma'am" and to use the right time-of-day
     greeting, but that's a soft instruction — the LLM can still improvise it on the opening
     line ("speak naturally") or later in the call. Rewrite every chunk deterministically so
     a wrong honorific/greeting can never actually reach the caller.
+
+    `honorific` is the call's own language.honorific (languages.py) — "ji" for Hindi/
+    Hinglish/Marathi/Punjabi, "" for Tamil/Telugu/Kannada/Bengali/Gujarati/English, which
+    don't use it. Forcing "ji" onto every call regardless of language used to put a Hindi
+    word into every single reply of a Gujarati or Telugu call (reported as "speaking mix
+    like Hindi+Gujarati" / "Hindi+Telugu"). Empty honorific just drops Sir/Ma'am instead of
+    substituting the wrong-language word.
 
     A match is only substituted once `tail` further characters have arrived after it —
     i.e. once its right word-boundary is confirmed by text actually received, not just
@@ -392,9 +399,13 @@ def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
     word and mangle it into "jif"."""
     tail = max(len("good afternoon"), len("madam")) - 1
     greeting = _time_of_day_greeting(tz_name)
+    pattern = _HONORIFIC_GREETING_RE
 
     def _replace(m: re.Match) -> str:
-        return greeting if m.group(0)[0].lower() == "g" else "ji"
+        # honorific="" (Tamil/Telugu/Kannada/Bengali/Gujarati/English) means this language
+        # has no local equivalent, so Sir/Ma'am is simply dropped rather than replaced with
+        # the Hindi word "ji".
+        return greeting if m.group(0)[0].lower() == "g" else honorific
 
     async def _filter(text_stream):
         buf = ""
@@ -409,7 +420,7 @@ def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
                 # exact false-positive ("Sirf" split right after "Sir") this is guarding against.
                 out_end = confirmed_end
                 parts, last = [], 0
-                for m in _HONORIFIC_GREETING_RE.finditer(buf):
+                for m in pattern.finditer(buf):
                     if m.end() > confirmed_end:
                         out_end = min(out_end, m.start())
                         break
@@ -421,7 +432,7 @@ def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata"):
                     yield "".join(parts)
                     buf = buf[out_end:]
         if buf:
-            yield _HONORIFIC_GREETING_RE.sub(_replace, buf)
+            yield pattern.sub(_replace, buf)
 
     return _filter
 
@@ -652,6 +663,7 @@ def _end_call_filter_transform(hangup_fn):
 # ── System prompt guardrails ──────────────────────────────────────────────────
 def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish") -> str:
     p = raw.strip()
+    lang_cfg = languages.get(language)
 
     # Inject the welcome message as a first-turn instruction.
     # This makes the LLM generate the opening through the same streaming
@@ -668,13 +680,42 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
             "Then stop immediately and wait for the customer to respond.\n\n"
         )
 
+    honorific_clause = (
+        f"use the warm, gender-neutral honorific '{lang_cfg.honorific}', or their name once you know it."
+        if lang_cfg.honorific else
+        "this language has no 'ji'-style honorific — use their name once you know it, or address "
+        "them plainly and warmly without one."
+    )
+    # Every spoken example written out elsewhere in these rules (closings, confirmations,
+    # the WhatsApp ask, filler-word lists) is phrased in Hindi/Hinglish for illustration —
+    # these instructions are reused unchanged for every language. Without this rule a
+    # non-Hindi call would imitate those literal Hindi words (most visibly "ji", "haan",
+    # "theek hai", "bilkul"), which is exactly what got reported as the agent "speaking
+    # Hindi + Gujarati" / "Hindi + Telugu" instead of "{language} + English".
+    script_clause = (
+        f" Write it in {lang_cfg.display}'s own native script (not Romanised/English letters) — the "
+        "voice engine reading your words aloud is tuned for that script and mispronounces Romanised "
+        "text; keep English loanwords (names, technical/business terms) in Roman letters inline, "
+        "exactly as a real bilingual speaker's native-script text normally does."
+        if lang_cfg.native_script else ""
+    )
+    no_mixing_clause = (
+        "9c. LANGUAGE PURITY — every spoken example elsewhere in these rules (closing lines, "
+        "confirmations, phrases like 'ji', 'haan', 'theek hai', 'accha', 'bilkul', 'shukriya') is "
+        "written in Hindi/Hinglish only as an illustration of WHAT to say, reused for every call. "
+        f"Your actual language for this call is {lang_cfg.display.upper()}. Express the same meaning "
+        f"fully in {lang_cfg.display} (ordinary English business words like 'enquiry' or 'automate' "
+        "are fine and expected, exactly as a real bilingual speaker would use them) — never copy a "
+        f"literal Hindi/Hinglish word from an example unless your language IS Hindi or Hinglish.{script_clause} "
+        "This applies everywhere in the call, not only the opening.\n"
+    ) if language not in ("hindi", "hinglish") else ""
     guardrails = (
         "[ABSOLUTE RULES — never break these]\n"
         "1. Speak like a real Indian salesperson on a phone call — warm, natural, confident. "
         "Replies should feel human and conversational. Usually 1-2 sentences, occasionally 3 if needed. "
         "Never lecture. Never sound robotic or scripted.\n"
-        "1a. Never assume or state the customer's gender. Do not address them as 'Sir' or 'Ma'am' — "
-        "use the warm, gender-neutral Hinglish 'ji', or their name once you know it.\n"
+        f"1a. Never assume or state the customer's gender. Do not address them as 'Sir' or 'Ma'am' — "
+        f"{honorific_clause}\n"
         "2. Keep the SAME tone and energy from the very first word to the last — consistent warmth throughout.\n"
         "3. Never invent product grades, prices, or specs not in your instructions.\n"
         "4. Never reveal you are an AI, chatbot, or language model.\n"
@@ -691,12 +732,12 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "reply after it in the new language. The marker is never spoken aloud; it only switches the "
         "voice. Do not mention markers, settings or systems.\n"
         "9b. If they ask for a language NOT on that list, do not output any marker — apologise "
-        "briefly in the current language (e.g. 'Maaf kijiye ji, main us bhasha mein baat nahi kar "
-        "paaungi') and politely continue in the current one.\n"
+        "briefly in the current language and politely continue in the current one.\n"
+        f"{no_mixing_clause}"
         "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
-        "11. To end the call: first say a complete warm goodbye OUT LOUD "
-        "(e.g. 'Bahut shukriya ji, koi zaroorat ho toh zaroor call karein, take care!'), "
-        "then immediately output the EXACT text [end_call] on its own. "
+        "11. To end the call: first say a complete warm goodbye OUT LOUD, in your own words in "
+        f"{lang_cfg.display} — thank them, invite them to call again if they need anything, and wish "
+        "them well — then immediately output the EXACT text [end_call] on its own. "
         "The system will end the call automatically — never say 'end_call' as a spoken word.\n"
         "12. Only end the call when ALL of these are true:\n"
         "    (A) At least 5 back-and-forth exchanges have happened.\n"
@@ -707,11 +748,14 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "These are NOT goodbyes — never end for them: "
         "ok / theek hai / accha / haan / hmm / ji / bilkul / shukriya / phir milenge / sochta hoon.\n"
         "If ANY condition is not met — keep the conversation going. "
-        "If the customer has not given contact info yet, ask: "
-        "'Ek kaam karo ji, aapka WhatsApp number de do — main catalogue bhej deta hoon.' "
+        "If the customer has not given contact info yet, ask for their WhatsApp number so you can "
+        f"send the catalogue — phrase that naturally in {lang_cfg.display}. "
         "Never end early.\n"
-        "13. TELLING REAL INTEREST FROM POLITENESS — words like 'haan', 'theek hai', 'accha', "
-        "'ok', 'hmm', 'ji', 'bilkul' are just the customer being polite or listening — they are "
+        "13. TELLING REAL INTEREST FROM POLITENESS — these are common Hindi/Hinglish filler words "
+        "Indian customers use on calls in any language, so recognise them from the CUSTOMER even on "
+        "a non-Hindi call (this does not mean YOU should use them — see 9c). Words like 'haan', "
+        "'theek hai', 'accha', 'ok', 'hmm', 'ji', 'bilkul' are just the customer being polite or "
+        "listening — they are "
         "NOT interest. Never treat them as a buying signal, never skip ahead to pitching harder "
         "or asking for contact info just because you heard one of these. To confirm real interest, "
         "ask a direct question about their actual need, current usage, budget, or timeline, and "
@@ -724,9 +768,10 @@ def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish
         "digits and starts with 6, 7, 8, or 9. When the customer speaks a number, listen for "
         "this shape. If what you hear has the wrong number of digits, is an obvious non-number "
         "(all the same digit repeated, a plain sequence like 123456789 or 0000000000), or was "
-        "unclear/cut off, do NOT accept it silently — say so naturally, e.g. 'Ji ye number thoda "
-        "sahi se nahi aaya, ek baar phir se, dheere dheere digit by digit bata dijiye' and ask "
-        "again. Once you have a number that looks like a real 10-digit mobile number, always "
+        "unclear/cut off, do NOT accept it silently — say so naturally, in your own words in "
+        f"{lang_cfg.display} (the number didn't come through clearly, please repeat it slowly, one "
+        "digit at a time) and ask again. Once you have a number that looks like a real 10-digit "
+        "mobile number, always "
         "read it back to the customer digit-by-digit to confirm before moving on or ending the "
         "call. IMPORTANT — when reading digits back (phone numbers, OTPs, any numeric sequence), "
         "always say them as ENGLISH digit words: 'one', 'two', 'three', 'four', 'five', 'six', "
@@ -1736,7 +1781,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         webhook_secret=AGENT_WEBHOOK_SECRET,
     )
     end_call_transform = _end_call_filter_transform(voice_agent._trigger_hangup)
-    honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name)
+    honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name, lang_cfg.honorific)
     digit_spellout_transform = _digit_spellout_transform()
 
     # STT follows the agent's language; "codemix" only exists for the Hindi model,

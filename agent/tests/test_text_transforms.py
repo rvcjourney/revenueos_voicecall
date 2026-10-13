@@ -158,3 +158,36 @@ async def test_normal_speech_never_triggers_hangup():
 
     assert result == "Sure, let me check that for you."
     assert fired == []
+
+
+# ── Honorific filter with no local honorific (Tamil/Telugu/Kannada/Bengali/
+# Gujarati/English) — must drop Sir/Ma'am, never substitute the Hindi word "ji" ──
+
+async def test_honorific_empty_drops_sir_without_inserting_ji():
+    filt = _honorific_greeting_filter_transform(honorific="")
+    result = await _run_filter(filt, ["Yes ", "sir", ", of course."])
+    assert "sir" not in result.lower()
+    assert "ji" not in result.lower()
+
+
+async def test_honorific_empty_drops_maam_without_inserting_ji():
+    filt = _honorific_greeting_filter_transform(honorific="")
+    result = await _run_filter(filt, ["Sure ma'am, ", "no problem."])
+    assert "ma'am" not in result.lower() and "ji" not in result.lower()
+
+
+async def test_honorific_empty_still_corrects_greeting():
+    from agent import _time_of_day_greeting
+
+    correct = _time_of_day_greeting("Asia/Kolkata")
+    wrong = "Good night" if correct != "Good night" else "Good morning"
+    filt = _honorific_greeting_filter_transform(tz_name="Asia/Kolkata", honorific="")
+    result = await _run_filter(filt, [wrong.split()[0] + " ", wrong.split()[1], " to you!"])
+    assert wrong.lower() not in result.lower()
+    assert correct.lower() in result.lower()
+
+
+async def test_honorific_empty_does_not_mangle_sir_prefix_word():
+    filt = _honorific_greeting_filter_transform(honorific="")
+    result = await _run_filter(filt, ["Sir", "f ek minute lagega"])
+    assert "sirf" in result.lower()
