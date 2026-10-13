@@ -1813,11 +1813,23 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 # to the multilingual turbo model for the rest of the conversation.
                 tts.update_options(model=ELEVENLABS_MULTILINGUAL_MODEL,
                                    language=target.sarvam_tts.split("-")[0])
-            stt_engine.update_options(
-                language = target.sarvam_stt,
-                model    = SARVAM_STT_MODEL,
-                mode     = SARVAM_STT_MODE if target.sarvam_stt == "hi-IN" else "transcribe",
-            )
+            # sarvam.STT has no update_options of its own (unlike sarvam.TTS) —
+            # the plugin only exposes it on the live SpeechStream object, which
+            # it keeps a reference to internally while the call's one long-lived
+            # STT connection is open. Reach into that to retarget it.
+            stt_streams = list(getattr(stt_engine, "_streams", ()))
+            if not stt_streams:
+                logger.warning(
+                    "Language switch: no active Sarvam STT stream found for '%s' — "
+                    "speech recognition stays on the previous language",
+                    spoken_name,
+                )
+            for s in stt_streams:
+                s.update_options(
+                    language = target.sarvam_stt,
+                    model    = SARVAM_STT_MODEL,
+                    mode     = SARVAM_STT_MODE if target.sarvam_stt == "hi-IN" else "transcribe",
+                )
             logger.info("Language switched mid-call → %s (tts=%s stt=%s)",
                         target.display, target.sarvam_tts, target.sarvam_stt)
         except Exception as exc:
