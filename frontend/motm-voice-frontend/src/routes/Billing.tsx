@@ -162,7 +162,12 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
               </div>
             )}
             <div className="flex items-center gap-2">
-              <ChangePlanDialog currentPlanId={plan?.id} userName={user?.full_name} userEmail={user?.email} />
+              <ChangePlanDialog
+                currentPlanId={plan?.id}
+                orgActive={orgActive}
+                userName={user?.full_name}
+                userEmail={user?.email}
+              />
             </div>
           </div>
 
@@ -445,10 +450,12 @@ function ChecklistItem({ done, label }: { done: boolean; label: string }) {
 
 function ChangePlanDialog({
   currentPlanId,
+  orgActive,
   userName,
   userEmail,
 }: {
   currentPlanId?: string;
+  orgActive: boolean;
   userName?: string;
   userEmail?: string;
 }) {
@@ -507,15 +514,30 @@ function ChangePlanDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="gradient" size="sm">
-          Change plan
+        <Button variant={orgActive ? "gradient" : "destructive"} size="sm">
+          {orgActive ? "Change plan" : "Renew plan"}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Choose a plan</DialogTitle>
+          <DialogTitle>{orgActive ? "Choose a plan" : "Renew your plan"}</DialogTitle>
         </DialogHeader>
-        <PlanPicker selectedPlanId={selectedPlan?.id ?? null} onSelect={setSelectedPlan} excludePlanId={currentPlanId} />
+        {!orgActive && (
+          <p className="text-sm text-muted-foreground">
+            Your subscription isn't active — pick a plan below (your previous one is included) and pay to
+            resume calls.
+          </p>
+        )}
+        <PlanPicker
+          selectedPlanId={selectedPlan?.id ?? null}
+          onSelect={setSelectedPlan}
+          // Hide the current plan only while it's still an ACTIVE subscription
+          // ("change plan" implies switching to something else). Once it's
+          // expired/cancelled, the customer most likely wants that exact same
+          // plan back, so it has to stay selectable — excluding it here was
+          // the bug: there was no way to pay for the plan you already had.
+          excludePlanId={orgActive ? currentPlanId : undefined}
+        />
         {!billingAddress.isLoading && !billingAddress.data?.state && (
           <BillingAddressForm onSaved={() => billingAddress.refetch()} />
         )}
