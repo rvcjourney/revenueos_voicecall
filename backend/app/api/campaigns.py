@@ -45,7 +45,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         status=c.status,
         goal=c.goal,
         folder_id=str(c.folder_id) if c.folder_id else None,
-        agent_template_id=str(c.agent_template_id),
+        agent_template_id=str(c.agent_template_id) if c.agent_template_id else None,
         total_contacts=c.total_contacts,
         completed_calls=c.completed_calls,
         interested_count=c.interested_count,
@@ -65,6 +65,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         is_prime=c.is_prime,
         language=c.language,
         voice_id=c.voice_id,
+        pitch_structure=c.pitch_structure,
     )
 
 
@@ -114,8 +115,21 @@ async def create_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Classic campaigns always need an AI Agent (its system prompt IS the one
+    # script every contact hears). Prime campaigns can run off pitch_structure
+    # alone instead -- a fresh, campaign-specific brief the LLM writes each
+    # contact's script from, in place of a saved agent's system prompt -- so
+    # only require ONE of the two there, not both.
+    if not body.is_prime and not body.agent_template_id:
+        raise AppValidationError("An AI agent is required for this campaign", errors=[])
+    if body.is_prime and not body.agent_template_id and not body.pitch_structure:
+        raise AppValidationError(
+            "Describe this campaign's pitch, or choose an AI Agent, before creating it.",
+            errors=[],
+        )
+
     # Members must have approved access to the selected AI Agent
-    if token.role != "admin":
+    if body.agent_template_id and token.role != "admin":
         from app.models.agent_access import AgentAccessRequest
         access = await db.scalar(
             select(AgentAccessRequest).where(
@@ -795,6 +809,7 @@ async def duplicate_campaign(
         is_prime=original.is_prime,
         language=original.language,
         voice_id=original.voice_id,
+        pitch_structure=original.pitch_structure,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)
@@ -882,11 +897,13 @@ async def prime_preview(
 
     await enforce_rate_limit("prime-preview", str(token.org_id), limit=30, window_seconds=3600)
 
-    tmpl = await db.get(AgentTemplate, campaign.agent_template_id)
+    tmpl = await db.get(AgentTemplate, campaign.agent_template_id) if campaign.agent_template_id else None
     try:
         result = await generate_contact_prompt(
             profile=profile,
-            base_prompt=(tmpl.system_prompt or "") if tmpl else "",
+            # Campaign's own pitch structure wins over the agent template's
+            # system prompt, same override pattern as language/voice_id below.
+            base_prompt=campaign.pitch_structure or ((tmpl.system_prompt or "") if tmpl else ""),
             language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
             contact=ContactInfo(
                 name=contact.name, phone=contact.phone, email=contact.email,

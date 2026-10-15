@@ -789,7 +789,7 @@ async def _run_one_call_body(
     *,
     campaign_id: str,
     org_id: uuid.UUID,
-    agent_template_id: uuid.UUID,
+    agent_template_id: uuid.UUID | None,
     call_id: uuid.UUID,
     contact_id: uuid.UUID,
     contact_phone: str,
@@ -896,7 +896,7 @@ async def _run_one_call_body(
                 call_id=str(call_id),
                 campaign_id=campaign_id,
                 org_id=str(org_id),
-                agent_template_id=str(agent_template_id),
+                agent_template_id=str(agent_template_id) if agent_template_id else "",
                 system_prompt=system_prompt,
                 welcome_message=welcome_message,
                 voice_id=voice_id,
@@ -1096,7 +1096,10 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                 if not needs_retry_wait:
                     livekit_trunk_id, sip_caller_id = await _resolve_trunk(session, campaign)
                     org_max_concurrent = await resolve_org_max_concurrent(session, campaign.org_id)
-                    tmpl = await session.get(AgentTemplate, campaign.agent_template_id)
+                    tmpl = (
+                        await session.get(AgentTemplate, campaign.agent_template_id)
+                        if campaign.agent_template_id else None
+                    )
 
                     if not livekit_trunk_id:
                         log.error("no_sip_trunk_configured", campaign_id=campaign_id)
@@ -1109,8 +1112,12 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
 
                     tmpl_kwargs = dict(
                         agent_template_id=campaign.agent_template_id,
-                        max_duration=tmpl.max_call_duration_seconds if tmpl else 600,
-                        system_prompt=(tmpl.system_prompt or "") if tmpl else "",
+                        # 15 min / qwen / 0.7 are the fixed platform defaults for a Prime
+                        # campaign with no agent template at all (pitch_structure alone).
+                        max_duration=tmpl.max_call_duration_seconds if tmpl else 900,
+                        # Campaign's own pitch structure wins over the agent template's
+                        # system prompt -- same override pattern as language/voice_id.
+                        system_prompt=campaign.pitch_structure or ((tmpl.system_prompt or "") if tmpl else ""),
                         welcome_message=(tmpl.welcome_message or "") if tmpl else "",
                         # Campaign's own cloned-voice override wins over the agent's voice;
                         # always ElevenLabs underneath since cloned voices only exist there.
@@ -1118,6 +1125,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         voice_provider="elevenlabs" if campaign.voice_id else (str(tmpl.voice_provider) if tmpl else "elevenlabs"),
                         # Campaign language wins; NULL falls back to the agent's own
                         language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
+                        # Empty llm_model falls back to GROQ_MODEL (agent/config.py's own
+                        # default, "qwen/qwen3.6-27b") once it reaches the agent process.
                         llm_model=(tmpl.llm_model or "") if tmpl else "",
                         llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
                         timezone_name=campaign.timezone or "",

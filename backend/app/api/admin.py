@@ -388,8 +388,8 @@ async def get_activity(
     )).all()
 
     for campaign, creator in campaign_rows:
-        agent = await db.get(AgentTemplate, campaign.agent_template_id)
-        agent_name = agent.name if agent else "Unknown"
+        agent = await db.get(AgentTemplate, campaign.agent_template_id) if campaign.agent_template_id else None
+        agent_name = agent.name if agent else ("Direct pitch" if campaign.is_prime else "Unknown")
 
         activities.append({
             "type": "campaign_created",

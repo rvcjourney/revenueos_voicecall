@@ -32,7 +32,7 @@ class CampaignOut(BaseModel):
     status: str
     goal: str
     folder_id: str | None
-    agent_template_id: str
+    agent_template_id: str | None
     total_contacts: int
     completed_calls: int
     interested_count: int
@@ -52,6 +52,7 @@ class CampaignOut(BaseModel):
     is_prime: bool = False
     language: str | None = None
     voice_id: str | None = None
+    pitch_structure: str | None = None
 
 
 class CampaignListResponse(BaseModel):
@@ -65,7 +66,9 @@ class CampaignCreate(BaseModel):
     notes: str | None = None
     goal: str = "lead_generation"
     folder_id: UUID | None = None
-    agent_template_id: UUID
+    # Required for classic campaigns; a Prime campaign may omit it if
+    # pitch_structure is given instead (checked in the create endpoint).
+    agent_template_id: UUID | None = None
     sip_trunk_id: UUID | None = None
     calling_window_start: time = time(9, 0, 0)
     calling_window_end: time = time(19, 0, 0)
@@ -79,6 +82,18 @@ class CampaignCreate(BaseModel):
     is_prime: bool = False
     language: str | None = None
     voice_id: str | None = None
+    pitch_structure: str | None = None
+
+    @field_validator("pitch_structure", mode="before")
+    @classmethod
+    def _normalise_pitch_structure(cls, v: object) -> object:
+        """None/"" = fall back to the agent template's own system prompt
+        (or, if no agent template either, Company Profile + contact/website
+        data alone). Required-ness for Prime campaigns is checked in the
+        create endpoint, not here, since it depends on agent_template_id too."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return str(v).strip()
 
     @field_validator("language", mode="before")
     @classmethod

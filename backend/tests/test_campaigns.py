@@ -203,3 +203,56 @@ async def test_campaign_voice_override_is_saved_validated_and_copied(client, db)
     # Duplicating a campaign keeps its voice override
     dup = await client.post(f"/api/campaigns/{created.json()['id']}/duplicate", headers=headers)
     assert dup.status_code == 201 and dup.json()["voice_id"] == "voice-mine-123"
+
+
+async def test_prime_campaign_can_run_on_pitch_structure_alone(client, db):
+    """A Prime campaign can skip the AI Agent entirely and describe its own
+    pitch structure instead -- different clients (Aditya Cement vs Rahul
+    Steel Industries) often need a completely different call flow."""
+    org, user, _ = await _make_campaign_with_contacts(db, contact_count=0)
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Prime + no agent + no pitch structure -- nothing to generate a script from
+    rejected = await client.post(
+        "/api/campaigns",
+        json={"name": "No pitch at all", "is_prime": True},
+        headers=headers,
+    )
+    assert rejected.status_code in (400, 422)
+
+    created = await client.post(
+        "/api/campaigns",
+        json={
+            "name": "Aditya Cement outreach",
+            "is_prime": True,
+            "pitch_structure": "Open by asking who currently supplies their cement, then pitch bulk discount.",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["agent_template_id"] is None
+    assert body["pitch_structure"] == "Open by asking who currently supplies their cement, then pitch bulk discount."
+
+    # Duplicating keeps the pitch structure and the missing agent
+    dup = await client.post(f"/api/campaigns/{body['id']}/duplicate", headers=headers)
+    assert dup.status_code == 201
+    assert dup.json()["agent_template_id"] is None
+    assert dup.json()["pitch_structure"] == body["pitch_structure"]
+
+
+async def test_classic_campaign_still_requires_an_agent(client, db):
+    """Unlike Prime, a classic campaign has no per-contact script generation --
+    the agent template's system prompt IS the one call script, so it can't be
+    skipped the way Prime's can."""
+    org, user, _ = await _make_campaign_with_contacts(db, contact_count=0)
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    rejected = await client.post(
+        "/api/campaigns",
+        json={"name": "Classic without an agent"},
+        headers=headers,
+    )
+    assert rejected.status_code in (400, 422)

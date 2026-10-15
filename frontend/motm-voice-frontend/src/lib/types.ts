@@ -151,7 +151,7 @@ export interface Campaign {
   status: CampaignStatus;
   goal: CampaignGoal;
   folder_id: string | null;
-  agent_template_id: string;
+  agent_template_id: string | null;
   total_contacts: number;
   completed_calls: number;
   interested_count: number;
@@ -172,6 +172,7 @@ export interface Campaign {
   is_prime: boolean;
   language?: string | null;
   voice_id?: string | null;
+  pitch_structure?: string | null;
 }
 
 export interface CampaignCreate {
@@ -180,7 +181,8 @@ export interface CampaignCreate {
   notes?: string;
   goal?: CampaignGoal;
   folder_id?: string;
-  agent_template_id: string;
+  // Required for classic campaigns; a Prime campaign may omit it if pitch_structure is given instead.
+  agent_template_id?: string;
   sip_trunk_id?: string;
   calling_window_start?: string;
   calling_window_end?: string;
@@ -196,6 +198,8 @@ export interface CampaignCreate {
   language?: string;
   /** Use one of the org's own cloned voices directly, instead of the agent's own voice. Omit to inherit it. */
   voice_id?: string;
+  /** Prime only: this campaign's own pitch structure, used instead of an agent template's system prompt. */
+  pitch_structure?: string;
 }
 
 export interface CampaignContact {

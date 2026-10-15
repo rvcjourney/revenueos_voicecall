@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Globe, Loader2, Rocket, Sparkles } from "lucide-react";
@@ -58,6 +58,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
     goal: "lead_generation" as CampaignGoal,
     folder_id: "",
     agent_template_id: "",
+    pitch_structure: "",   // Prime only: replaces the agent template's system prompt
     language: "",          // "" = use the agent's own language
     voice_id: "",           // "" = use the agent's own voice
     sip_trunk_id: "",
@@ -81,12 +82,6 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
   const launchCampaign = useLaunchCampaign();
   const companyProfile = useCompanyProfile();
 
-  // Prime Calling: if only one agent is usable, pick it so the user doesn't have to
-  const approvedAgents = agents.data?.filter((a) => a.access_status === "approved") ?? [];
-  const onlyAgentId = approvedAgents.length === 1 ? approvedAgents[0].id : "";
-  useEffect(() => {
-    if (prime && onlyAgentId) setForm((f) => (f.agent_template_id ? f : { ...f, agent_template_id: onlyAgentId }));
-  }, [prime, onlyAgentId]);
   const profileIncomplete = prime && companyProfile.isSuccess && !companyProfile.data.is_complete;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -94,8 +89,16 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
   }
 
   async function handleStep1Submit() {
-    if (!form.name.trim() || !form.agent_template_id) {
-      toast.error("Campaign name and AI agent are required");
+    if (!form.name.trim()) {
+      toast.error("Campaign name is required");
+      return;
+    }
+    if (prime && !form.pitch_structure.trim()) {
+      toast.error("Describe this campaign's pitch structure before continuing");
+      return;
+    }
+    if (!prime && !form.agent_template_id) {
+      toast.error("AI agent is required");
       return;
     }
     if (profileIncomplete) {
@@ -113,7 +116,8 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
         description: form.description || undefined,
         goal: form.goal,
         folder_id: form.folder_id || undefined,
-        agent_template_id: form.agent_template_id,
+        agent_template_id: prime ? undefined : form.agent_template_id,
+        pitch_structure: prime ? form.pitch_structure || undefined : undefined,
         sip_trunk_id: form.sip_trunk_id || undefined,
         language: form.language || undefined,
         voice_id: form.voice_id || undefined,
@@ -261,47 +265,62 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label>{prime ? "Voice & persona (AI Agent)" : "AI Agent"}</Label>
-                <Select value={form.agent_template_id} onValueChange={(v) => update("agent_template_id", v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={prime ? "Choose which agent's voice and persona to use" : "Select an AI agent"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agents.data?.map((a) => (
-                      <SelectItem key={a.id} value={a.id} disabled={a.access_status !== "approved"}>
-                        {a.name} {a.access_status !== "approved" ? `(${a.access_status})` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedAgent && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <AgentAccessBadge status={selectedAgent.access_status} />
-                    <span className="text-xs text-muted-foreground">
-                      {voiceProviderLabel(selectedAgent.voice_provider)} · {llmModelLabel(selectedAgent.llm_model)}
-                    </span>
-                  </div>
-                )}
-                {prime && (
+              {prime ? (
+                <div className="space-y-1.5">
+                  <Label>Pitch structure for this campaign</Label>
+                  <Textarea
+                    value={form.pitch_structure}
+                    onChange={(e) => update("pitch_structure", e.target.value)}
+                    rows={6}
+                    placeholder={
+                      'e.g. "Calling on behalf of Aditya Cement. Open by asking who currently supplies their ' +
+                      'cement, then pitch our bulk-order discount, then try to book a site visit." Different ' +
+                      'clients can follow completely different structures.'
+                    }
+                  />
                   <p className="text-xs text-muted-foreground">
-                    Prime Calling writes a new script for every contact, but the call still uses this agent's voice,
-                    language and persona name (e.g. "Priya"). Its prompt is used as background knowledge for the AI.
+                    Describe what to say and in what order for THIS campaign's calls — who you're calling on
+                    behalf of, what to ask, what to pitch, what to aim for. Prime Calling writes a fresh script
+                    for every contact from this, their own CSV/website details, and your Company Profile.
                   </p>
-                )}
-                {agents.data?.length === 0 && (
-                  <p className="text-xs text-muted-foreground">No agents yet. Create one from the AI Agents page first.</p>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>AI Agent</Label>
+                  <Select value={form.agent_template_id} onValueChange={(v) => update("agent_template_id", v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select an AI agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.data?.map((a) => (
+                        <SelectItem key={a.id} value={a.id} disabled={a.access_status !== "approved"}>
+                          {a.name} {a.access_status !== "approved" ? `(${a.access_status})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedAgent && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <AgentAccessBadge status={selectedAgent.access_status} />
+                      <span className="text-xs text-muted-foreground">
+                        {voiceProviderLabel(selectedAgent.voice_provider)} · {llmModelLabel(selectedAgent.llm_model)}
+                      </span>
+                    </div>
+                  )}
+                  {agents.data?.length === 0 && (
+                    <p className="text-xs text-muted-foreground">No agents yet. Create one from the AI Agents page first.</p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label>Voice for this campaign</Label>
                 <Select value={form.voice_id || "agent"} onValueChange={(v) => update("voice_id", v === "agent" ? "" : v)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Use the agent's own voice" />
+                    <SelectValue placeholder={prime ? "Use the default voice" : "Use the agent's own voice"} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="agent">Use the agent's own voice</SelectItem>
+                    <SelectItem value="agent">{prime ? "Use the default voice" : "Use the agent's own voice"}</SelectItem>
                     {readyClonedVoices.map((v) => (
                       <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
                     ))}
@@ -309,7 +328,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {readyClonedVoices.length > 0 ? (
-                    "Pick one of your cloned voices to speak every call in this campaign, instead of whichever voice the agent above has."
+                    `Pick one of your cloned voices to speak every call in this campaign, instead of the ${prime ? "default" : "agent's"} voice.`
                   ) : (
                     <>
                       No cloned voices yet —{" "}
@@ -324,11 +343,13 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 <Label>Language for this campaign</Label>
                 <Select value={form.language || "agent"} onValueChange={(v) => update("language", v === "agent" ? "" : v)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Use the agent's own language" />
+                    <SelectValue placeholder={prime ? "Use the default language (Hinglish)" : "Use the agent's own language"} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="agent">
-                      Use the agent's own language{selectedAgent ? ` (${languageLabel(selectedAgent.language)})` : ""}
+                      {selectedAgent
+                        ? `Use the agent's own language (${languageLabel(selectedAgent.language)})`
+                        : prime ? "Use the default language (Hinglish)" : "Use the agent's own language"}
                     </SelectItem>
                     {LANGUAGES.map((l) => (
                       <SelectItem key={l.value} value={l.value}>
@@ -339,7 +360,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {usesSarvamVoice(form.language)
-                    ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent ? voiceProviderLabel(selectedAgent.voice_provider) : "the agent"}'s voices only cover Hindi and Indian English.`
+                    ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent ? voiceProviderLabel(selectedAgent.voice_provider) : "the default"}'s voices only cover Hindi and Indian English.`
                     : "The agent speaks this language for the whole call. If the customer asks it to switch to another language on this list, it switches mid-call."}
                 </p>
               </div>

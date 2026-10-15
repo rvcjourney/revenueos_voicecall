@@ -91,10 +91,13 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         default=CampaignGoal.LEAD_GENERATION,
         server_default=CampaignGoal.LEAD_GENERATION,
     )
-    agent_template_id: Mapped[UUID] = mapped_column(
+    # Nullable because a Prime campaign can run entirely off pitch_structure
+    # below instead of a saved AI Agent -- classic (non-prime) campaigns still
+    # require one, enforced in the API (app/api/campaigns.py), not here.
+    agent_template_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("agent_templates.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     folder_id: Mapped[UUID | None] = mapped_column(
@@ -124,6 +127,14 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # directly (same convention as AgentTemplate.voice_id) -- always spoken via
     # ElevenLabs, since cloned voices only exist there (see app/models/cloned_voice.py).
     voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Prime Calling: free text describing THIS campaign's pitch -- what to say,
+    # what angle to take, what order -- for whichever specific business/client
+    # it's calling on behalf of (e.g. "Aditya Cement" vs "Rahul Steel
+    # Industries" want different call flows). Used as the LLM's input in place
+    # of an agent template's system_prompt (see _get_kit in
+    # app/services/prime_prompt.py) when set; NULL = fall back to the agent
+    # template's own system_prompt, same override pattern as language/voice_id.
+    pitch_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,
