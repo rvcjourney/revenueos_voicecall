@@ -57,6 +57,16 @@ import type { AgentCreate, AgentTemplate } from "@/lib/types";
 const VOICE_PROVIDERS = ["elevenlabs", "sarvam"];
 const LLM_MODELS = ["qwen/qwen3.6-27b"];
 
+// Customer-facing labels — never show the underlying vendor/model name in the
+// UI, only in code/comments. Internal value (sent to the API) stays unchanged.
+const VOICE_PROVIDER_LABELS: Record<string, string> = {
+  elevenlabs: "Studio (Hindi / Hinglish / English)",
+  sarvam: "Regional (Indian languages)",
+};
+const LLM_MODEL_LABELS: Record<string, string> = {
+  "qwen/qwen3.6-27b": "QuickHowl Conversational Engine",
+};
+
 // Sarvam's Bulbul v3 speaker catalog is a fixed, documented set (not a live
 // per-account list the way ElevenLabs' is) — sourced directly from the
 // installed livekit-plugins-sarvam SDK's MODEL_SPEAKER_COMPATIBILITY table
@@ -277,7 +287,7 @@ function AgentCard({
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold leading-tight">{agent.name}</p>
-            <p className="truncate text-[11px] text-muted-foreground">{agent.llm_model}</p>
+            <p className="truncate text-[11px] text-muted-foreground">{agent.description || "AI voice agent"}</p>
           </div>
         </div>
 
@@ -483,7 +493,9 @@ function AgentEditorDialog({
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {VOICE_PROVIDERS.map((v) => <SelectItem key={v} value={v} className="capitalize">{v}</SelectItem>)}
+                  {VOICE_PROVIDERS.map((v) => (
+                    <SelectItem key={v} value={v}>{VOICE_PROVIDER_LABELS[v] ?? v}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -582,7 +594,9 @@ function AgentEditorDialog({
               <Select value={form.llm_model} onValueChange={(v) => update("llm_model", v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {LLM_MODELS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  {LLM_MODELS.map((m) => (
+                    <SelectItem key={m} value={m}>{LLM_MODEL_LABELS[m] ?? m}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
