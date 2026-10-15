@@ -64,6 +64,7 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         created_by_name=created_by_name,
         is_prime=c.is_prime,
         language=c.language,
+        voice_id=c.voice_id,
     )
 
 
@@ -154,6 +155,28 @@ async def create_campaign(
             raise AppValidationError(
                 f"'{body.language}' is not a supported language. Choose one of: {', '.join(allowed)}.",
                 errors=[],
+            )
+
+    if body.voice_id:
+        # Unlike AgentTemplate.voice_id (which may be a stock ElevenLabs voice,
+        # never checked against ClonedVoice), this field exists specifically to
+        # pick one of the org's OWN cloned voices directly -- so require it to
+        # actually be one, ready, and owned by this org, rather than silently
+        # accepting any string that would only fail later at call time.
+        from app.core.plan_features import is_voice_cloning_allowed
+        from app.models.cloned_voice import ClonedVoice, ClonedVoiceStatus
+        cloned = await db.scalar(
+            select(ClonedVoice).where(
+                ClonedVoice.elevenlabs_voice_id == body.voice_id,
+                ClonedVoice.org_id == token.org_id,
+                ClonedVoice.deleted_at.is_(None),
+            )
+        )
+        if cloned is None or cloned.status != ClonedVoiceStatus.READY:
+            raise AppValidationError("Selected cloned voice not found or not ready", errors=[])
+        if not await is_voice_cloning_allowed(db, token.org_id):
+            raise PermissionDeniedError(
+                "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
             )
 
     campaign = Campaign(
@@ -771,6 +794,7 @@ async def duplicate_campaign(
         retry_after_minutes=original.retry_after_minutes,
         is_prime=original.is_prime,
         language=original.language,
+        voice_id=original.voice_id,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)

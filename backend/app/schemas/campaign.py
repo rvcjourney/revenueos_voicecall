@@ -51,6 +51,7 @@ class CampaignOut(BaseModel):
     created_by_name: str | None = None
     is_prime: bool = False
     language: str | None = None
+    voice_id: str | None = None
 
 
 class CampaignListResponse(BaseModel):
@@ -77,6 +78,7 @@ class CampaignCreate(BaseModel):
     end_time: datetime | None = None
     is_prime: bool = False
     language: str | None = None
+    voice_id: str | None = None
 
     @field_validator("language", mode="before")
     @classmethod
@@ -86,6 +88,17 @@ class CampaignCreate(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             return None
         return str(v).strip().lower()
+
+    @field_validator("voice_id", mode="before")
+    @classmethod
+    def _normalise_voice_id(cls, v: object) -> object:
+        """None/"" = inherit the agent template's voice. Ownership/plan checks
+        happen in the create endpoint (check_agent_voice_settings), same as
+        language's own value check, to return a readable message instead of a
+        raw Pydantic error."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return str(v).strip()
 
     @field_validator("calling_window_start", "calling_window_end", mode="before")
     @classmethod

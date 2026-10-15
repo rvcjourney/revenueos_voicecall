@@ -1112,8 +1112,10 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         max_duration=tmpl.max_call_duration_seconds if tmpl else 600,
                         system_prompt=(tmpl.system_prompt or "") if tmpl else "",
                         welcome_message=(tmpl.welcome_message or "") if tmpl else "",
-                        voice_id=(tmpl.voice_id or "") if tmpl else "",
-                        voice_provider=str(tmpl.voice_provider) if tmpl else "elevenlabs",
+                        # Campaign's own cloned-voice override wins over the agent's voice;
+                        # always ElevenLabs underneath since cloned voices only exist there.
+                        voice_id=campaign.voice_id or ((tmpl.voice_id or "") if tmpl else ""),
+                        voice_provider="elevenlabs" if campaign.voice_id else (str(tmpl.voice_provider) if tmpl else "elevenlabs"),
                         # Campaign language wins; NULL falls back to the agent's own
                         language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
                         llm_model=(tmpl.llm_model or "") if tmpl else "",

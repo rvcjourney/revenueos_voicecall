@@ -119,6 +119,11 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # own language. Lets one agent run in Tamil for one campaign and Hindi for
     # another (values: AgentLanguage in app/models/agent.py).
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Cloned-voice override for this campaign's calls; NULL = use the agent
+    # template's own voice. Stores the org's ClonedVoice.elevenlabs_voice_id
+    # directly (same convention as AgentTemplate.voice_id) -- always spoken via
+    # ElevenLabs, since cloned voices only exist there (see app/models/cloned_voice.py).
+    voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,

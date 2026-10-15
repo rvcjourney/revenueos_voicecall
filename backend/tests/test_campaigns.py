@@ -156,3 +156,50 @@ async def test_campaign_language_is_saved_validated_and_copied(client, db):
     # Duplicating a campaign keeps its language
     dup = await client.post(f"/api/campaigns/{created.json()['id']}/duplicate", headers=headers)
     assert dup.status_code == 201 and dup.json()["language"] == "tamil"
+
+
+async def test_campaign_voice_override_is_saved_validated_and_copied(client, db):
+    """A campaign can speak with one of the org's own cloned voices directly,
+    instead of being stuck with whatever voice its agent template has."""
+    from app.models.cloned_voice import ClonedVoice
+
+    org, user, campaign = await _make_campaign_with_contacts(db, contact_count=1)
+    other_org = Organization(name="Other Org", slug="other-org-voice-test")
+    db.add(other_org)
+    await db.flush()
+
+    my_voice = ClonedVoice(org_id=org.id, name="My Voice", elevenlabs_voice_id="voice-mine-123")
+    other_voice = ClonedVoice(org_id=other_org.id, name="Their Voice", elevenlabs_voice_id="voice-theirs-456")
+    db.add_all([my_voice, other_voice])
+    await db.commit()
+
+    token = create_access_token(str(user.id), str(user.org_id), user.role)
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"name": "Direct voice outreach", "agent_template_id": str(campaign.agent_template_id)}
+
+    created = await client.post(
+        "/api/campaigns", json={**body, "voice_id": "voice-mine-123"}, headers=headers
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["voice_id"] == "voice-mine-123"
+
+    # Blank/omitted = inherit the agent template's own voice
+    inherited = await client.post("/api/campaigns", json={**body, "voice_id": ""}, headers=headers)
+    assert inherited.status_code == 201 and inherited.json()["voice_id"] is None
+    assert (await client.post("/api/campaigns", json=body, headers=headers)).json()["voice_id"] is None
+
+    # Someone else's cloned voice is rejected, not silently stored
+    other_orgs = await client.post(
+        "/api/campaigns", json={**body, "voice_id": "voice-theirs-456"}, headers=headers
+    )
+    assert other_orgs.status_code in (400, 403, 422)
+
+    # A made-up voice id is rejected too (it's not any ClonedVoice row at all)
+    made_up = await client.post(
+        "/api/campaigns", json={**body, "voice_id": "not-a-real-voice"}, headers=headers
+    )
+    assert made_up.status_code in (400, 403, 422)
+
+    # Duplicating a campaign keeps its voice override
+    dup = await client.post(f"/api/campaigns/{created.json()['id']}/duplicate", headers=headers)
+    assert dup.status_code == 201 and dup.json()["voice_id"] == "voice-mine-123"

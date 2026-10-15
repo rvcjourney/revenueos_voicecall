@@ -23,21 +23,10 @@ import {
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import type { InboundAgent, InboundAgentCreate } from "@/lib/types";
+import { voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
 
 const VOICE_PROVIDERS = ["elevenlabs", "cartesia", "sarvam", "chatterbox"];
 const LLM_MODELS = ["qwen/qwen3.6-27b"];
-
-// Customer-facing labels — never show the underlying vendor/model name in the
-// UI, only in code/comments. Internal value (sent to the API) stays unchanged.
-const VOICE_PROVIDER_LABELS: Record<string, string> = {
-  elevenlabs: "Studio (Hindi / Hinglish / English)",
-  cartesia: "Lite (English, low-latency)",
-  sarvam: "Regional (Indian languages)",
-  chatterbox: "Experimental (self-hosted)",
-};
-const LLM_MODEL_LABELS: Record<string, string> = {
-  "qwen/qwen3.6-27b": "QuickHowl Conversational Engine",
-};
 
 const emptyForm: InboundAgentCreate = {
   name: "",
@@ -250,7 +239,7 @@ function InboundAgentEditorDialog({
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {VOICE_PROVIDERS.map((v) => (
-                    <SelectItem key={v} value={v}>{VOICE_PROVIDER_LABELS[v] ?? v}</SelectItem>
+                    <SelectItem key={v} value={v}>{voiceProviderLabel(v)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -271,7 +260,7 @@ function InboundAgentEditorDialog({
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {LLM_MODELS.map((m) => (
-                    <SelectItem key={m} value={m}>{LLM_MODEL_LABELS[m] ?? m}</SelectItem>
+                    <SelectItem key={m} value={m}>{llmModelLabel(m)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

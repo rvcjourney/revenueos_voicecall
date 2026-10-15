@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LANGUAGES, languageLabel, usesSarvamVoice } from "@/lib/languages";
+import { voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAccessBadge } from "@/components/shared/StatusBadge";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -16,6 +17,7 @@ import { ContactsUploader } from "@/components/shared/ContactsUploader";
 import {
   useAgents,
   useCampaignContacts,
+  useClonedVoices,
   useCompanyProfile,
   useCreateCampaign,
   useFolders,
@@ -57,6 +59,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
     folder_id: "",
     agent_template_id: "",
     language: "",          // "" = use the agent's own language
+    voice_id: "",           // "" = use the agent's own voice
     sip_trunk_id: "",
     calling_window_start: "10:00",
     calling_window_end: "18:00",
@@ -69,6 +72,8 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
 
   const folders = useFolders();
   const agents = useAgents();
+  const clonedVoices = useClonedVoices();
+  const readyClonedVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready");
   const trunks = useMyTrunks();
   const createCampaign = useCreateCampaign();
   const updateCampaign = useUpdateCampaign();
@@ -111,6 +116,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
         agent_template_id: form.agent_template_id,
         sip_trunk_id: form.sip_trunk_id || undefined,
         language: form.language || undefined,
+        voice_id: form.voice_id || undefined,
         is_prime: prime,
       });
       setCampaignId(res.data.id);
@@ -273,7 +279,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                   <div className="flex items-center gap-2 pt-1">
                     <AgentAccessBadge status={selectedAgent.access_status} />
                     <span className="text-xs text-muted-foreground">
-                      {selectedAgent.voice_provider} · {selectedAgent.llm_model}
+                      {voiceProviderLabel(selectedAgent.voice_provider)} · {llmModelLabel(selectedAgent.llm_model)}
                     </span>
                   </div>
                 )}
@@ -286,6 +292,32 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 {agents.data?.length === 0 && (
                   <p className="text-xs text-muted-foreground">No agents yet. Create one from the AI Agents page first.</p>
                 )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Voice for this campaign</Label>
+                <Select value={form.voice_id || "agent"} onValueChange={(v) => update("voice_id", v === "agent" ? "" : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Use the agent's own voice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">Use the agent's own voice</SelectItem>
+                    {readyClonedVoices.map((v) => (
+                      <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {readyClonedVoices.length > 0 ? (
+                    "Pick one of your cloned voices to speak every call in this campaign, instead of whichever voice the agent above has."
+                  ) : (
+                    <>
+                      No cloned voices yet —{" "}
+                      <Link to="/voice-cloning" className="text-primary hover:underline">clone one</Link>{" "}
+                      to use it directly on a campaign.
+                    </>
+                  )}
+                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -307,7 +339,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {usesSarvamVoice(form.language)
-                    ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent?.voice_provider ?? "the agent"}'s voices only cover Hindi and Indian English.`
+                    ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent ? voiceProviderLabel(selectedAgent.voice_provider) : "the agent"}'s voices only cover Hindi and Indian English.`
                     : "The agent speaks this language for the whole call. If the customer asks it to switch to another language on this list, it switches mid-call."}
                 </p>
               </div>

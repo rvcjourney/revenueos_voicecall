@@ -171,6 +171,7 @@ export interface Campaign {
   created_by_name: string | null;
   is_prime: boolean;
   language?: string | null;
+  voice_id?: string | null;
 }
 
 export interface CampaignCreate {
@@ -193,6 +194,8 @@ export interface CampaignCreate {
   is_prime?: boolean;
   /** Speak this campaign in another language than the agent's own. Omit to inherit it. */
   language?: string;
+  /** Use one of the org's own cloned voices directly, instead of the agent's own voice. Omit to inherit it. */
+  voice_id?: string;
 }
 
 export interface CampaignContact {
