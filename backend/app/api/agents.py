@@ -346,13 +346,19 @@ class TestCallResponse(BaseModel):
     status: str
 
 
-# The real, working model names for each Sarvam offering (confirmed against the
-# installed livekit-plugins-sarvam SDK) -- see agent/agent.py for where each is used.
+# The real, working model names for each Sarvam offering -- see agent/agent.py
+# for where each is used. The LLM list is confirmed against a live error from
+# the deployed agent container's own ValueError (its livekit-plugins-sarvam
+# build is newer than the local dev venv's and dropped sarvam-m/sarvam-30b in
+# favor of these -- Sarvam's own model lineup changed upstream, not a typo
+# here). If this drifts again, deploy a test call and read the agent's error.
 _TTS_PROVIDERS = ("elevenlabs", "sarvam", "cartesia", "chatterbox")
 _SARVAM_TTS_MODELS = ("bulbul:v2", "bulbul:v3-beta", "bulbul:v3")
-_SARVAM_STT_MODELS = ("saarika:v2.5", "saaras:v2.5", "saaras:v3")
+# saarika:v2.5/saaras:v2.5 are sunset (Sarvam's own API warns on them now) --
+# saaras:v3/v4 are the two actually current and recommended.
+_SARVAM_STT_MODELS = ("saaras:v3", "saaras:v4")
 _LLM_PROVIDERS = ("groq", "sarvam")
-_SARVAM_LLM_MODELS = ("sarvam-m", "sarvam-30b", "sarvam-105b")
+_SARVAM_LLM_MODELS = ("gemma4", "glm5.2", "sarvam-105b", "sarvam-105b-conversations")
 
 
 def _check_allowed(value: str | None, allowed: tuple[str, ...], label: str) -> None:

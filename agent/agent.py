@@ -1796,14 +1796,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # STT follows the agent's language; "codemix" only exists for the Hindi model,
     # which is also the one that handles the Hindi/English mixing in real calls.
     # Testing section can override the model (saarika:v2.5/saaras:v2.5/saaras:v3) --
-    # "codemix" mode only works on saaras:v3, so it's skipped for any other model
-    # rather than letting a mismatched (model, mode) pair reject the connection.
+    # "codemix" mode only works on saaras:v3/v4, so it's skipped for any other
+    # model rather than letting a mismatched (model, mode) pair reject the connection.
     stt_model = meta.get("stt_model") or SARVAM_STT_MODEL
     stt_engine = sarvam.STT(
         api_key  = SARVAM_API_KEY,
         language = lang_cfg.sarvam_stt,
         model    = stt_model,
-        mode     = SARVAM_STT_MODE if stt_model == "saaras:v3" and lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
+        mode     = SARVAM_STT_MODE if stt_model in ("saaras:v3", "saaras:v4") and lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
     )
 
     async def _switch_language(spoken_name: str) -> None:
@@ -1841,7 +1841,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 s.update_options(
                     language = target.sarvam_stt,
                     model    = stt_model,  # keep whichever STT model this call started with
-                    mode     = SARVAM_STT_MODE if stt_model == "saaras:v3" and target.sarvam_stt == "hi-IN" else "transcribe",
+                    mode     = SARVAM_STT_MODE if stt_model in ("saaras:v3", "saaras:v4") and target.sarvam_stt == "hi-IN" else "transcribe",
                 )
             logger.info("Language switched mid-call → %s (tts=%s stt=%s)",
                         target.display, target.sarvam_tts, target.sarvam_stt)

@@ -18,9 +18,9 @@ import { agentsApi, apiErrorMessage } from "@/lib/api";
 // SDK (see backend/app/api/agents.py's own copy of this list, enforced server-side).
 const TTS_PROVIDERS = ["elevenlabs", "sarvam", "cartesia", "chatterbox"];
 const SARVAM_TTS_MODELS = ["bulbul:v2", "bulbul:v3-beta", "bulbul:v3"];
-const SARVAM_STT_MODELS = ["saarika:v2.5", "saaras:v2.5", "saaras:v3"];
+const SARVAM_STT_MODELS = ["saaras:v3", "saaras:v4"]; // saarika:v2.5/saaras:v2.5 are sunset
 const LLM_PROVIDERS = ["groq", "sarvam"];
-const SARVAM_LLM_MODELS = ["sarvam-m", "sarvam-30b", "sarvam-105b"];
+const SARVAM_LLM_MODELS = ["gemma4", "glm5.2", "sarvam-105b", "sarvam-105b-conversations"];
 
 // Trial different STT/LLM/TTS provider and model combinations on a real test
 // call, without creating or editing a saved AI Agent -- everything here
