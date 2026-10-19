@@ -344,9 +344,11 @@ async def _place_call(
     voice_id: str = "",
     voice_provider: str = "elevenlabs",
     language: str = "hinglish",
+    llm_provider: str = "groq",
     llm_model: str = "",
     llm_temperature: float = 0.7,
     tts_model_id: str = "",
+    stt_model: str = "",
     timezone_name: str = "",
 ) -> str:
     """
@@ -369,9 +371,11 @@ async def _place_call(
             "voice_id": voice_id,
             "voice_provider": voice_provider,
             "language": language,
+            "llm_provider": llm_provider,
             "llm_model": llm_model,
             "llm_temperature": llm_temperature,
             "tts_model_id": tts_model_id,
+            "stt_model": stt_model,
             "timezone": timezone_name,
         }
         await lk.room.create_room(
@@ -1317,6 +1321,7 @@ async def _run_test_call_async(
     org_id: str,
     trunk_id: str | None = None,
     user_id: str | None = None,
+    overrides: dict | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign).
 
@@ -1330,7 +1335,7 @@ async def _run_test_call_async(
     from uuid import UUID as _UUID
 
     try:
-        await _run_test_call_body(agent_id, phone_number, call_id, org_id, trunk_id)
+        await _run_test_call_body(agent_id, phone_number, call_id, org_id, trunk_id, overrides)
     finally:
         if user_id:
             await release_user_slot(_UUID(user_id))
@@ -1342,8 +1347,10 @@ async def _run_test_call_body(
     call_id: str,
     org_id: str,
     trunk_id: str | None = None,
+    overrides: dict | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
+    overrides = overrides or {}
     from uuid import UUID as _UUID
 
     async with AsyncSessionLocal() as session:
@@ -1384,11 +1391,19 @@ async def _run_test_call_body(
 
         system_prompt   = agent.system_prompt or ""
         welcome_msg     = agent.welcome_message or ""
-        voice_id        = agent.voice_id or ""
-        voice_provider  = str(agent.voice_provider) if agent.voice_provider else "elevenlabs"
-        language        = str(agent.language) if agent.language else "hinglish"
-        llm_model       = agent.llm_model or ""
+        # Every override below wins over the agent template's own setup, for this
+        # one call only -- the Testing section trying a different language/voice/
+        # STT/LLM/TTS combination. agent.py's own TTS/STT selection already switches
+        # engines correctly for whichever language ends up here, regardless of
+        # voice_provider, so overriding language alone is enough to try a region.
+        voice_id        = overrides.get("voice_id") or agent.voice_id or ""
+        voice_provider  = overrides.get("voice_provider") or (str(agent.voice_provider) if agent.voice_provider else "elevenlabs")
+        language        = overrides.get("language") or (str(agent.language) if agent.language else "hinglish")
+        llm_provider    = overrides.get("llm_provider") or "groq"
+        llm_model       = overrides.get("llm_model") or agent.llm_model or ""
         llm_temperature = float(agent.llm_temperature or 0.7)
+        tts_model_id    = overrides.get("tts_model") or ""
+        stt_model       = overrides.get("stt_model") or ""
 
     log.info("test_call_start", call_id=call_id, phone=phone_number, room=room_name)
 
@@ -1409,8 +1424,11 @@ async def _run_test_call_body(
             voice_id=voice_id,
             voice_provider=voice_provider,
             language=language,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             llm_temperature=llm_temperature,
+            tts_model_id=tts_model_id,
+            stt_model=stt_model,
         )
 
         log.info("test_call_placed", call_id=call_id, result=place_result)
@@ -1501,10 +1519,10 @@ async def _run_test_call_body(
 )
 def place_test_call(
     self, agent_id: str, phone_number: str, call_id: str, org_id: str,
-    trunk_id: str | None = None, user_id: str | None = None,
+    trunk_id: str | None = None, user_id: str | None = None, overrides: dict | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
-    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id))
+    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id, overrides))
 
 
 async def _run_demo_call_async(

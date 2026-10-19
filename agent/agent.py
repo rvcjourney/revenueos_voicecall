@@ -43,6 +43,7 @@ from config import (
     GROQ_MODEL,
     GROQ_LLM_TEMPERATURE,
     GROQ_CLASSIFY_MODEL,
+    SARVAM_LLM_MODEL,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
     ELEVENLABS_MODEL_ID,
@@ -1612,7 +1613,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     language        = (meta.get("language") or languages.DEFAULT_LANGUAGE).lower()
     lang_cfg        = languages.get(language)
     tts_model_id    = meta.get("tts_model_id") or ELEVENLABS_MODEL_ID
-    llm_model       = meta.get("llm_model") or GROQ_MODEL
+    # Testing section only -- production campaigns/agents never set this, so
+    # llm_provider is always "groq" there and llm_model keeps meaning a Groq model.
+    llm_provider    = (meta.get("llm_provider") or "groq").lower()
+    llm_model       = meta.get("llm_model") or (SARVAM_LLM_MODEL if llm_provider == "sarvam" else GROQ_MODEL)
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
     campaign_id     = meta.get("campaign_id", "")
@@ -1628,12 +1632,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
 
     system_prompt = _build_prompt(raw_prompt, welcome_message, language)
-    logger.info("template | voice=%s llm=%s temperature=%s", voice_id, llm_model, llm_temperature)
+    logger.info("template | voice=%s llm=%s/%s temperature=%s", voice_id, llm_provider, llm_model, llm_temperature)
 
-    llm_kwargs: dict = {"model": llm_model, "temperature": llm_temperature}
-    if llm_model in _REASONING_EFFORT_OVERRIDES:
-        llm_kwargs["reasoning_effort"] = _REASONING_EFFORT_OVERRIDES[llm_model]
-    llm = _CappedGroqLLM(**llm_kwargs)
+    if llm_provider == "sarvam":
+        llm = sarvam.LLM(model=llm_model, api_key=SARVAM_API_KEY, temperature=llm_temperature)
+    else:
+        llm_kwargs: dict = {"model": llm_model, "temperature": llm_temperature}
+        if llm_model in _REASONING_EFFORT_OVERRIDES:
+            llm_kwargs["reasoning_effort"] = _REASONING_EFFORT_OVERRIDES[llm_model]
+        llm = _CappedGroqLLM(**llm_kwargs)
     # Start warmup immediately with the real system prompt so Groq caches the full context.
     # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
     warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
@@ -1751,7 +1758,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts = sarvam.TTS(
             api_key             = SARVAM_API_KEY,
             target_language_code= sarvam_language,
-            model               = SARVAM_MODEL,
+            model               = meta.get("tts_model_id") or SARVAM_MODEL,  # Testing section can override (bulbul:v2/v3-beta/v3)
             speaker             = voice_id,
             speech_sample_rate  = SARVAM_SAMPLE_RATE,
             pace                = 1.0,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
@@ -1788,11 +1795,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # STT follows the agent's language; "codemix" only exists for the Hindi model,
     # which is also the one that handles the Hindi/English mixing in real calls.
+    # Testing section can override the model (saarika:v2.5/saaras:v2.5/saaras:v3) --
+    # "codemix" mode only works on saaras:v3, so it's skipped for any other model
+    # rather than letting a mismatched (model, mode) pair reject the connection.
+    stt_model = meta.get("stt_model") or SARVAM_STT_MODEL
     stt_engine = sarvam.STT(
         api_key  = SARVAM_API_KEY,
         language = lang_cfg.sarvam_stt,
-        model    = SARVAM_STT_MODEL,     # saaras:v3 — WebSocket streaming, sub-200ms
-        mode     = SARVAM_STT_MODE if lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
+        model    = stt_model,
+        mode     = SARVAM_STT_MODE if stt_model == "saaras:v3" and lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
     )
 
     async def _switch_language(spoken_name: str) -> None:
@@ -1829,8 +1840,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             for s in stt_streams:
                 s.update_options(
                     language = target.sarvam_stt,
-                    model    = SARVAM_STT_MODEL,
-                    mode     = SARVAM_STT_MODE if target.sarvam_stt == "hi-IN" else "transcribe",
+                    model    = stt_model,  # keep whichever STT model this call started with
+                    mode     = SARVAM_STT_MODE if stt_model == "saaras:v3" and target.sarvam_stt == "hi-IN" else "transcribe",
                 )
             logger.info("Language switched mid-call → %s (tts=%s stt=%s)",
                         target.display, target.sarvam_tts, target.sarvam_stt)

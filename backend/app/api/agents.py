@@ -330,11 +330,34 @@ async def delete_agent(
 class TestCallRequest(BaseModel):
     phone_number: str
     trunk_id: str | None = None
+    language: str | None = None  # override the agent's own language, for trying regional languages
+    # Everything below overrides the agent's own setup for this one test call only --
+    # for trying different STT/LLM/TTS combinations from the Testing section.
+    voice_provider: str | None = None
+    voice_id: str | None = None
+    stt_model: str | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    tts_model: str | None = None
 
 
 class TestCallResponse(BaseModel):
     call_id: str
     status: str
+
+
+# The real, working model names for each Sarvam offering (confirmed against the
+# installed livekit-plugins-sarvam SDK) -- see agent/agent.py for where each is used.
+_TTS_PROVIDERS = ("elevenlabs", "sarvam", "cartesia", "chatterbox")
+_SARVAM_TTS_MODELS = ("bulbul:v2", "bulbul:v3-beta", "bulbul:v3")
+_SARVAM_STT_MODELS = ("saarika:v2.5", "saaras:v2.5", "saaras:v3")
+_LLM_PROVIDERS = ("groq", "sarvam")
+_SARVAM_LLM_MODELS = ("sarvam-m", "sarvam-30b", "sarvam-105b")
+
+
+def _check_allowed(value: str | None, allowed: tuple[str, ...], label: str) -> None:
+    if value and value not in allowed:
+        raise AppValidationError(f"'{value}' is not a supported {label}. Choose one of: {', '.join(allowed)}.", errors=[])
 
 
 # Test calls are an evaluation/testing allowance for orgs that haven't paid
@@ -377,6 +400,23 @@ async def test_call(
     phone = body.phone_number.strip().replace(" ", "").replace("-", "")
     if not phone.startswith("+"):
         phone = "+91" + phone.lstrip("0")
+
+    if body.language:
+        from app.models.agent import AgentLanguage
+        allowed = [l.value for l in AgentLanguage]
+        if body.language not in allowed:
+            raise AppValidationError(
+                f"'{body.language}' is not a supported language. Choose one of: {', '.join(allowed)}.",
+                errors=[],
+            )
+
+    _check_allowed(body.voice_provider, _TTS_PROVIDERS, "voice provider")
+    _check_allowed(body.llm_provider, _LLM_PROVIDERS, "LLM provider")
+    _check_allowed(body.stt_model, _SARVAM_STT_MODELS, "STT model")
+    if body.tts_model:
+        _check_allowed(body.tts_model, _SARVAM_TTS_MODELS, "TTS model")  # only Sarvam's TTS model is switchable
+    if (body.llm_provider or "groq") == "sarvam":
+        _check_allowed(body.llm_model, _SARVAM_LLM_MODELS, "Sarvam LLM model")
 
     # Test calls bypass campaign dialing entirely, so — same as try-now above —
     # they must independently check the DNC lists the dispatcher checks.
@@ -460,9 +500,20 @@ async def test_call(
 
         # Dispatch to Celery worker (calls queue) — the worker releases this
         # user's slot once the call actually ends (see _run_test_call_async).
+        # overrides: anything set here wins over the agent template's own setup,
+        # for this one call only (Testing section trying different combinations).
+        overrides = {
+            "language": body.language,
+            "voice_provider": body.voice_provider,
+            "voice_id": body.voice_id,
+            "stt_model": body.stt_model,
+            "llm_provider": body.llm_provider,
+            "llm_model": body.llm_model,
+            "tts_model": body.tts_model,
+        }
         from app.workers.tasks.campaign import place_test_call
         place_test_call.apply_async(
-            args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id, str(token.user_id)],
+            args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id, str(token.user_id), overrides],
             queue="calls",
         )
     except Exception:

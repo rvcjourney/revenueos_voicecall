@@ -197,8 +197,20 @@ export const agentsApi = {
   update: (id: string, data: Partial<AgentCreate>) => api.patch<AgentTemplate>(`/api/agents/${id}`, data),
   remove: (id: string) => api.delete(`/api/agents/${id}`),
   requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
-  testCall: (id: string, phone_number: string, trunk_id?: string) =>
-    api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, trunk_id }),
+  testCall: (
+    id: string,
+    phone_number: string,
+    overrides?: {
+      trunk_id?: string;
+      language?: string;
+      voice_provider?: string;
+      voice_id?: string;
+      stt_model?: string;
+      llm_provider?: string;
+      llm_model?: string;
+      tts_model?: string;
+    }
+  ) => api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, ...overrides }),
   tryNow: (phone_number: string) =>
     api.post<{ call_id: string; status: string }>("/api/agents/try-now", { phone_number }),
   optimizePrompt: (raw_input: string) =>

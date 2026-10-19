@@ -27,6 +27,7 @@ const CallDetail = lazy(() => import("@/routes/CallDetail"));
 const Agents = lazy(() => import("@/routes/Agents"));
 const PromptLibrary = lazy(() => import("@/routes/PromptLibrary"));
 const VoiceCloning = lazy(() => import("@/routes/VoiceCloning"));
+const Testing = lazy(() => import("@/routes/Testing"));
 const Analytics = lazy(() => import("@/routes/Analytics"));
 const Billing = lazy(() => import("@/routes/Billing"));
 const Settings = lazy(() => import("@/routes/Settings"));
@@ -87,6 +88,7 @@ export default function App() {
                       <Route path="/agents" element={<Agents />} />
                       <Route path="/prompt-library" element={<PromptLibrary />} />
                       <Route path="/voice-cloning" element={<VoiceCloning />} />
+                      <Route path="/testing" element={<Testing />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/billing" element={<Billing />} />
                       <Route path="/settings" element={<Settings />} />

@@ -19,6 +19,7 @@ import {
   ChevronsRight,
   LogOut,
   Sparkles,
+  TestTube,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -34,6 +35,7 @@ const mainNav = [
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/agents", label: "AI Agents", icon: Headset },
+  { to: "/testing", label: "Testing", icon: TestTube },
   { to: "/prompt-library", label: "Prompt Library", icon: BookMarked },
 ];
 

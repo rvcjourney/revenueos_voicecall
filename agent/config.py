@@ -61,6 +61,9 @@ SARVAM_REGIONAL_SPEAKER = os.getenv("SARVAM_REGIONAL_SPEAKER", "ritu")  # female
 GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
 GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
+# Sarvam's own conversational LLM -- an alternative to Groq, selectable from the
+# Testing section only (production campaigns/agents always use Groq above).
+SARVAM_LLM_MODEL     = os.getenv("SARVAM_LLM_MODEL", "sarvam-m")
 # Post-call outcome classification/summarization model (agent.py's _send_report).
 # Separate from GROQ_MODEL (the live conversation model) -- was a hardcoded
 # literal until Groq deprecated it out from under us with no warning (Aug 2026,
