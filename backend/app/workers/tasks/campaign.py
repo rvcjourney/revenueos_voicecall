@@ -1396,8 +1396,16 @@ async def _run_test_call_body(
         # STT/LLM/TTS combination. agent.py's own TTS/STT selection already switches
         # engines correctly for whichever language ends up here, regardless of
         # voice_provider, so overriding language alone is enough to try a region.
-        voice_id        = overrides.get("voice_id") or agent.voice_id or ""
-        voice_provider  = overrides.get("voice_provider") or (str(agent.voice_provider) if agent.voice_provider else "elevenlabs")
+        agent_voice_provider = str(agent.voice_provider) if agent.voice_provider else "elevenlabs"
+        voice_provider  = overrides.get("voice_provider") or agent_voice_provider
+        # agent.voice_id is only valid under the agent's OWN provider -- e.g. an
+        # ElevenLabs voice/clone ID crashes Sarvam's TTS if carried over under a
+        # different overridden voice_provider. Only reuse it when the effective
+        # provider still matches; agent.py already picks a sane per-provider
+        # default (SARVAM_VOICE_ID etc.) when voice_id is empty.
+        voice_id        = overrides.get("voice_id") or (
+            agent.voice_id if voice_provider == agent_voice_provider else ""
+        ) or ""
         language        = overrides.get("language") or (str(agent.language) if agent.language else "hinglish")
         llm_provider    = overrides.get("llm_provider") or "groq"
         llm_model       = overrides.get("llm_model") or agent.llm_model or ""
