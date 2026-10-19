@@ -1758,7 +1758,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts = sarvam.TTS(
             api_key             = SARVAM_API_KEY,
             target_language_code= sarvam_language,
-            model               = meta.get("tts_model_id") or SARVAM_MODEL,  # Testing section can override (bulbul:v2/v3-beta/v3)
+            model               = meta.get("tts_model_id") or SARVAM_MODEL,  # Testing section can override (bulbul:v3-beta/v3 — v2 is deprecated on Sarvam's side)
             speaker             = voice_id,
             speech_sample_rate  = SARVAM_SAMPLE_RATE,
             pace                = 1.0,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace

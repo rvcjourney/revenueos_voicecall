@@ -353,7 +353,7 @@ class TestCallResponse(BaseModel):
 # favor of these -- Sarvam's own model lineup changed upstream, not a typo
 # here). If this drifts again, deploy a test call and read the agent's error.
 _TTS_PROVIDERS = ("elevenlabs", "sarvam", "cartesia", "chatterbox")
-_SARVAM_TTS_MODELS = ("bulbul:v2", "bulbul:v3-beta", "bulbul:v3")
+_SARVAM_TTS_MODELS = ("bulbul:v3-beta", "bulbul:v3")  # bulbul:v2 is deprecated on Sarvam's side (confirmed: 422/400, not a local bug)
 # saarika:v2.5/saaras:v2.5 are sunset (Sarvam's own API warns on them now) --
 # saaras:v3/v4 are the two actually current and recommended.
 _SARVAM_STT_MODELS = ("saaras:v3", "saaras:v4")

@@ -17,7 +17,7 @@ import { agentsApi, apiErrorMessage } from "@/lib/api";
 // Real, working model names confirmed against the installed livekit-plugins-sarvam
 // SDK (see backend/app/api/agents.py's own copy of this list, enforced server-side).
 const TTS_PROVIDERS = ["elevenlabs", "sarvam", "cartesia", "chatterbox"];
-const SARVAM_TTS_MODELS = ["bulbul:v2", "bulbul:v3-beta", "bulbul:v3"];
+const SARVAM_TTS_MODELS = ["bulbul:v3-beta", "bulbul:v3"]; // bulbul:v2 is deprecated on Sarvam's side
 const SARVAM_STT_MODELS = ["saaras:v3", "saaras:v4"]; // saarika:v2.5/saaras:v2.5 are sunset
 const LLM_PROVIDERS = ["groq", "sarvam"];
 const SARVAM_LLM_MODELS = ["gemma4", "glm5.2", "sarvam-105b", "sarvam-105b-conversations"];
@@ -156,11 +156,6 @@ export default function Testing() {
                   ))}
                 </SelectContent>
               </Select>
-              {ttsModel === "bulbul:v2" && (
-                <p className="text-xs text-warning">
-                  bulbul:v2 has a different, smaller speaker set — picking an incompatible voice fails the call.
-                </p>
-              )}
             </div>
           )}
 
