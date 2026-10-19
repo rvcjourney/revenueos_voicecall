@@ -358,7 +358,7 @@ _SARVAM_TTS_MODELS = ("bulbul:v3-beta", "bulbul:v3")  # bulbul:v2 is deprecated 
 # saaras:v3/v4 are the two actually current and recommended.
 _SARVAM_STT_MODELS = ("saaras:v3", "saaras:v4")
 _LLM_PROVIDERS = ("groq", "sarvam")
-_SARVAM_LLM_MODELS = ("gemma4", "glm5.2", "sarvam-105b", "sarvam-105b-conversations")
+_SARVAM_LLM_MODELS = ("gemma4", "sarvam-105b", "sarvam-105b-conversations")  # glm5.2 deprecated by Sarvam (404) days after we added it
 
 
 def _check_allowed(value: str | None, allowed: tuple[str, ...], label: str) -> None:

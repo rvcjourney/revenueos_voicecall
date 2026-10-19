@@ -20,7 +20,7 @@ const TTS_PROVIDERS = ["elevenlabs", "sarvam", "cartesia", "chatterbox"];
 const SARVAM_TTS_MODELS = ["bulbul:v3-beta", "bulbul:v3"]; // bulbul:v2 is deprecated on Sarvam's side
 const SARVAM_STT_MODELS = ["saaras:v3", "saaras:v4"]; // saarika:v2.5/saaras:v2.5 are sunset
 const LLM_PROVIDERS = ["groq", "sarvam"];
-const SARVAM_LLM_MODELS = ["gemma4", "glm5.2", "sarvam-105b", "sarvam-105b-conversations"];
+const SARVAM_LLM_MODELS = ["gemma4", "sarvam-105b", "sarvam-105b-conversations"]; // glm5.2 deprecated by Sarvam days after we added it
 
 // Trial different STT/LLM/TTS provider and model combinations on a real test
 // call, without creating or editing a saved AI Agent -- everything here
