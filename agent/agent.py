@@ -805,12 +805,14 @@ async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
         if system_prompt:
             ctx.add_message(role="system", content=system_prompt)
         ctx.add_message(role="user", content="Namaste")
+        t0 = time.monotonic()
         async with llm.chat(chat_ctx=ctx, extra_kwargs={"max_tokens": 8}) as stream:
             async for _ in stream:
                 break
-        logger.info("LLM pre-warmed with system prompt ✓")
+        logger.info("LLM pre-warmed with system prompt ✓ (%.1fs to first token)", time.monotonic() - t0)
     except Exception as e:
-        logger.debug("LLM warmup skipped: %s", e)
+        # warning, not debug: a silent failed warmup = slow first reply with no trace in logs
+        logger.warning("LLM warmup FAILED (first reply will be cold): %s", e)
 
 
 # =============================================================================
