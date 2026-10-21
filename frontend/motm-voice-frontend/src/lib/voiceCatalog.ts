@@ -40,6 +40,34 @@ export const SARVAM_VOICES: { id: string; name: string; gender: "male" | "female
 // Curated ElevenLabs voices picked specifically for this platform's Indian
 // sales/support calls (not the full account-wide catalog) — names, voice_ids,
 // and language/accent came directly from the ElevenLabs voice library.
+// bulbul:v4-flash speakers -- a completely different, much larger namespace
+// than bulbul:v3's (hundreds of entries, encoding both the target language and
+// a speaking style in the name itself, e.g. "rahul_hi_conversational"). Curated
+// to one or two per platform language rather than the full catalog, and
+// verified live against Sarvam's API (2026-10-21) -- its SDK's bundled list
+// was already stale for Bengali (listed "bappa_bn_conversation", which the
+// server rejects; "arnab_bn_conversation" is the current one).
+// `language` matches languages.ts's LANGUAGES[].value ("hindi" also covers
+// "hinglish", which speaks through the same hi-IN voices).
+export const BULBUL_V4_FLASH_VOICES: { id: string; name: string; gender: "male" | "female"; language: string }[] = [
+  { id: "rahul_hi_conversational", name: "Rahul", gender: "male", language: "hindi" },
+  { id: "ritu_hi_conversation", name: "Ritu", gender: "female", language: "hindi" },
+  { id: "dev_en_conversational", name: "Dev", gender: "male", language: "english" },
+  { id: "simran_en_conversation", name: "Simran", gender: "female", language: "english" },
+  { id: "nilesh_mr_conversation", name: "Nilesh", gender: "male", language: "marathi" },
+  { id: "ishita_mr_conversational", name: "Ishita", gender: "female", language: "marathi" },
+  { id: "vijay_ta_narration", name: "Vijay", gender: "male", language: "tamil" },
+  { id: "kavitha_te_conversation", name: "Kavitha", gender: "female", language: "telugu" },
+  { id: "tarun_te_narration", name: "Tarun", gender: "male", language: "telugu" },
+  { id: "arnab_bn_conversation", name: "Arnab", gender: "male", language: "bengali" },
+  { id: "roopa_bn_conversational", name: "Roopa", gender: "female", language: "bengali" },
+  { id: "bhavik_gu_conversation", name: "Bhavik", gender: "male", language: "gujarati" },
+  { id: "pooja_gu_conversational", name: "Pooja", gender: "female", language: "gujarati" },
+  { id: "chaitra_kn_conversation", name: "Chaitra", gender: "female", language: "kannada" },
+  { id: "chetan_kn_conversation", name: "Chetan", gender: "male", language: "kannada" },
+  { id: "anand_pa_conversation", name: "Anand", gender: "male", language: "punjabi" },
+];
+
 export const ELEVENLABS_VOICES: {
   id: string;
   name: string;

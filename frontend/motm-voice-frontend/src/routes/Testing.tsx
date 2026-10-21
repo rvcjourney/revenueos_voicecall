@@ -10,14 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LANGUAGES } from "@/lib/languages";
-import { SARVAM_VOICES, ELEVENLABS_VOICES } from "@/lib/voiceCatalog";
+import { SARVAM_VOICES, ELEVENLABS_VOICES, BULBUL_V4_FLASH_VOICES } from "@/lib/voiceCatalog";
 import { useAgents, useMyTrunks } from "@/lib/hooks";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 
 // Real, working model names confirmed against the installed livekit-plugins-sarvam
 // SDK (see backend/app/api/agents.py's own copy of this list, enforced server-side).
 const TTS_PROVIDERS = ["elevenlabs", "sarvam", "cartesia", "chatterbox"];
-const SARVAM_TTS_MODELS = ["bulbul:v3-beta", "bulbul:v3"]; // bulbul:v2 is deprecated on Sarvam's side
+const SARVAM_TTS_MODELS = ["bulbul:v3-beta", "bulbul:v3", "bulbul:v4-flash"]; // bulbul:v2 is deprecated on Sarvam's side
 const SARVAM_STT_MODELS = ["saaras:v3", "saaras:v4"]; // saarika:v2.5/saaras:v2.5 are sunset
 const LLM_PROVIDERS = ["groq", "sarvam"];
 const SARVAM_LLM_MODELS = ["gemma4", "sarvam-105b", "sarvam-105b-conversations"]; // glm5.2 deprecated by Sarvam days after we added it
@@ -46,7 +46,18 @@ export default function Testing() {
   const trunkOptions = trunks.data ?? [];
   const selectedTrunk = trunkOptions.find((t) => t.id === trunkId) ?? trunkOptions[0];
   const usableAgents = (agents.data ?? []).filter((a) => a.access_status === "approved");
-  const voiceChoices = ttsProvider === "sarvam" ? SARVAM_VOICES : ttsProvider === "elevenlabs" ? ELEVENLABS_VOICES : [];
+  // bulbul:v4-flash speaker names are language-specific (e.g. "rahul_hi_...") --
+  // filter to the chosen language so an obviously mismatched voice can't be picked.
+  // With no language override, show the full curated list (its own warning covers that).
+  const effectiveLanguage = language === "hinglish" ? "hindi" : language;
+  const voiceChoices =
+    ttsProvider === "sarvam" && ttsModel === "bulbul:v4-flash"
+      ? BULBUL_V4_FLASH_VOICES.filter((v) => !effectiveLanguage || v.language === effectiveLanguage)
+      : ttsProvider === "sarvam"
+      ? SARVAM_VOICES
+      : ttsProvider === "elevenlabs"
+      ? ELEVENLABS_VOICES
+      : [];
 
   async function handleCall() {
     if (!agentId) {
@@ -101,7 +112,7 @@ export default function Testing() {
 
           <div className="space-y-1.5">
             <Label>Language</Label>
-            <Select value={language || "agent"} onValueChange={(v) => setLanguage(v === "agent" ? "" : v)}>
+            <Select value={language || "agent"} onValueChange={(v) => { setLanguage(v === "agent" ? "" : v); setVoiceId(""); }}>
               <SelectTrigger><SelectValue placeholder="Use the agent's own language" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="agent">Use the agent's own language</SelectItem>
@@ -129,7 +140,7 @@ export default function Testing() {
               <Label>TTS model</Label>
               <Select
                 value={ttsModel || "default"}
-                onValueChange={(v) => setTtsModel(v === "default" ? "" : v)}
+                onValueChange={(v) => { setTtsModel(v === "default" ? "" : v); setVoiceId(""); }}
                 disabled={ttsProvider !== "sarvam"}
               >
                 <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
@@ -156,6 +167,12 @@ export default function Testing() {
                   ))}
                 </SelectContent>
               </Select>
+              {ttsModel === "bulbul:v4-flash" && !effectiveLanguage && (
+                <p className="text-xs text-warning">
+                  Pick a language above too — bulbul:v4-flash voices are language-specific, and an unset language
+                  shows all of them, including ones that won't match the call.
+                </p>
+              )}
             </div>
           )}
 
