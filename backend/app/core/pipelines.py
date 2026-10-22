@@ -104,9 +104,10 @@ LANGUAGES: dict[str, Language] = {
         ("jaspal_pa_banking", "Jaspal", "male"))),
     # Registered, disabled until ear-checked (section 4A rule 7). v4-flash has no
     # personas for these yet, so stock voices are bulbul:v3; cloning supports both.
-    # shortcut: Odia's realtime-STT code ("od-IN" vs "or-IN") unverified live — confirm before enabling.
+    # Odia's codes really differ per component (checked live 2026-10-22): realtime
+    # STT accepts only "or-IN" (rejects "od-IN"); Bulbul TTS and cloning use "od-IN".
     "malayalam": Language("malayalam", "Malayalam", "മലയാളം", "ml-IN", "ml-IN", "ml-IN", _NONE, V3, honorific=""),
-    "odia": Language("odia", "Odia", "ଓଡ଼ିଆ", "od-IN", "od-IN", "od-IN", _NONE, V3, honorific=""),
+    "odia": Language("odia", "Odia", "ଓଡ଼ିଆ", "or-IN", "od-IN", "od-IN", _NONE, V3, honorific=""),
 }
 
 DEFAULT_LANGUAGE = "hinglish"
