@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.core import pipelines
 from app.core.concurrency import acquire_org_slot, release_org_slot, resolve_org_max_concurrent
 from app.core.credits import has_credits_remaining
 from app.core.deps import require_agent_webhook_signature
@@ -48,6 +49,9 @@ class InboundStartResponse(BaseModel):
     llm_model: str
     llm_temperature: float
     max_call_duration_seconds: int
+    # Calling engine; the agent merges these straight into its job metadata.
+    pipeline: str = "standard"
+    sarvam: dict | None = None
 
 
 @router.post("/inbound/start", response_model=InboundStartResponse, dependencies=[Depends(require_agent_webhook_signature)])
@@ -85,9 +89,15 @@ async def start_inbound_call(
     if not await acquire_org_slot(trunk.org_id, org_max_concurrent):
         raise ConflictError("Organization is at its concurrent-call capacity.")
 
+    engine = await pipelines.resolve_call_engine(
+        db, org_id=trunk.org_id, campaign_pipeline=None, agent_pipeline=agent.pipeline,
+        language=str(agent.language), voice_id=agent.voice_id, voice_provider=str(agent.voice_provider),
+    )
     call = Call(
         id=uuid7(),
         org_id=trunk.org_id,
+        pipeline=engine.pipeline,
+        pipeline_fallback=engine.fallback,
         campaign_id=None,
         sip_trunk_id=trunk.id,
         livekit_room_name=body.room_name,
@@ -114,10 +124,14 @@ async def start_inbound_call(
         call_id=str(call.id),
         system_prompt=agent.system_prompt,
         welcome_message=agent.welcome_message,
-        voice_provider=str(agent.voice_provider),
-        voice_id=agent.voice_id,
+        # A ringing inbound call can't be paused: with its Sarvam-only cloned voice
+        # switched off, it answers on standard with the default voice instead.
+        voice_provider="elevenlabs" if engine.pause else engine.voice_provider,
+        voice_id="" if engine.pause else engine.voice_id,
         language=str(agent.language),
         llm_model=agent.llm_model,
         llm_temperature=agent.llm_temperature,
         max_call_duration_seconds=agent.max_call_duration_seconds,
+        pipeline=engine.pipeline,
+        sarvam=engine.meta.get("sarvam"),
     )

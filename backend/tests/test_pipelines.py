@@ -185,3 +185,54 @@ async def test_campaign_duplicate_copies_pipeline(client, db):
     dup = await client.post(f"/api/campaigns/{r.json()['id']}/duplicate", json={}, headers=h)
     assert dup.status_code in (200, 201), dup.text
     assert dup.json()["pipeline"] == "sarvam"
+
+
+# ── Dial time (every call path goes through resolve_call_engine) ─────────────
+async def test_dial_on_sarvam_sends_engine_config(db):
+    from app.models.company_profile import OrgCompanyProfile
+    org, _ = await _org_admin(db, sarvam=True)
+    db.add(OrgCompanyProfile(org_id=org.id, company_name="Rahul Steel", industry="TMT bars"))
+    await db.commit()
+    e = await p.resolve_call_engine(db, org_id=org.id, campaign_pipeline=None, agent_pipeline="sarvam",
+                                    language="hindi", voice_id="9BWtsMINqrJLrRacOk9x", voice_provider="elevenlabs")
+    assert (e.pipeline, e.fallback, e.pause) == ("sarvam", False, False)
+    cfg = e.meta["sarvam"]
+    assert cfg["voice_id"] == p.default_sarvam_voice("hindi", ON)  # ElevenLabs voice not carried over
+    assert cfg["stt_prompt"] == "Rahul Steel, TMT bars" and cfg["cloned"] is False
+    assert cfg["languages"]["hindi"]["repeat_line"] and cfg["languages"]["tamil"]["failure_line"]
+
+
+async def test_dial_falls_back_to_standard_when_org_flag_off(db):
+    org, _ = await _org_admin(db, sarvam=False)
+    e = await p.resolve_call_engine(db, org_id=org.id, campaign_pipeline="sarvam", agent_pipeline="standard",
+                                    language="hindi", voice_id="ritu_hi_conversation", voice_provider="sarvam")
+    assert (e.pipeline, e.fallback, e.pause, e.voice_id, e.voice_provider) == ("standard", True, False, "", "elevenlabs")
+    assert e.meta == {"pipeline": "standard"}
+
+
+async def test_dial_pauses_when_sarvam_clone_loses_its_engine(db):
+    org, _ = await _org_admin(db, sarvam=False)
+    db.add(ClonedVoice(org_id=org.id, name="Mine", elevenlabs_voice_id="svc-mine", provider="sarvam"))
+    await db.commit()
+    e = await p.resolve_call_engine(db, org_id=org.id, campaign_pipeline="sarvam", agent_pipeline=None,
+                                    language="hindi", voice_id="svc-mine", voice_provider="sarvam")
+    assert e.pause and e.pipeline == "standard"
+
+
+async def test_standard_dial_is_untouched(db):
+    org, _ = await _org_admin(db, sarvam=True)
+    e = await p.resolve_call_engine(db, org_id=org.id, campaign_pipeline=None, agent_pipeline="standard",
+                                    language="tamil", voice_id="9BWtsMINqrJLrRacOk9x", voice_provider="elevenlabs")
+    assert (e.pipeline, e.fallback, e.voice_id, e.voice_provider) == ("standard", False, "9BWtsMINqrJLrRacOk9x", "elevenlabs")
+
+
+async def test_test_call_on_indic_native_rejects_free_form_overrides(client, db):
+    org, h = await _org_admin(db, sarvam=True)
+    tmpl = AgentTemplate(org_id=org.id, name="T", pipeline="sarvam", language="hindi",
+                         voice_provider="sarvam", voice_id="ritu_hi_conversation")
+    db.add(tmpl)
+    await db.commit()
+    r = await client.post(f"/api/agents/{tmpl.id}/test-call",
+                          json={"phone_number": "+919876543210", "llm_provider": "groq"}, headers=h)
+    assert r.status_code == 422
+    assert "groq" not in r.text.lower() and "sarvam" not in r.text.lower()

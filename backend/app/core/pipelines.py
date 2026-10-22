@@ -106,6 +106,36 @@ LANGUAGES: dict[str, Language] = {
 
 DEFAULT_LANGUAGE = "hinglish"
 
+# Fixed lines the sarvam engine speaks itself (agent/sarvam_pipeline.py):
+# (empty-reply "please repeat", mid-call failure apology). Native script,
+# English words in Latin — needs a native-speaker check before customer rollout.
+# shortcut: malayalam/odia use English until they are enabled and ear-checked.
+_HI = ("माफ़ कीजिए, आवाज़ साफ़ नहीं आई, क्या आप दोबारा बोल सकते हैं?",
+       "माफ़ कीजिए, हमारी तरफ़ से थोड़ी technical दिक्कत आ गई है। आपके समय के लिए धन्यवाद।")
+_EN = ("Sorry, I didn't catch that. Could you say it again?",
+       "Sorry, we've hit a technical problem on our side. Thank you for your time.")
+SPOKEN_LINES: dict[str, tuple[str, str]] = {
+    "hinglish": _HI,
+    "hindi": _HI,
+    "english": _EN,
+    "marathi": ("माफ करा, नीट ऐकू आलं नाही, पुन्हा सांगाल का?",
+                "माफ करा, आमच्याकडे थोडी technical अडचण आली आहे. तुमच्या वेळेबद्दल धन्यवाद."),
+    "tamil": ("மன்னிக்கவும், சரியாகக் கேட்கவில்லை, மீண்டும் சொல்ல முடியுமா?",
+              "மன்னிக்கவும், எங்கள் பக்கம் ஒரு technical சிக்கல் ஏற்பட்டுள்ளது. உங்கள் நேரத்திற்கு நன்றி."),
+    "telugu": ("క్షమించండి, సరిగా వినిపించలేదు, మళ్ళీ చెప్పగలరా?",
+               "క్షమించండి, మా వైపు technical సమస్య వచ్చింది. మీ సమయానికి ధన్యవాదాలు."),
+    "bengali": ("দুঃখিত, ঠিক শুনতে পাইনি, আবার বলবেন?",
+                "দুঃখিত, আমাদের দিকে একটু technical সমস্যা হয়েছে। আপনার সময়ের জন্য ধন্যবাদ।"),
+    "gujarati": ("માફ કરશો, બરાબર સંભળાયું નહીં, ફરીથી કહેશો?",
+                 "માફ કરશો, અમારી બાજુ થોડી technical તકલીફ આવી છે. તમારા સમય માટે આભાર."),
+    "kannada": ("ಕ್ಷಮಿಸಿ, ಸರಿಯಾಗಿ ಕೇಳಿಸಲಿಲ್ಲ, ಮತ್ತೊಮ್ಮೆ ಹೇಳುತ್ತೀರಾ?",
+                "ಕ್ಷಮಿಸಿ, ನಮ್ಮ ಕಡೆ technical ತೊಂದರೆ ಆಗಿದೆ. ನಿಮ್ಮ ಸಮಯಕ್ಕೆ ಧನ್ಯವಾದಗಳು."),
+    "punjabi": ("ਮਾਫ਼ ਕਰਨਾ, ਠੀਕ ਤਰ੍ਹਾਂ ਸੁਣਿਆ ਨਹੀਂ, ਦੁਬਾਰਾ ਦੱਸ ਸਕਦੇ ਹੋ?",
+                "ਮਾਫ਼ ਕਰਨਾ, ਸਾਡੇ ਵੱਲੋਂ ਕੁਝ technical ਦਿੱਕਤ ਆ ਗਈ ਹੈ। ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ ਧੰਨਵਾਦ।"),
+    "malayalam": _EN,
+    "odia": _EN,
+}
+
 
 # ── Owner settings (platform_cost_settings row), cached ≤ 60 s ────────────────
 @dataclass(frozen=True)
@@ -271,6 +301,8 @@ def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSetti
             "tts_model": sarvam_tts_model(key, settings),
             "honorific": lang.honorific,
             "voices": [{"id": v.id, "gender": v.gender} for v in voices],
+            "repeat_line": SPOKEN_LINES[key][0],
+            "failure_line": SPOKEN_LINES[key][1],
         }
     return {
         "language": language,
@@ -278,6 +310,59 @@ def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSetti
         "cloned": cloned,
         "languages": langs,
     }
+
+
+@dataclass(frozen=True)
+class CallEngine:
+    """What one call runs on, decided at dial time (toggles apply to the next call)."""
+    pipeline: str
+    fallback: bool       # asked for sarvam, owner had it off -> runs standard
+    pause: bool          # asked for sarvam with a Sarvam-only cloned voice and it's off -> don't dial
+    voice_id: str        # standard-engine voice fields (unchanged unless falling back)
+    voice_provider: str
+    meta: dict           # merged into the agent's job metadata
+
+
+async def resolve_call_engine(
+    db, *, org_id, campaign_pipeline: str | None, agent_pipeline: str | None,
+    language: str, voice_id: str, voice_provider: str,
+) -> CallEngine:
+    from sqlalchemy import select
+    from app.models.cloned_voice import ClonedVoice
+    from app.models.company_profile import OrgCompanyProfile
+    from app.models.user import Organization
+
+    org = await db.get(Organization, org_id)
+    settings = await get_owner_settings(db)
+    res = resolve(campaign_pipeline, agent_pipeline, org, language, settings)
+    cloned = None
+    if voice_id:
+        cloned = await db.scalar(select(ClonedVoice).where(
+            ClonedVoice.elevenlabs_voice_id == voice_id,
+            ClonedVoice.org_id == org_id,
+            ClonedVoice.deleted_at.is_(None),
+        ))
+    sarvam_clone = cloned is not None and cloned.provider == SARVAM
+
+    if res.pipeline == SARVAM:
+        is_clone = sarvam_clone and str(cloned.status) == "ready"
+        stock_ok = voice_id in {v.id for v in sarvam_voices(language, settings)}
+        cfg = sarvam_call_config(language, voice_id if (is_clone or stock_ok) else None, settings, cloned=is_clone)
+        profile = await db.scalar(select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == org_id))
+        if profile is not None:
+            cfg["stt_prompt"] = ", ".join(t for t in (profile.company_name, profile.industry) if t)[:200]
+        return CallEngine(SARVAM, False, False, voice_id, voice_provider, {"pipeline": SARVAM, "sarvam": cfg})
+    if res.requested == SARVAM:
+        # Owner switched the engine off (globally / for this org / this language).
+        # A Sarvam cloned voice exists nowhere else, so that campaign pauses; a
+        # stock-voice one runs on standard with the language's default voice.
+        if sarvam_clone:
+            return CallEngine(STANDARD, True, True, voice_id, voice_provider, {"pipeline": STANDARD})
+        return CallEngine(STANDARD, True, False, "", "elevenlabs", {"pipeline": STANDARD})
+    return CallEngine(STANDARD, False, False, voice_id, voice_provider, {"pipeline": STANDARD})
+
+
+PAUSE_REASON_ENGINE_OFF = "indic_native_unavailable"
 
 
 def languages_for(pipeline: str, settings: OwnerSettings) -> list[dict]:

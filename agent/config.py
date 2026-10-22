@@ -64,6 +64,13 @@ GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
 # Sarvam's own conversational LLM -- an alternative to Groq, selectable from the
 # Testing section only (production campaigns/agents always use Groq above).
 SARVAM_LLM_MODEL     = os.getenv("SARVAM_LLM_MODEL", "sarvam-105b")
+
+# ── "sarvam" calling engine (sarvam_pipeline.py) ──────────────────────────────
+SARVAM_PIPELINE_LLM_MODEL      = os.getenv("SARVAM_PIPELINE_LLM_MODEL", "sarvam-105b-conversations")
+SARVAM_PIPELINE_LLM_MAX_TOKENS = int(os.getenv("SARVAM_PIPELINE_LLM_MAX_TOKENS", "200"))
+# 16 kHz linear16 to start; Sarvam's telephony example uses 8000 + "mulaw" — benchmark on a real call.
+SARVAM_PIPELINE_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_PIPELINE_TTS_SAMPLE_RATE", "16000"))
+SARVAM_PIPELINE_TTS_CODEC       = os.getenv("SARVAM_PIPELINE_TTS_CODEC", "linear16")
 # Post-call outcome classification/summarization model (agent.py's _send_report).
 # Separate from GROQ_MODEL (the live conversation model) -- was a hardcoded
 # literal until Groq deprecated it out from under us with no warning (Aug 2026,

@@ -23,7 +23,7 @@ from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
 from app.models.user import Organization
-from app.schemas.agent import AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
+from app.schemas.agent import PIPELINE, AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
 
@@ -357,6 +357,8 @@ class TestCallRequest(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     tts_model: str | None = None
+    # Calling engine for this one call ("standard" | "sarvam"); None = the agent's own.
+    pipeline: PIPELINE | None = None
 
 
 class TestCallResponse(BaseModel):
@@ -441,6 +443,18 @@ async def test_call(
         _check_allowed(body.tts_model, _SARVAM_TTS_MODELS, "TTS model")  # only Sarvam's TTS model is switchable
     if (body.llm_provider or "groq") == "sarvam":
         _check_allowed(body.llm_model, _SARVAM_LLM_MODELS, "Sarvam LLM model")
+    effective_pipeline = body.pipeline or agent.pipeline
+    if effective_pipeline == "sarvam":
+        # Free-form provider/model overrides belong to the standard engine;
+        # the Indic Native engine runs as one fixed, validated combination.
+        if body.llm_provider or body.llm_model or body.stt_model or body.tts_model or body.voice_provider:
+            raise AppValidationError("Indic Native runs as one fixed combination — only language and voice can be changed.", errors=[])
+        await check_pipeline_choice(
+            db, token.org_id, pipeline="sarvam",
+            language=body.language or str(agent.language),
+            voice_id=body.voice_id or (agent.voice_id if agent.pipeline == "sarvam" else None),
+            voice_provider=None if body.voice_id else (str(agent.voice_provider) if agent.pipeline == "sarvam" else None),
+        )
 
     # Test calls bypass campaign dialing entirely, so — same as try-now above —
     # they must independently check the DNC lists the dispatcher checks.
@@ -527,6 +541,7 @@ async def test_call(
         # overrides: anything set here wins over the agent template's own setup,
         # for this one call only (Testing section trying different combinations).
         overrides = {
+            "pipeline": body.pipeline,
             "language": body.language,
             "voice_provider": body.voice_provider,
             "voice_id": body.voice_id,

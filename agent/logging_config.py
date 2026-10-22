@@ -34,9 +34,10 @@ from config import ENVIRONMENT, LOG_LEVEL, SENTRY_DSN, SENTRY_TRACES_SAMPLE_RATE
 _call_id: ContextVar[str] = ContextVar("call_id", default="")
 _room: ContextVar[str] = ContextVar("room", default="")
 _campaign_id: ContextVar[str] = ContextVar("campaign_id", default="")
+_pipeline: ContextVar[str] = ContextVar("pipeline", default="")
 
 
-def set_log_context(*, call_id: str = "", room: str = "", campaign_id: str = "") -> None:
+def set_log_context(*, call_id: str = "", room: str = "", campaign_id: str = "", pipeline: str = "") -> None:
     """Bind per-call context so all subsequent log calls include it."""
     if call_id:
         _call_id.set(call_id)
@@ -44,6 +45,13 @@ def set_log_context(*, call_id: str = "", room: str = "", campaign_id: str = "")
         _room.set(room)
     if campaign_id:
         _campaign_id.set(campaign_id)
+    if pipeline:
+        _pipeline.set(pipeline)
+        try:
+            import sentry_sdk
+            sentry_sdk.set_tag("pipeline", pipeline)
+        except Exception:
+            pass
 
 
 def _inject_ctx(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
@@ -54,6 +62,8 @@ def _inject_ctx(logger: Any, method: str, event_dict: dict[str, Any]) -> dict[st
         event_dict["room"] = room
     if camp := _campaign_id.get():
         event_dict["campaign_id"] = camp
+    if pipe := _pipeline.get():
+        event_dict["pipeline"] = pipe
     return event_dict
 
 

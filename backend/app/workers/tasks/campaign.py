@@ -45,6 +45,7 @@ from google.protobuf.duration_pb2 import Duration
 from sqlalchemy import func, select, update
 
 from app.config import settings
+from app.core import pipelines
 from app.core.concurrency import (
     acquire_org_slot,
     acquire_user_slot,
@@ -350,6 +351,7 @@ async def _place_call(
     tts_model_id: str = "",
     stt_model: str = "",
     timezone_name: str = "",
+    extra_meta: dict | None = None,
 ) -> str:
     """
     Create room → dispatch AI agent + initiate SIP call (both in parallel).
@@ -377,6 +379,7 @@ async def _place_call(
             "tts_model_id": tts_model_id,
             "stt_model": stt_model,
             "timezone": timezone_name,
+            **(extra_meta or {}),
         }
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
@@ -811,6 +814,7 @@ async def _run_one_call_body(
     llm_temperature: float,
     org_max_concurrent: int,
     timezone_name: str = "",
+    extra_meta: dict | None = None,
 ) -> None:
     """Place one call, wait for it to finish, and finalize — all with its own DB session.
 
@@ -909,6 +913,7 @@ async def _run_one_call_body(
                 llm_model=llm_model,
                 llm_temperature=llm_temperature,
                 timezone_name=timezone_name,
+                extra_meta=extra_meta,
             )
 
             if place_result == "congested":
@@ -1136,6 +1141,28 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         timezone_name=campaign.timezone or "",
                         is_prime=bool(campaign.is_prime),
                     )
+                    engine = await pipelines.resolve_call_engine(
+                        session,
+                        org_id=campaign.org_id,
+                        campaign_pipeline=campaign.pipeline,
+                        agent_pipeline=tmpl.pipeline if tmpl else None,
+                        language=tmpl_kwargs["language"],
+                        voice_id=tmpl_kwargs["voice_id"],
+                        voice_provider=tmpl_kwargs["voice_provider"],
+                    )
+                    if engine.pause:
+                        await session.execute(
+                            update(Campaign)
+                            .where(Campaign.id == campaign.id)
+                            .values(status=CampaignStatus.PAUSED, pause_reason=pipelines.PAUSE_REASON_ENGINE_OFF)
+                        )
+                        log.warning("campaign_paused_engine_off", campaign_id=campaign_id)
+                        return
+                    tmpl_kwargs.update(
+                        voice_id=engine.voice_id,
+                        voice_provider=engine.voice_provider,
+                        extra_meta=engine.meta,
+                    )
 
                     for contact in contacts:
                         # DNC check
@@ -1165,6 +1192,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                             direction=CallDirection.OUTBOUND,
                             status=CallStatus.INITIATED,
                             started_at=datetime.now(timezone.utc),
+                            pipeline=engine.pipeline,
+                            pipeline_fallback=engine.fallback,
                         )
                         session.add(call_obj)
                         await session.flush()
@@ -1412,6 +1441,18 @@ async def _run_test_call_body(
         llm_temperature = float(agent.llm_temperature or 0.7)
         tts_model_id    = overrides.get("tts_model") or ""
         stt_model       = overrides.get("stt_model") or ""
+        engine = await pipelines.resolve_call_engine(
+            session,
+            org_id=_UUID(org_id),
+            campaign_pipeline=overrides.get("pipeline"),
+            agent_pipeline=agent.pipeline,
+            language=language,
+            voice_id=voice_id,
+            voice_provider=voice_provider,
+        )
+        voice_id, voice_provider = engine.voice_id, engine.voice_provider
+        call_row.pipeline, call_row.pipeline_fallback = engine.pipeline, engine.fallback
+        await session.commit()
 
     log.info("test_call_start", call_id=call_id, phone=phone_number, room=room_name)
 
@@ -1437,6 +1478,7 @@ async def _run_test_call_body(
             llm_temperature=llm_temperature,
             tts_model_id=tts_model_id,
             stt_model=stt_model,
+            extra_meta=engine.meta,
         )
 
         log.info("test_call_placed", call_id=call_id, result=place_result)
@@ -1574,6 +1616,18 @@ async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> N
             log.error("demo_call_missing_call_row", call_id=call_id)
             return
         room_name = call_row.livekit_room_name
+        org = await session.get(Organization, _UUID(org_id))
+        engine = await pipelines.resolve_call_engine(
+            session,
+            org_id=_UUID(org_id),
+            campaign_pipeline=None,
+            agent_pipeline=org.default_pipeline if org else None,
+            language=DEMO_LANGUAGE,
+            voice_id=DEMO_VOICE_ID,
+            voice_provider=DEMO_VOICE_PROVIDER,
+        )
+        call_row.pipeline, call_row.pipeline_fallback = engine.pipeline, engine.fallback
+        await session.commit()
 
     log.info("demo_call_start", call_id=call_id, phone=phone_number, room=room_name)
 
@@ -1591,12 +1645,13 @@ async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> N
             agent_template_id="",
             system_prompt=DEMO_SYSTEM_PROMPT,
             welcome_message=DEMO_WELCOME_MESSAGE,
-            voice_id=DEMO_VOICE_ID,
-            voice_provider=DEMO_VOICE_PROVIDER,
+            voice_id=engine.voice_id,
+            voice_provider=engine.voice_provider,
             language=DEMO_LANGUAGE,
             llm_model=DEMO_LLM_MODEL,
             llm_temperature=DEMO_LLM_TEMPERATURE,
             tts_model_id=DEMO_TTS_MODEL_ID,
+            extra_meta=engine.meta,
         )
 
         log.info("demo_call_placed", call_id=call_id, result=place_result)

@@ -5,6 +5,7 @@ Pipeline: Sarvam STT → Groq LLM → ElevenLabs/Sarvam/Cartesia/Chatterbox TTS 
 
 import os
 import asyncio
+import functools
 import hashlib
 import hmac
 import json
@@ -19,12 +20,13 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions, stt
+from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions, stt, tts
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
 
 import languages
+import sarvam_pipeline
 try:
     # Separate package (livekit-plugins-noise-cancellation) -- the livekit-agents
     # "[noise-cancellation]" extra no longer exists in 1.x and pip skips it
@@ -831,6 +833,12 @@ def prewarm(proc: JobProcess) -> None:
         sample_rate             = 8000,
     )
     logger.info("VAD loaded in prewarm ✓")
+    try:
+        sarvam_pipeline.validate_components()
+        proc.userdata["sarvam_ok"] = True
+    except Exception as exc:  # standard calls must keep working; sarvam calls refuse cleanly
+        proc.userdata["sarvam_ok"] = False
+        logger.error("sarvam_engine_invalid_config | %s", exc)
     if noise_cancellation is None:
         logger.warning("livekit-plugins-noise-cancellation not installed — calls run WITHOUT noise removal")
 
@@ -1502,6 +1510,59 @@ class VoiceAgent(Agent):
                 return
 
 
+class SarvamVoiceAgent(VoiceAgent):
+    """VoiceAgent for the "sarvam" engine: identical call logic, plus an
+    empty-reply guard, trimming history to the model's 32K window (never the
+    system script), a romanised-output log check, and the one fixed apology +
+    clean hang-up when the engine fails mid-call (no fallback to another vendor)."""
+
+    def __init__(self, *args, sarvam_state: "sarvam_pipeline.SarvamCallState", **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._sarvam = sarvam_state
+
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        ctx = sarvam_pipeline.trim_to_budget(chat_ctx)
+        logger.info("llm_prompt_size | turn=%d est_tokens=%d", self._turn_count, sarvam_pipeline.estimate_tokens(ctx))
+        text = ""
+        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+            text += chunk if isinstance(chunk, str) else (getattr(getattr(chunk, "delta", None), "content", None) or "")
+            yield chunk
+        # Only after a real customer turn: an empty welcome keeps its own fallback (say()).
+        if self._turn_count > 0 and not text.strip() and not self._ending:
+            self._sarvam.empty_replies += 1
+            logger.warning("empty_llm_reply | turn=%d total=%d", self._turn_count, self._sarvam.empty_replies)
+            yield self._sarvam.lang.get("repeat_line") or "Sorry, could you say that again?"
+        elif text and sarvam_pipeline.looks_romanised(text, self._sarvam.language):
+            self._sarvam.romanised_replies += 1
+            logger.warning("romanised_llm_reply | turn=%d language=%s", self._turn_count, self._sarvam.language)
+
+    async def apology_hangup(self, *, can_speak: bool) -> None:
+        if can_speak:
+            line = self._sarvam.lang.get("failure_line") or "Sorry, we have a technical problem. Thank you for your time."
+            try:
+                await asyncio.wait_for(self.session.say(line, allow_interruptions=False), timeout=10.0)
+            except Exception as exc:
+                logger.warning("Apology TTS failed: %s", exc)
+        await self._silent_hangup()
+
+
+def handle_sarvam_error(voice_agent: "SarvamVoiceAgent", ev) -> None:
+    """session.on("error") for the sarvam engine. A non-recoverable LLM/TTS error
+    ends the call cleanly: one fixed apology (when the voice still works), then
+    the normal report + hang-up. Never switches to another vendor mid-call."""
+    if getattr(ev.error, "recoverable", True) or voice_agent._ending:
+        return
+    voice_agent._ending = True
+    source = type(ev.source).__name__
+    logger.error("sarvam_engine_failed | source=%s error=%s", source, ev.error)
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_message(f"sarvam engine failure ({source})", level="error")
+    except Exception:
+        pass
+    _safe_task(voice_agent.apology_hangup(can_speak=not isinstance(ev.source, tts.TTS)), "sarvam-apology-hangup")
+
+
 def handle_session_close(voice_agent: "VoiceAgent", ev) -> None:
     """Registered on session.on("close", ...) in entrypoint() below.
 
@@ -1622,7 +1683,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
     call_id         = meta.get("call_id", "")
     campaign_id     = meta.get("campaign_id", "")
-    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id)
+    pipeline        = meta.get("pipeline") or "standard"
+    is_sarvam       = pipeline == sarvam_pipeline.PIPELINE
+    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id, pipeline=pipeline)
+    sarvam_state = sarvam_pipeline.parse_meta(meta) if is_sarvam else None
+    if is_sarvam and not ctx.proc.userdata.get("sarvam_ok", True):
+        logger.error("sarvam_engine_unavailable | worker failed its startup check — refusing this call")
+        return
 
     if meta.get("system_prompt"):
         logger.info("system_prompt | source=room_metadata campaign=%s len=%d", campaign_id, len(raw_prompt))
@@ -1634,9 +1701,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
 
     system_prompt = _build_prompt(raw_prompt, welcome_message, language)
+    if is_sarvam:
+        system_prompt = sarvam_pipeline.prompt_adapter(system_prompt, sarvam_state)
     logger.info("template | voice=%s llm=%s/%s temperature=%s", voice_id, llm_provider, llm_model, llm_temperature)
 
-    if llm_provider == "sarvam":
+    if is_sarvam:
+        llm = sarvam_pipeline.build_llm(llm_temperature)
+    elif llm_provider == "sarvam":
         llm = sarvam.LLM(model=llm_model, api_key=SARVAM_API_KEY, temperature=llm_temperature)
     else:
         llm_kwargs: dict = {"model": llm_model, "temperature": llm_temperature}
@@ -1656,7 +1727,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # throwaway synthesis now reuses the same participant-connect window LLM warmup
     # already gets for free, and warms the shared HTTP session (_ensure_session() in
     # the plugin) so the real welcome request reuses an already-open connection.
-    if voice_provider == "elevenlabs":
+    if voice_provider == "elevenlabs" and not is_sarvam:
         async def _warm_elevenlabs_tts() -> None:
             # Must match the REAL tts object below (voice_id, model, voice_settings)
             # exactly -- this used to call elevenlabs.TTS(api_key=...) with none of
@@ -1697,7 +1768,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except (asyncio.TimeoutError, Exception) as e:
         logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
-    if voice_provider == "cartesia":
+    if is_sarvam:
+        tts = sarvam_pipeline.build_tts(sarvam_state)
+        logger.info("Sarvam engine TTS ready ✓ (model=%s speaker=%s lang=%s)",
+                    sarvam_state.lang["tts_model"], sarvam_state.voice_id, sarvam_state.lang["tts"])
+    elif voice_provider == "cartesia":
         # Cartesia sonic models only support: "en", "de", "es", "fr".
         # Hindi ("hi") is NOT supported — passing it causes hallucination.
         # For Hinglish/Hindi use "en"; the model phonetically handles mixed text correctly.
@@ -1783,7 +1858,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # No-op for providers that don't implement it.
     tts.prewarm()
 
-    voice_agent = VoiceAgent(
+    voice_agent = (
+        functools.partial(SarvamVoiceAgent, sarvam_state=sarvam_state) if is_sarvam else VoiceAgent
+    )(
         ctx.room,
         instructions=system_prompt,
         welcome_message=welcome_message,
@@ -1801,7 +1878,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # "codemix" mode only works on saaras:v3/v4, so it's skipped for any other
     # model rather than letting a mismatched (model, mode) pair reject the connection.
     stt_model = meta.get("stt_model") or SARVAM_STT_MODEL
-    stt_engine = sarvam.STT(
+    stt_engine = sarvam_pipeline.build_stt(sarvam_state, (meta.get("sarvam") or {}).get("stt_prompt")) if is_sarvam else sarvam.STT(
         api_key  = SARVAM_API_KEY,
         language = lang_cfg.sarvam_stt,
         model    = stt_model,
@@ -1818,6 +1895,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         target = languages.resolve(spoken_name)
         if target is None:
             logger.warning("Language switch requested for unsupported '%s' — ignored", spoken_name)
+            return
+        if is_sarvam:
+            try:
+                sarvam_pipeline.switch_language(sarvam_state, target.key, tts, stt_engine)
+            except Exception as exc:
+                logger.error("Language switch to %s failed: %s", spoken_name, exc)
             return
         try:
             if isinstance(tts, sarvam.TTS):
@@ -1872,8 +1955,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         stt=stt_engine,
         llm=llm,
         tts=tts,
-        vad=ctx.proc.userdata["vad"],
-        turn_handling=TurnHandlingOptions(
+        vad=None if is_sarvam else ctx.proc.userdata["vad"],
+        **({k: v for k, v in sarvam_pipeline.SESSION_KWARGS.items() if k != "vad"} if is_sarvam else {}),
+        turn_handling=sarvam_pipeline.turn_handling() if is_sarvam else TurnHandlingOptions(
             turn_detection=MultilingualModel(),  # semantic end-of-turn model (Hindi/English) — judges
                                                   # whether an utterance actually sounds finished instead
                                                   # of relying on silence length alone, so a pause mid
@@ -1932,7 +2016,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                                       # synthesis call on a discarded guess.
             },
         ),
-        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, language_switch_transform, end_call_transform],
+        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, language_switch_transform, end_call_transform]
+        + ([sarvam_pipeline.no_ji_transform(sarvam_state)] if is_sarvam else []),
     )
 
     def _on_user_state_changed(ev) -> None:
@@ -1971,6 +2056,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session.on("speech_created", _on_speech_created)
 
     session.on("close", lambda ev: handle_session_close(voice_agent, ev))
+    if is_sarvam:
+        session.on("error", lambda ev: handle_sarvam_error(voice_agent, ev))
 
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant):
