@@ -91,6 +91,8 @@ class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     )
     # Stored as float; Groq/OpenAI APIs accept float. Range: 0.0–2.0.
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")
+    # Calling engine: "standard" | "sarvam" (see app/core/pipelines.py).
+    pipeline: Mapped[str] = mapped_column(String(16), nullable=False, server_default="standard", default="standard")
     # Hard limit; agent auto-hangs up after this many seconds regardless of conversation state
     max_call_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="600"

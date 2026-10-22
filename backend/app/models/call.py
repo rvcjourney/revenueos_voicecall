@@ -13,6 +13,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -159,6 +160,12 @@ class Call(Base, TimestampMixin):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Computed from answered_at → ended_at and stored for fast aggregation queries
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Calling engine this call actually ran on ("standard" | "sarvam"); NULL = before 0042.
+    pipeline: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # True when the call was meant for "sarvam" but the owner had it switched off.
+    pipeline_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
+    # Per-call latency aggregates reported by the agent (p50/p95 per metric, counts).
+    latency_metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Billing: ₹/minute rate × duration_seconds / 60, rounded to 2 decimal places
     cost_inr: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
 

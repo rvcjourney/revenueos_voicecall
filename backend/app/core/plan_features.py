@@ -123,3 +123,67 @@ async def check_agent_voice_settings(
             raise PermissionDeniedError(
                 "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
             )
+
+
+async def resolve_new_pipeline(db: AsyncSession, org_id: UUID, requested: str | None) -> str:
+    """Pipeline for a newly created agent/campaign: the request, else the org's
+    default — and never "sarvam" for an org that isn't enabled for it."""
+    from app.core import pipelines
+    org = await db.get(Organization, org_id)
+    p = requested or (org.default_pipeline if org else pipelines.STANDARD)
+    if p == pipelines.SARVAM and requested is None and not (org and org.sarvam_pipeline_enabled):
+        return pipelines.STANDARD
+    return p
+
+
+async def check_pipeline_choice(
+    db: AsyncSession,
+    org_id: UUID,
+    *,
+    pipeline: str,
+    language: str,
+    voice_id: str | None,
+    voice_provider: str | None,
+) -> None:
+    """Pipeline-aware validation on top of check_agent_voice_settings (which is
+    unchanged for the standard pipeline). Runs the shared validation matrix in
+    app/core/pipelines.py; messages are customer-safe (no vendor/model names)."""
+    from app.core import pipelines
+    from app.core.exceptions import ValidationError as AppValidationError
+
+    cloned = None
+    if voice_id:
+        cloned = await db.scalar(
+            select(ClonedVoice).where(
+                ClonedVoice.elevenlabs_voice_id == voice_id,
+                ClonedVoice.deleted_at.is_(None),
+            )
+        )
+        # Provider-independent: a Sarvam cloned voice is as private as an ElevenLabs one.
+        if cloned is not None and cloned.org_id != org_id:
+            raise PermissionDeniedError("This cloned voice belongs to a different organization")
+
+    if pipeline == pipelines.STANDARD and (cloned is None or cloned.provider != pipelines.SARVAM):
+        return  # standard behaviour exactly as before
+
+    if pipeline == pipelines.SARVAM:
+        org = await db.get(Organization, org_id)
+        if not (org and org.sarvam_pipeline_enabled):
+            raise PermissionDeniedError(f"The {pipelines.PIPELINE_LABELS[pipelines.SARVAM]} engine isn't enabled for your account.")
+        if cloned is not None and not await is_voice_cloning_allowed(db, org_id):
+            raise PermissionDeniedError(
+                "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
+            )
+
+    settings = await pipelines.get_owner_settings(db)
+    try:
+        pipelines.validate(
+            pipeline,
+            language,
+            voice_id,
+            settings,
+            cloned_provider=cloned.provider if cloned is not None else None,
+            voice_provider=voice_provider,
+        )
+    except pipelines.PipelineValidationError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc

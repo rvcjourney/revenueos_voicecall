@@ -283,6 +283,7 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.agents import router as agents_router
     from app.api.campaigns import router as campaigns_router
     from app.api.folders import router as folders_router
+    from app.api.languages import router as languages_router
     from app.api.calls import router as calls_router
     from app.api.analytics import router as analytics_router
     from app.api.webhooks import router as webhooks_router
@@ -307,6 +308,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(inbound_agents_router, prefix="/api/inbound-agents", tags=["inbound-agents"])
     app.include_router(campaigns_router,   prefix="/api/campaigns",   tags=["campaigns"])
     app.include_router(folders_router,     prefix="/api/folders",     tags=["folders"])
+    app.include_router(languages_router,   prefix="/api/languages",   tags=["languages"])
     app.include_router(calls_router,       prefix="/api/calls",       tags=["calls"])
     app.include_router(analytics_router,   prefix="/api/analytics",   tags=["analytics"])
     app.include_router(webhooks_router,    prefix="/webhooks",        tags=["webhooks"])

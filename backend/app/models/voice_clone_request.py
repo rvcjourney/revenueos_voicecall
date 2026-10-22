@@ -39,6 +39,9 @@ class VoiceCloneRequest(Base, OrgScopedMixin, TimestampMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Which provider to clone on once approved: "elevenlabs" | "sarvam".
+    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default="elevenlabs", default="elevenlabs")
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Persisted sample — needed at approval time to actually call ElevenLabs
     # (today's flow discards the sample bytes right after the inline clone

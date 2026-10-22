@@ -99,6 +99,10 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     # allows it (cost control / abuse response). Plan-level gating still applies —
     # both must be true for ElevenLabs to be usable (see app/core/plan_features.py).
     elevenlabs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Calling-engine switches, owner-set in /ops (see app/core/pipelines.py).
+    sarvam_pipeline_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
+    default_pipeline: Mapped[str] = mapped_column(String(16), nullable=False, server_default="standard", default="standard")
+    sarvam_cloning_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
 
     # ── GST tax-invoice billing details ─────────────────────────────────────
     # Collected via PUT /billing/address (app/api/billing.py) before checkout

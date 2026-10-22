@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError, QuotaExceededError
-from app.core.plan_features import check_agent_voice_settings
+from app.core.plan_features import check_agent_voice_settings, check_pipeline_choice, resolve_new_pipeline
 from app.core.rate_limit import enforce_rate_limit
 from app.config import settings
 from app.database import get_db
@@ -74,6 +74,7 @@ def _to_out(a: AgentTemplate) -> AgentOut:
         llm_model=a.llm_model,
         llm_temperature=a.llm_temperature,
         max_call_duration_seconds=a.max_call_duration_seconds,
+        pipeline=a.pipeline,
         created_at=a.created_at,
     )
 
@@ -245,10 +246,17 @@ async def create_agent(
         db, token.org_id, voice_provider=body.voice_provider, voice_id=body.voice_id
     )
 
+    pipeline = await resolve_new_pipeline(db, token.org_id, body.pipeline)
+    await check_pipeline_choice(
+        db, token.org_id, pipeline=pipeline, language=body.language,
+        voice_id=body.voice_id, voice_provider=body.voice_provider,
+    )
+
     agent = AgentTemplate(
         org_id=token.org_id,
         created_by_id=token.user_id,
-        **body.model_dump(),
+        **body.model_dump(exclude={"pipeline"}),
+        pipeline=pipeline,
     )
     db.add(agent)
     await db.commit()
@@ -298,6 +306,16 @@ async def update_agent(
             token.org_id,
             voice_provider=body.voice_provider or agent.voice_provider,
             voice_id=body.voice_id if body.voice_id is not None else agent.voice_id,
+        )
+
+    if body.pipeline is not None or body.voice_id is not None or body.voice_provider is not None or body.language is not None:
+        await check_pipeline_choice(
+            db,
+            token.org_id,
+            pipeline=body.pipeline or agent.pipeline,
+            language=body.language or agent.language,
+            voice_id=body.voice_id if body.voice_id is not None else agent.voice_id,
+            voice_provider=body.voice_provider or agent.voice_provider,
         )
 
     for field, value in body.model_dump(exclude_none=True).items():

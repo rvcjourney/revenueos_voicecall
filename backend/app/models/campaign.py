@@ -135,6 +135,11 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # app/services/prime_prompt.py) when set; NULL = fall back to the agent
     # template's own system_prompt, same override pattern as language/voice_id.
     pitch_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Calling engine override; NULL = the agent template's own pipeline.
+    pipeline: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Why the platform paused this campaign (e.g. its Sarvam cloned voice became
+    # unavailable when the owner switched the sarvam pipeline off). NULL = user pause.
+    pause_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
         nullable=False,

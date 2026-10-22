@@ -64,6 +64,8 @@ class InboundAgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin
         String(100), nullable=False, server_default="qwen/qwen3.6-27b"
     )
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")
+    # Calling engine: "standard" | "sarvam" (see app/core/pipelines.py).
+    pipeline: Mapped[str] = mapped_column(String(16), nullable=False, server_default="standard", default="standard")
     max_call_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="600"
     )

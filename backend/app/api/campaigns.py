@@ -66,6 +66,8 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         language=c.language,
         voice_id=c.voice_id,
         pitch_structure=c.pitch_structure,
+        pipeline=c.pipeline,
+        pause_reason=c.pause_reason,
     )
 
 
@@ -193,6 +195,9 @@ async def create_campaign(
                 "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
             )
 
+    if body.pipeline or body.voice_id:
+        await _check_campaign_pipeline(db, token.org_id, body.pipeline, body.agent_template_id, body.language, body.voice_id)
+
     campaign = Campaign(
         org_id=token.org_id,
         created_by_id=token.user_id,
@@ -205,6 +210,26 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
     return _to_out(campaign)
+
+
+async def _check_campaign_pipeline(db, org_id, pipeline, agent_template_id, language, voice_id) -> None:
+    """Validate the voice/language the campaign's calls will actually use on its
+    calling engine. The agent's own voice only carries over when the agent is on
+    the same engine (dial time mirrors this, see workers/tasks/campaign.py)."""
+    from app.core import pipelines
+    from app.core.plan_features import check_pipeline_choice
+    from app.models.agent import AgentTemplate
+    tmpl = await db.get(AgentTemplate, agent_template_id) if agent_template_id else None
+    effective = pipeline or (tmpl.pipeline if tmpl else pipelines.STANDARD)
+    same_engine = tmpl is not None and tmpl.pipeline == effective
+    await check_pipeline_choice(
+        db,
+        org_id,
+        pipeline=effective,
+        language=language or (str(tmpl.language) if tmpl else pipelines.DEFAULT_LANGUAGE),
+        voice_id=voice_id or (tmpl.voice_id if same_engine else None),
+        voice_provider=None if voice_id else (str(tmpl.voice_provider) if same_engine else None),
+    )
 
 
 def _check_campaign_access(campaign: Campaign, token: TokenPayload) -> None:
@@ -810,6 +835,7 @@ async def duplicate_campaign(
         language=original.language,
         voice_id=original.voice_id,
         pitch_structure=original.pitch_structure,
+        pipeline=original.pipeline,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)

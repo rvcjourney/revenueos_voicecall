@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, field_validator
@@ -53,6 +54,8 @@ class CampaignOut(BaseModel):
     language: str | None = None
     voice_id: str | None = None
     pitch_structure: str | None = None
+    pipeline: str | None = None
+    pause_reason: str | None = None
 
 
 class CampaignListResponse(BaseModel):
@@ -83,6 +86,8 @@ class CampaignCreate(BaseModel):
     language: str | None = None
     voice_id: str | None = None
     pitch_structure: str | None = None
+    # None = the agent template's own pipeline.
+    pipeline: Literal["standard", "sarvam"] | None = None
 
     @field_validator("pitch_structure", mode="before")
     @classmethod
