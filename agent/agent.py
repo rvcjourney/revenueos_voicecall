@@ -1109,6 +1109,34 @@ class VoiceAgent(Agent):
         except Exception as exc:
             logger.error("report_system_failure failed to reach backend: %s", exc)
 
+    # Per-turn numbers LiveKit attaches to each ChatMessage (llm.MetricsReport).
+    _LATENCY_KEYS = ("e2e_latency", "transcription_delay", "end_of_turn_delay", "llm_node_ttft", "tts_node_ttfb")
+    _pipeline = "standard"
+    _false_interruptions = 0
+    _recoverable_errors = 0
+
+    def _latency_report(self) -> dict:
+        """Numbers only (never transcript text): per-turn samples, capped, so the
+        backend can compute real p50/p95 across calls, plus per-call counts."""
+        samples: dict[str, list[float]] = {k: [] for k in self._LATENCY_KEYS}
+        ctx = getattr(self.session, "history", None)
+        messages_attr = getattr(ctx, "messages", None)
+        items = messages_attr() if callable(messages_attr) else getattr(ctx, "items", []) or []
+        for msg in items:
+            metrics = getattr(msg, "metrics", None) or {}
+            for key in self._LATENCY_KEYS:
+                value = metrics.get(key)
+                if isinstance(value, (int, float)) and value >= 0:
+                    samples[key].append(round(float(value), 3))
+        counts = {"turns": self._turn_count, "false_interruptions": self._false_interruptions,
+                  "recoverable_errors": self._recoverable_errors}
+        sarvam_state = getattr(self, "_sarvam", None)
+        if sarvam_state is not None:
+            counts.update(empty_replies=sarvam_state.empty_replies,
+                          romanised_replies=sarvam_state.romanised_replies,
+                          clone_fallback=int(bool(sarvam_state.extra.get("clone_fallback"))))
+        return {"samples": {k: v[:100] for k, v in samples.items() if v}, "counts": counts}
+
     async def _post_agent_report(self, payload: dict, *, attempts: int = 3) -> None:
         """POST the call report to the backend, retrying transient failures.
 
@@ -1120,6 +1148,10 @@ class VoiceAgent(Agent):
         import httpx
 
         url = f"{self._backend_url}/api/calls/{self._call_id}/agent-report"
+        try:
+            payload = {**payload, "pipeline": self._pipeline, "latency_metrics": self._latency_report()}
+        except Exception as exc:  # metrics must never cost us the report itself
+            logger.warning("latency_report_failed | %s", exc)
         body = json.dumps(payload).encode()
         headers = {
             "Content-Type": "application/json",
@@ -1520,6 +1552,15 @@ class SarvamVoiceAgent(VoiceAgent):
         super().__init__(*args, **kwargs)
         self._sarvam = sarvam_state
 
+    async def stt_node(self, audio, model_settings):
+        logged = False
+        async for ev in super().stt_node(audio, model_settings):
+            rid = getattr(ev, "request_id", None)
+            if rid and not logged:
+                logged = True
+                logger.info("sarvam_stt_session | request_id=%s language=%s", rid, self._sarvam.language)
+            yield ev
+
     async def llm_node(self, chat_ctx, tools, model_settings):
         ctx = sarvam_pipeline.trim_to_budget(chat_ctx)
         logger.info("llm_prompt_size | turn=%d est_tokens=%d", self._turn_count, sarvam_pipeline.estimate_tokens(ctx))
@@ -1546,20 +1587,32 @@ class SarvamVoiceAgent(VoiceAgent):
         await self._silent_hangup()
 
 
+def _sentry_message(message: str, level: str) -> None:
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_message(message, level=level)
+    except Exception:
+        pass
+
+
 def handle_sarvam_error(voice_agent: "SarvamVoiceAgent", ev) -> None:
     """session.on("error") for the sarvam engine. A non-recoverable LLM/TTS error
     ends the call cleanly: one fixed apology (when the voice still works), then
     the normal report + hang-up. Never switches to another vendor mid-call."""
-    if getattr(ev.error, "recoverable", True) or voice_agent._ending:
+    source = type(ev.source).__name__
+    status = getattr(ev.error, "status_code", None) or getattr(getattr(ev.error, "error", None), "status_code", None)
+    if getattr(ev.error, "recoverable", True):
+        voice_agent._recoverable_errors += 1
+        if voice_agent._recoverable_errors == 3:  # sustained, non-fatal: alert once per call
+            _sentry_message(f"sarvam engine: repeated recoverable errors ({source}, status={status})", "warning")
+        return
+    if voice_agent._ending:
         return
     voice_agent._ending = True
-    source = type(ev.source).__name__
-    logger.error("sarvam_engine_failed | source=%s error=%s", source, ev.error)
-    try:
-        import sentry_sdk
-        sentry_sdk.capture_message(f"sarvam engine failure ({source})", level="error")
-    except Exception:
-        pass
+    # Close code 1003 = auth/quota/rate limit, 1008 = session timeout; a 4xx such
+    # as "model not found" means Sarvam retired or renamed something.
+    logger.error("sarvam_engine_failed | source=%s status=%s error=%s", source, status, ev.error)
+    _sentry_message(f"sarvam engine failure ({source}, status={status})", "error")
     _safe_task(voice_agent.apology_hangup(can_speak=not isinstance(ev.source, tts.TTS)), "sarvam-apology-hangup")
 
 
@@ -2056,6 +2109,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     session.on("speech_created", _on_speech_created)
 
     session.on("close", lambda ev: handle_session_close(voice_agent, ev))
+    voice_agent._pipeline = pipeline
+
+    def _on_false_interruption(_ev) -> None:
+        voice_agent._false_interruptions += 1
+
+    session.on("agent_false_interruption", _on_false_interruption)
     if is_sarvam:
         session.on("error", lambda ev: handle_sarvam_error(voice_agent, ev))
 

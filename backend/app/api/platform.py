@@ -752,6 +752,50 @@ async def get_engines(
     return await _engines_overview(db)
 
 
+def _percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, round(pct / 100 * (len(ordered) - 1))))
+    return round(ordered[idx], 3)
+
+
+@router.get("/engines/latency")
+async def engines_latency(
+    days: int = Query(7, ge=1, le=90),
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """p50/p95 per latency metric per engine over the last `days`, from the
+    per-turn samples each call's agent reported, plus summed counts."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (await db.execute(
+        select(func.coalesce(Call.pipeline, pipelines.STANDARD), Call.latency_metrics)
+        .where(Call.created_at >= since, Call.latency_metrics.is_not(None))
+        .order_by(Call.created_at.desc()).limit(5000)
+    )).all()
+    acc: dict[str, dict] = {}
+    for engine, lm in rows:
+        a = acc.setdefault(engine, {"calls": 0, "samples": {}, "counts": {}})
+        a["calls"] += 1
+        for key, values in (lm.get("samples") or {}).items():
+            a["samples"].setdefault(key, []).extend(v for v in values if isinstance(v, (int, float)))
+        for key, value in (lm.get("counts") or {}).items():
+            if isinstance(value, (int, float)):
+                a["counts"][key] = a["counts"].get(key, 0) + value
+    out = []
+    for engine, a in acc.items():
+        turns = a["counts"].get("turns") or 0
+        out.append({
+            "engine": engine,
+            "calls": a["calls"],
+            "metrics": {k: {"p50": _percentile(v, 50), "p95": _percentile(v, 95), "n": len(v)} for k, v in a["samples"].items()},
+            "counts": a["counts"],
+            "false_interruption_rate": round(a["counts"].get("false_interruptions", 0) / turns, 4) if turns else None,
+        })
+    return {"days": days, "items": sorted(out, key=lambda r: r["engine"] != pipelines.STANDARD)}
+
+
 @router.patch("/engines", response_model=EnginesOverviewOut)
 async def update_engines(
     body: EnginesUpdateRequest,

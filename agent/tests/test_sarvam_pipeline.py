@@ -189,6 +189,7 @@ async def test_real_reply_passes_through(monkeypatch):
 class _FakeSarvamAgent:
     def __init__(self, ending=False):
         self._ending = ending
+        self._recoverable_errors = 0
         self.calls = []
 
     async def apology_hangup(self, *, can_speak):
@@ -242,3 +243,33 @@ async def test_no_ji_filter_follows_current_language():
     state.language = "hinglish"
     assert await _run_transform(sp.no_ji_transform(state), ["हाँ ji, बोलिए"]) == "हाँ ji, बोलिए"
     assert await _run_transform(sp.no_ji_transform(sp.SarvamCallState("tamil", "ritu", False, langs)), ["Rajiv sir"]) == "Rajiv sir"
+
+
+async def test_sustained_recoverable_errors_alert_once(monkeypatch):
+    sent = []
+    monkeypatch.setattr(agent_mod, "_sentry_message", lambda msg, level: sent.append((msg, level)))
+    va = _FakeSarvamAgent()
+    for _ in range(5):
+        agent_mod.handle_sarvam_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=True, status_code=1008), source=object()))
+    assert va.calls == [] and va._recoverable_errors == 5
+    assert len(sent) == 1 and "status=1008" in sent[0][0]
+
+
+def test_latency_report_summarises_turn_metrics_without_text():
+    va = _agent(turns=3)
+    msgs = [
+        SimpleNamespace(role="user", content=["secret customer words"], metrics={"transcription_delay": 0.4, "end_of_turn_delay": 0.3}),
+        SimpleNamespace(role="assistant", content=["reply"], metrics={"llm_node_ttft": 0.25, "tts_node_ttfb": 0.2, "e2e_latency": 0.9}),
+        SimpleNamespace(role="assistant", content=["reply"], metrics={"e2e_latency": 1.1}),
+    ]
+    va._session = None
+    monkey_history = SimpleNamespace(messages=lambda: msgs)
+    agent_mod.SarvamVoiceAgent.session = property(lambda self: SimpleNamespace(history=monkey_history))
+    try:
+        report = va._latency_report()
+    finally:
+        del agent_mod.SarvamVoiceAgent.session
+    assert report["samples"]["e2e_latency"] == [0.9, 1.1]
+    assert report["samples"]["transcription_delay"] == [0.4]
+    assert report["counts"]["turns"] == 3 and report["counts"]["empty_replies"] == 0
+    assert "secret" not in str(report)

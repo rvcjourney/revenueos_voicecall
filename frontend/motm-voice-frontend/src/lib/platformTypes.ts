@@ -134,6 +134,14 @@ export interface EnginesOverview {
   orgs_enabled: number;
 }
 
+export interface EngineLatency {
+  engine: "standard" | "sarvam";
+  calls: number;
+  metrics: Record<string, { p50: number | null; p95: number | null; n: number }>;
+  counts: Record<string, number>;
+  false_interruption_rate: number | null;
+}
+
 export interface EnginesUpdate {
   global_enabled?: boolean;
   languages?: Record<string, Partial<Record<"standard" | "sarvam", { enabled?: boolean; tts_model?: string; voices?: string[] }>>>;

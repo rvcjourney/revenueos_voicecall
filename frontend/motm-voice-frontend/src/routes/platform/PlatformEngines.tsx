@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { platformApiErrorMessage } from "@/lib/platformApi";
-import { usePlatformEngines, useUpdatePlatformEngines } from "@/lib/platformHooks";
+import { usePlatformEngines, usePlatformEnginesLatency, useUpdatePlatformEngines } from "@/lib/platformHooks";
 import type { EngineLanguage, EnginesUpdate } from "@/lib/platformTypes";
 
 /** Owner switches for the two calling engines. Every change applies from the
@@ -100,6 +100,8 @@ export default function PlatformEngines() {
         </CardContent>
       </Card>
 
+      <LatencyCard />
+
       <Card>
         <CardHeader>
           <CardTitle>Campaigns paused by an engine switch</CardTitle>
@@ -134,6 +136,62 @@ export default function PlatformEngines() {
         }}
       />
     </div>
+  );
+}
+
+function ms(v: number | null | undefined) {
+  return v == null ? "—" : `${Math.round(v * 1000)} ms`;
+}
+
+function LatencyCard() {
+  const latency = usePlatformEnginesLatency(7);
+  const rows = latency.data ?? [];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Latency by engine — last 7 days</CardTitle>
+        <CardDescription>
+          From each call's per-turn LiveKit metrics. Sarvam's guidance for this stack: reply latency p50 under 900 ms is
+          good, under 1.4 s acceptable; p95 under 1.8 s good.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {latency.isLoading ? <Skeleton className="h-24 w-full" /> : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No calls with latency data yet.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Engine</TableHead>
+                <TableHead>Calls</TableHead>
+                <TableHead>Reply p50 / p95</TableHead>
+                <TableHead>STT delay p95</TableHead>
+                <TableHead>LLM first token p50</TableHead>
+                <TableHead>TTS first byte p95</TableHead>
+                <TableHead>False interruptions</TableHead>
+                <TableHead>Empty replies</TableHead>
+                <TableHead>Clone fallbacks</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.engine}>
+                  <TableCell className="font-medium">{r.engine === "sarvam" ? "Indic Native" : "Standard"}</TableCell>
+                  <TableCell>{r.calls}</TableCell>
+                  <TableCell>{ms(r.metrics.e2e_latency?.p50)} / {ms(r.metrics.e2e_latency?.p95)}</TableCell>
+                  <TableCell>{ms(r.metrics.transcription_delay?.p95)}</TableCell>
+                  <TableCell>{ms(r.metrics.llm_node_ttft?.p50)}</TableCell>
+                  <TableCell>{ms(r.metrics.tts_node_ttfb?.p95)}</TableCell>
+                  <TableCell>{r.false_interruption_rate == null ? "—" : `${(r.false_interruption_rate * 100).toFixed(1)}%`}</TableCell>
+                  <TableCell>{r.counts.empty_replies ?? 0}</TableCell>
+                  <TableCell>{r.counts.clone_fallback ?? 0}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

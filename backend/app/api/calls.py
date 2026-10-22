@@ -143,6 +143,10 @@ class AgentReportIn(BaseModel):
     # outcome so it isn't misreported as e.g. "not_interested".
     error_message: str | None = None
     extracted_data: dict = {}
+    # Calling engine + per-turn latency samples/counts (numbers only, no text).
+    # Optional: older agents that don't send them keep working.
+    pipeline: str | None = None
+    latency_metrics: dict | None = None
 
 
 @router.post(
@@ -200,6 +204,10 @@ async def agent_report(
         values["error_message"] = body.error_message[:2000]
     if body.extracted_data:
         values["extracted_data"] = body.extracted_data
+    if isinstance(body.latency_metrics, dict) and len(str(body.latency_metrics)) < 20_000:
+        values["latency_metrics"] = body.latency_metrics
+    if body.pipeline in ("standard", "sarvam") and call_row is not None and call_row.pipeline is None:
+        values["pipeline"] = body.pipeline
 
     try:
         await db.execute(update(Call).where(Call.id == call_id).values(**values))

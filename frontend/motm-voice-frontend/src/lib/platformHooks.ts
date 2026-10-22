@@ -157,6 +157,13 @@ export function usePlatformEngines() {
   });
 }
 
+export function usePlatformEnginesLatency(days = 7) {
+  return useQuery({
+    queryKey: ["platform-engines-latency", days],
+    queryFn: () => platformEnginesApi.latency(days).then((r) => r.data.items),
+  });
+}
+
 export function useUpdatePlatformEngines() {
   const qc = useQueryClient();
   return useMutation({

@@ -2,6 +2,7 @@ import axios from "axios";
 import type {
   EnginesOverview,
   EnginesUpdate,
+  EngineLatency,
   PlatformCostSettings,
   PlatformHealth,
   PlatformListResponse,
@@ -128,6 +129,8 @@ export const platformCostSettingsApi = {
 export const platformEnginesApi = {
   get: () => platformApi.get<EnginesOverview>("/api/platform/engines"),
   update: (data: EnginesUpdate) => platformApi.patch<EnginesOverview>("/api/platform/engines", data),
+  latency: (days = 7) =>
+    platformApi.get<{ days: number; items: EngineLatency[] }>("/api/platform/engines/latency", { params: { days } }),
 };
 
 // ── Voice clone requests ─────────────────────────────────────────────────

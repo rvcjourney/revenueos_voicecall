@@ -117,3 +117,27 @@ async def test_sarvam_minutes_costed_at_their_own_rate(client, db):
     assert r.json()["sarvam_cost_per_minute_minor"] == 60
     usage = (await client.get("/api/platform/analytics/usage", headers=h)).json()
     assert usage["minutes_by_pipeline"] == {"standard": 2, "sarvam": 4}
+
+
+async def test_report_stores_latency_and_ops_shows_p50_p95(client, db):
+    import json
+    from app.core.security import sign_webhook_payload
+    org, _, _ = await _make_org_and_admin(db)
+    h = await _owner(db)
+    for pipe, e2e in (("sarvam", [0.8, 0.9, 1.0]), ("sarvam", [1.2, 3.0]), ("standard", [1.5])):
+        call = Call(org_id=org.id, livekit_room_name=f"r-{uuid.uuid4().hex}", phone_number="+919999999999",
+                    direction=CallDirection.OUTBOUND, status=CallStatus.CONNECTED, pipeline=pipe)
+        db.add(call)
+        await db.commit()
+        body = json.dumps({"outcome": "interested", "pipeline": pipe, "latency_metrics": {
+            "samples": {"e2e_latency": e2e}, "counts": {"turns": len(e2e), "false_interruptions": 1}}}).encode()
+        r = await client.post(f"/api/calls/{call.id}/agent-report", content=body,
+                              headers={"Content-Type": "application/json", "X-Webhook-Signature": sign_webhook_payload(body)})
+        assert r.status_code == 204, r.text
+        await db.refresh(call)
+        assert call.latency_metrics["samples"]["e2e_latency"] == e2e
+    items = (await client.get("/api/platform/engines/latency", headers=h)).json()["items"]
+    sarvam = next(i for i in items if i["engine"] == "sarvam")
+    assert sarvam["calls"] == 2
+    assert sarvam["metrics"]["e2e_latency"] == {"p50": 1.0, "p95": 3.0, "n": 5}
+    assert sarvam["false_interruption_rate"] == 0.4
