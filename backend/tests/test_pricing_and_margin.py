@@ -144,7 +144,7 @@ async def test_cost_settings_get_defaults_to_zero(client, db):
 
     resp = await client.get("/api/platform/settings/cost", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
-    assert resp.json() == {"cost_per_minute_minor": 0, "currency": "INR"}
+    assert resp.json() == {"cost_per_minute_minor": 0, "currency": "INR", "sarvam_cost_per_minute_minor": None}
 
 
 async def test_cost_settings_update_persists(client, db):
