@@ -28,19 +28,17 @@ from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
 from app.core import pipelines, sarvam_voice
-from app.core.elevenlabs_voice import ElevenLabsVoiceError, clone_voice, get_account_usage
 from app.core.exceptions import (
     AuthenticationError,
     ConflictError,
     NotFoundError,
     ValidationError as AppValidationError,
 )
-from app.core.plan_features import is_voice_cloning_allowed, is_voice_provider_allowed
+from app.core.plan_features import is_voice_cloning_allowed
 from app.core.razorpay_client import RazorpayError, sync_plan_to_razorpay
 from app.core.security import create_platform_token, verify_password
 from app.database import check_db_health, get_db
 from app.storage.backend import get_storage
-from app.models.agent import VoiceProvider
 from app.models.audit_log import AuditLog
 from app.models.call import Call, CallOutcome, CallStatus
 from app.models.campaign import Campaign, CampaignStatus
@@ -64,11 +62,9 @@ from app.schemas.platform import (
     PlanUpdateRequest,
     CostSettingsOut,
     CostSettingsUpdateRequest,
-    EngineLanguageCellOut,
     EngineLanguageOut,
     EnginesOverviewOut,
     EnginesUpdateRequest,
-    PausedCampaignOut,
     PlatformAdminOut,
     PlatformHealthOut,
     PlatformLoginRequest,
@@ -179,11 +175,7 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
         ),
         credits_used_this_period=org.credits_used_this_period,
         credits_per_month=credits_per_month,
-        elevenlabs_enabled=org.elevenlabs_enabled,
-        sarvam_pipeline_enabled=org.sarvam_pipeline_enabled,
-        default_pipeline=org.default_pipeline,
         sarvam_cloning_allowed=org.sarvam_cloning_allowed,
-        sarvam_effective=await _org_sarvam_effective(db, org),
         plan_price_minor=plan_price_minor,
         plan_discount_price_minor=plan_discount_price_minor,
         plan_currency=plan_currency,
@@ -344,18 +336,9 @@ async def update_org(
         }
         org.monthly_call_quota = body.monthly_call_quota
 
-    if body.elevenlabs_enabled is not None and body.elevenlabs_enabled != org.elevenlabs_enabled:
-        changes["elevenlabs_enabled"] = {
-            "from": org.elevenlabs_enabled,
-            "to": body.elevenlabs_enabled,
-        }
-        org.elevenlabs_enabled = body.elevenlabs_enabled
-
-    for field in ("sarvam_pipeline_enabled", "default_pipeline", "sarvam_cloning_allowed"):
-        value = getattr(body, field)
-        if value is not None and value != getattr(org, field):
-            changes[field] = {"from": getattr(org, field), "to": value}
-            setattr(org, field, value)
+    if body.sarvam_cloning_allowed is not None and body.sarvam_cloning_allowed != org.sarvam_cloning_allowed:
+        changes["sarvam_cloning_allowed"] = {"from": org.sarvam_cloning_allowed, "to": body.sarvam_cloning_allowed}
+        org.sarvam_cloning_allowed = body.sarvam_cloning_allowed
 
     if body.plan_id is not None:
         try:
@@ -692,55 +675,27 @@ def _cost_out(row: PlatformCostSettings) -> CostSettingsOut:
                            sarvam_cost_per_minute_minor=row.sarvam_cost_per_minute_minor)
 
 
-# ── Calling engines (owner switches) ─────────────────────────────────────────
+# ── Languages & voices (owner overrides) ─────────────────────────────────────
 # Take effect on the next call (api/worker read them through a <=60 s cache);
 # never touch a call in progress. Every change is audit-logged old -> new.
 
-async def _org_sarvam_effective(db: AsyncSession, org: Organization) -> str:
-    settings = await pipelines.get_owner_settings(db)
-    if not settings.global_enabled:
-        return "off: global switch"
-    return "on" if org.sarvam_pipeline_enabled else "off: organisation"
-
-
-def _engine_cell(key: str, pipeline: str, settings: "pipelines.OwnerSettings") -> EngineLanguageCellOut:
+def _language_out(key: str, settings: "pipelines.OwnerSettings") -> EngineLanguageOut:
     lang = pipelines.LANGUAGES[key]
-    enabled = pipelines.language_enabled(key, pipeline, settings)
-    if pipeline == pipelines.SARVAM and not settings.global_enabled:
-        effective = "off: global switch"
-    else:
-        effective = "on" if enabled else "off: language"
-    cell = EngineLanguageCellOut(enabled=enabled, default_enabled=lang.enabled.get(pipeline, False), effective=effective)
-    if pipeline == pipelines.SARVAM:
-        model = pipelines.sarvam_tts_model(key, settings)
-        all_voices = pipelines.sarvam_voices(key, pipelines.OwnerSettings(language_overrides={key: {pipelines.SARVAM: {"tts_model": model}}}))
-        cell.tts_model, cell.default_tts_model = model, lang.sarvam_tts_model
-        cell.voices = [{"id": v.id, "name": v.name, "gender": v.gender} for v in all_voices]
-        cell.shortlist = list(((settings.language_overrides.get(key) or {}).get(pipelines.SARVAM) or {}).get("voices") or [])
-    return cell
+    model = pipelines.sarvam_tts_model(key, settings)
+    all_voices = pipelines.sarvam_voices(key, pipelines.OwnerSettings(
+        language_overrides={key: {pipelines.SARVAM: {"tts_model": model}}}))
+    return EngineLanguageOut(
+        key=key, display=lang.display,
+        enabled=pipelines.language_enabled(key, settings), default_enabled=lang.enabled,
+        tts_model=model, default_tts_model=lang.sarvam_tts_model,
+        voices=[{"id": v.id, "name": v.name, "gender": v.gender} for v in all_voices],
+        shortlist=list(((settings.language_overrides.get(key) or {}).get(pipelines.SARVAM) or {}).get("voices") or []),
+    )
 
 
 async def _engines_overview(db: AsyncSession) -> EnginesOverviewOut:
     settings = await pipelines.get_owner_settings(db)
-    paused = (await db.execute(
-        select(Campaign, Organization.name)
-        .join(Organization, Organization.id == Campaign.org_id)
-        .where(Campaign.pause_reason == pipelines.PAUSE_REASON_ENGINE_OFF,
-               Campaign.status == CampaignStatus.PAUSED, Campaign.deleted_at.is_(None))
-    )).all()
-    orgs_enabled = await db.scalar(select(func.count(Organization.id)).where(
-        Organization.sarvam_pipeline_enabled.is_(True), Organization.deleted_at.is_(None)))
-    return EnginesOverviewOut(
-        global_enabled=settings.global_enabled,
-        languages=[
-            EngineLanguageOut(key=k, display=l.display,
-                              standard=_engine_cell(k, pipelines.STANDARD, settings),
-                              sarvam=_engine_cell(k, pipelines.SARVAM, settings))
-            for k, l in pipelines.LANGUAGES.items()
-        ],
-        paused_campaigns=[PausedCampaignOut(id=str(c.id), name=c.name, org_id=str(c.org_id), org_name=n) for c, n in paused],
-        orgs_enabled=orgs_enabled or 0,
-    )
+    return EnginesOverviewOut(languages=[_language_out(k, settings) for k in pipelines.LANGUAGES])
 
 
 @router.get("/engines", response_model=EnginesOverviewOut)
@@ -770,7 +725,7 @@ async def engines_latency(
     per-turn samples each call's agent reported, plus summed counts."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
     rows = (await db.execute(
-        select(func.coalesce(Call.pipeline, pipelines.STANDARD), Call.latency_metrics)
+        select(func.coalesce(Call.pipeline, "standard"), Call.latency_metrics)
         .where(Call.created_at >= since, Call.latency_metrics.is_not(None))
         .order_by(Call.created_at.desc()).limit(5000)
     )).all()
@@ -793,7 +748,7 @@ async def engines_latency(
             "counts": a["counts"],
             "false_interruption_rate": round(a["counts"].get("false_interruptions", 0) / turns, 4) if turns else None,
         })
-    return {"days": days, "items": sorted(out, key=lambda r: r["engine"] != pipelines.STANDARD)}
+    return {"days": days, "items": sorted(out, key=lambda r: r["engine"] != pipelines.SARVAM)}
 
 
 @router.patch("/engines", response_model=EnginesOverviewOut)
@@ -804,36 +759,30 @@ async def update_engines(
 ):
     row = await _get_or_create_cost_settings(db)
     changes: dict = {}
-    if body.global_enabled is not None and body.global_enabled != row.sarvam_pipeline_global_enabled:
-        changes["global_enabled"] = {"from": row.sarvam_pipeline_global_enabled, "to": body.global_enabled}
-        row.sarvam_pipeline_global_enabled = body.global_enabled
     if body.languages:
         overrides = {k: {p: dict(v) for p, v in (d or {}).items()} for k, d in (row.language_overrides or {}).items()}
-        for lang, per_pipeline in body.languages.items():
+        for lang, patch in body.languages.items():
             if lang not in pipelines.LANGUAGES:
                 raise AppValidationError(f"Unknown language '{lang}'", errors=[])
-            for pipe, patch in per_pipeline.items():
-                if pipe not in pipelines.PIPELINES:
-                    raise AppValidationError(f"Unknown engine '{pipe}'", errors=[])
-                cell = overrides.setdefault(lang, {}).setdefault(pipe, {})
-                before = dict(cell)
-                if "enabled" in patch:
-                    cell["enabled"] = bool(patch["enabled"])
-                if "tts_model" in patch:
-                    if pipe != pipelines.SARVAM or patch["tts_model"] not in pipelines.SARVAM_TTS_MODELS:
-                        raise AppValidationError("tts_model must be bulbul:v4-flash or bulbul:v3 on the sarvam engine", errors=[])
-                    cell["tts_model"] = patch["tts_model"]
-                    cell.pop("voices", None)  # a shortlist from the other model can't be valid
-                if "voices" in patch:
-                    model = cell.get("tts_model") or pipelines.LANGUAGES[lang].sarvam_tts_model
-                    valid = {v.id for v in pipelines.sarvam_voices(lang, pipelines.OwnerSettings(
-                        language_overrides={lang: {pipelines.SARVAM: {"tts_model": model}}}))}
-                    bad = [v for v in patch["voices"] if v not in valid]
-                    if bad:
-                        raise AppValidationError(f"Not valid for {lang} on {model}: {', '.join(bad)}", errors=[])
-                    cell["voices"] = list(patch["voices"])
-                if cell != before:
-                    changes[f"{lang}.{pipe}"] = {"from": before, "to": dict(cell)}
+            cell = overrides.setdefault(lang, {}).setdefault(pipelines.SARVAM, {})
+            before = dict(cell)
+            if "enabled" in patch:
+                cell["enabled"] = bool(patch["enabled"])
+            if "tts_model" in patch:
+                if patch["tts_model"] not in pipelines.SARVAM_TTS_MODELS:
+                    raise AppValidationError("tts_model must be bulbul:v4-flash or bulbul:v3", errors=[])
+                cell["tts_model"] = patch["tts_model"]
+                cell.pop("voices", None)  # a shortlist from the other model can't be valid
+            if "voices" in patch:
+                model = cell.get("tts_model") or pipelines.LANGUAGES[lang].sarvam_tts_model
+                valid = {v.id for v in pipelines.sarvam_voices(lang, pipelines.OwnerSettings(
+                    language_overrides={lang: {pipelines.SARVAM: {"tts_model": model}}}))}
+                bad = [v for v in patch["voices"] if v not in valid]
+                if bad:
+                    raise AppValidationError(f"Not valid for {lang} on {model}: {', '.join(bad)}", errors=[])
+                cell["voices"] = list(patch["voices"])
+            if cell != before:
+                changes[lang] = {"from": before, "to": dict(cell)}
         row.language_overrides = overrides
     if changes:
         db.add(AuditLog(
@@ -961,7 +910,7 @@ async def _usage_analytics_out(db: AsyncSession, *, org_id: UUID | None) -> Usag
     cogs = total_minutes * cost_settings.cost_per_minute_minor
     minutes_by_pipeline = await _minutes_by_pipeline_30d(db, org_id=org_id)
     if cost_settings.sarvam_cost_per_minute_minor is not None:
-        # Indic Native minutes are costed at their own rate (standard rate already counted above).
+        # Sarvam-engine minutes are costed at their own rate (base rate already counted above).
         cogs += minutes_by_pipeline.get(pipelines.SARVAM, 0) * (
             cost_settings.sarvam_cost_per_minute_minor - cost_settings.cost_per_minute_minor)
     margin = mrr - cogs
@@ -982,7 +931,7 @@ async def _usage_analytics_out(db: AsyncSession, *, org_id: UUID | None) -> Usag
 
 async def _minutes_by_pipeline_30d(db: AsyncSession, *, org_id: UUID | None) -> dict[str, int]:
     since = datetime.now(timezone.utc) - timedelta(days=30)
-    engine = func.coalesce(Call.pipeline, pipelines.STANDARD)
+    engine = func.coalesce(Call.pipeline, "standard")
     q = (select(engine, func.sum(func.ceil(Call.duration_seconds / 60.0)))
          .where(Call.status == CallStatus.COMPLETED, Call.created_at >= since)
          .group_by(engine))
@@ -1045,48 +994,6 @@ async def _db_stats(db: AsyncSession) -> dict:
     }
 
 
-_GROQ_HEALTH_CACHE_TTL = timedelta(minutes=5)
-_groq_health_cache: dict = {"checked_at": None, "ok": None, "error": None}
-
-
-async def _check_groq_model() -> tuple[bool, str | None]:
-    """
-    Verifies settings.GROQ_SUMMARY_MODEL (the post-call classification model --
-    must match agent/agent.py's GROQ_CLASSIFY_MODEL env var) still exists and
-    is reachable on Groq. Groq deprecates models with little to no warning --
-    this already broke every call's outcome classification once (Aug 2026)
-    before anyone noticed. Cached for 5 minutes so the SuperAdmin dashboard's
-    30s health poll doesn't hit Groq's API purely from a browser tab being
-    left open.
-    """
-    now = datetime.now(timezone.utc)
-    cached_at = _groq_health_cache["checked_at"]
-    if cached_at is not None and now - cached_at < _GROQ_HEALTH_CACHE_TTL:
-        return _groq_health_cache["ok"], _groq_health_cache["error"]
-
-    ok, error = False, None
-    if not settings.GROQ_API_KEY:
-        error = "GROQ_API_KEY not configured"
-    else:
-        try:
-            async with aiohttp.ClientSession() as http:
-                async with http.get(
-                    f"https://api.groq.com/openai/v1/models/{settings.GROQ_SUMMARY_MODEL}",
-                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    timeout=aiohttp.ClientTimeout(total=8),
-                ) as resp:
-                    if resp.status == 200:
-                        ok = True
-                    else:
-                        body = await resp.text()
-                        error = f"Groq {resp.status}: {body[:300]}"
-        except Exception as exc:
-            error = str(exc)
-
-    _groq_health_cache.update(checked_at=now, ok=ok, error=error)
-    return ok, error
-
-
 @router.get("/health", response_model=PlatformHealthOut)
 async def platform_health(
     admin: PlatformAdmin = Depends(require_platform_admin),
@@ -1125,16 +1032,6 @@ async def platform_health(
     worker_replies = await asyncio.to_thread(_ping_workers)
     db_stats = await _db_stats(db)
 
-    elevenlabs_usage: dict | None = None
-    if settings.ELEVENLABS_API_KEY:
-        try:
-            async with aiohttp.ClientSession() as http:
-                elevenlabs_usage = await get_account_usage(http, api_key=settings.ELEVENLABS_API_KEY)
-        except ElevenLabsVoiceError as exc:
-            log.warning("platform_health_elevenlabs_check_failed", error=str(exc))
-
-    groq_ok, groq_error = await _check_groq_model()
-
     from app.workers.tasks.campaign import _STALE_PENDING_AGE  # lazy: see _ping_workers above
 
     stale_cutoff = datetime.now(timezone.utc) - _STALE_PENDING_AGE
@@ -1171,18 +1068,11 @@ async def platform_health(
         redis=redis_ok,
         celery_workers_online=len(worker_replies),
         celery_worker_names=list(worker_replies.keys()),
-        elevenlabs_ok=elevenlabs_usage is not None,
-        elevenlabs_tier=elevenlabs_usage["tier"] if elevenlabs_usage else None,
-        elevenlabs_characters_used=elevenlabs_usage["character_count"] if elevenlabs_usage else None,
-        elevenlabs_characters_limit=elevenlabs_usage["character_limit"] if elevenlabs_usage else None,
-        elevenlabs_next_reset_unix=elevenlabs_usage["next_reset_unix"] if elevenlabs_usage else None,
         db_size_bytes=db_stats["size_bytes"],
         db_size_limit_bytes=SUPABASE_FREE_DB_SIZE_LIMIT_BYTES,
         db_connections_current=db_stats["connections_current"],
         db_connections_max=db_stats["connections_max"],
         db_tables_missing_rls=db_stats["tables_missing_rls"],
-        groq_ok=groq_ok,
-        groq_error=groq_error,
         stale_pending_calls_count=stale_pending_calls_count,
         stale_initiated_calls_count=stale_initiated_calls_count,
     )
@@ -1191,8 +1081,8 @@ async def platform_health(
 # ── Voice clone request review ───────────────────────────────────────────────
 # Consent gate in front of ClonedVoice creation (app/api/voice_cloning.py):
 # an org admin submits a name + audio sample + consent video, which sits here
-# as "pending" until reviewed. Approving is what actually calls ElevenLabs and
-# creates the real ClonedVoice row; rejecting just records a reason the org
+# as "pending" until reviewed. Approving is what actually clones the voice on
+# Sarvam and creates the real ClonedVoice row; rejecting just records a reason the org
 # admin can see. See app/models/voice_clone_request.py for the full design note.
 
 async def _to_voice_clone_request_out(db: AsyncSession, req: VoiceCloneRequest) -> VoiceCloneRequestOut:
@@ -1283,58 +1173,13 @@ async def approve_voice_clone_request(
     if req.status != "pending":
         raise ConflictError(f"Request has already been {req.status}")
 
-    # Re-check gates at approval time — the org's plan or the ElevenLabs
-    # kill-switch may have changed since submission (could be days earlier).
+    # Re-check gates at approval time — the org's plan may have changed since
+    # submission (could be days earlier).
     if not await is_voice_cloning_allowed(db, req.org_id):
         raise ConflictError("This org's plan no longer allows voice cloning")
-    if req.provider == pipelines.SARVAM:
-        return await _approve_sarvam_clone(db, req, admin)
-    if not await is_voice_provider_allowed(db, req.org_id, VoiceProvider.ELEVENLABS):
-        raise ConflictError("Voice cloning has since been disabled for this org")
-
-    sample_bytes = await get_storage().download(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
-
-    try:
-        async with aiohttp.ClientSession() as http:
-            elevenlabs_voice_id = await clone_voice(
-                http,
-                api_key=settings.ELEVENLABS_API_KEY,
-                name=req.name,
-                sample_bytes=sample_bytes,
-                sample_filename=req.audio_sample_file_name or "sample.mp3",
-                content_type=req.audio_sample_content_type,
-            )
-    except ElevenLabsVoiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    cloned = ClonedVoice(
-        org_id=req.org_id,
-        created_by_id=req.created_by_id,
-        name=req.name,
-        elevenlabs_voice_id=elevenlabs_voice_id,
-        sample_file_name=req.audio_sample_file_name,
-    )
-    db.add(cloned)
-    await db.flush()  # assign cloned.id before the request references it
-
-    req.status = "approved"
-    req.reviewed_by_admin_id = admin.id
-    req.reviewed_at = datetime.now(timezone.utc)
-    req.cloned_voice_id = cloned.id
-
-    db.add(AuditLog(
-        actor_type="platform_admin",
-        actor_id=admin.id,
-        org_id=req.org_id,
-        action="voice_clone_request.approve",
-        target_type="voice_clone_request",
-        target_id=req.id,
-        audit_metadata={"cloned_voice_id": str(cloned.id), "elevenlabs_voice_id": elevenlabs_voice_id},
-    ))
-
-    await db.commit()
-    await db.refresh(req)
-    return await _to_voice_clone_request_out(db, req)
+    if req.provider != pipelines.SARVAM:
+        raise ConflictError("This request was made for a voice provider that is no longer used — reject it")
+    return await _approve_sarvam_clone(db, req, admin)
 
 
 _SARVAM_RETAKE_REASON = (
@@ -1348,8 +1193,8 @@ async def _approve_sarvam_clone(db: AsyncSession, req: VoiceCloneRequest, admin:
     consent video and listened to the sample (GET .../audio). A sample Sarvam
     rejects as unusable goes back to the customer asking for a calm 10–15 s clip."""
     org = await db.get(Organization, req.org_id)
-    if not (org and org.sarvam_pipeline_enabled and org.sarvam_cloning_allowed):
-        raise ConflictError("Indic Native cloning has since been disabled for this org")
+    if not (org and org.sarvam_cloning_allowed):
+        raise ConflictError("Voice cloning has since been disabled for this org")
     lang = pipelines.LANGUAGES.get(req.language or "")
     if lang is None or not lang.clone_supported:
         raise ConflictError("Request has no supported reference language")

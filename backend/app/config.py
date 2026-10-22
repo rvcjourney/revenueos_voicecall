@@ -19,7 +19,7 @@ _ENV_FILE = Path(__file__).parent.parent / ".env"
 _SECRET_FIELDS = frozenset({
     "SECRET_KEY", "AGENT_WEBHOOK_SECRET", "LIVEKIT_API_SECRET",
     "MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "VOBIZ_PASSWORD",
-    "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
+    "VOBIZ_AUTH_TOKEN",
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
@@ -123,43 +123,13 @@ class Settings(BaseSettings):
     VOBIZ_AUTH_ID: str = ""       # Vobiz API Auth ID for CDR/Recording fetch
     VOBIZ_AUTH_TOKEN: str = ""    # Vobiz API Auth Token
 
-    # ── Deepgram STT ──────────────────────────────────────────────────────────
-    DEEPGRAM_API_KEY: str = Field(...)
-
-    # ── ElevenLabs TTS ────────────────────────────────────────────────────────
-    ELEVENLABS_API_KEY: str = Field(...)
-    ELEVENLABS_VOICE_ID: str = "9BWtsMINqrJLrRacOk9x"
-    ELEVENLABS_MODEL_ID: str = "eleven_turbo_v2_5"
-
-    # ── Sarvam (Instant Voice Cloning for the "sarvam" calling engine) ─────────
-    # Same key as agent/.env's SARVAM_API_KEY; needs the text_to_speech_voice_cloning
-    # capability. Cloning calls stay off until SARVAM_VOICE_CLONING_ENABLED=true.
+    # ── Sarvam (the only AI provider: calls, voice cloning, "Customise with AI") ──
+    # Same key as agent/.env's SARVAM_API_KEY. Cloning additionally needs the
+    # text_to_speech_voice_cloning capability and SARVAM_VOICE_CLONING_ENABLED=true.
     SARVAM_API_KEY: str = ""
     SARVAM_VOICE_CLONING_ENABLED: bool = False
-
-    # ── Groq LLM ──────────────────────────────────────────────────────────────
-    GROQ_API_KEY: str = Field(...)
-    # Unused elsewhere in the backend today (agent.py's own outcome classifier
-    # hardcodes its model directly) -- kept in sync with Groq's currently
-    # supported models anyway so wiring these up later doesn't inherit a
-    # deprecated default. Both llama-3.1-8b-instant and llama-3.1-70b-versatile
-    # were deprecated by Groq in 2026.
-    GROQ_MODEL: str = "qwen/qwen3.6-27b"
-    GROQ_SUMMARY_MODEL: str = "openai/gpt-oss-120b"
-
-    # ── OpenAI (Prime Calling research + prompt writing) ─────────────────────
-    # Optional: without a key, Prime Calling uses Groq (no live web search).
-    OPENAI_API_KEY: str = ""
-    # Cheapest current OpenAI model with web search + structured outputs; the
-    # stronger (pricier) options are gpt-5.6-terra, gpt-5.6-sol, gpt-6-astra.
-    PRIME_OPENAI_MODEL: str = "gpt-5.6-luna"
-    # Output tokens are cheap on luna, so think harder for better sales reasoning
-    PRIME_REASONING_EFFORT: Literal["none", "low", "medium", "high", "xhigh", "max"] = "high"
-    # Paid OpenAI web search (~$0.01 per search) for each contact's company:
-    #   auto   = only when we couldn't read their website ourselves (cheapest useful)
-    #   always = every contact (also finds news, expansions, awards)
-    #   never  = website text + CSV only
-    PRIME_WEB_SEARCH: Literal["auto", "always", "never"] = "auto"
+    # Rewrites an agent's Greeting/Instructions on request (app/services/agent_builder.py)
+    SARVAM_BUILDER_MODEL: str = "sarvam-105b"
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = ""

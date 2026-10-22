@@ -7,6 +7,5 @@ import agent
 
 
 def test_agent_module_imports_and_has_expected_symbols():
-    assert hasattr(agent, "_HANGUP_RE")
-    assert hasattr(agent, "entrypoint")
+    assert hasattr(agent, "VoiceAgent")
     assert callable(agent.entrypoint)

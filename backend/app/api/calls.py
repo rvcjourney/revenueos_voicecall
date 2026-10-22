@@ -16,12 +16,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.concurrency import release_org_slot
-from app.core.credits import record_call_credits
 from app.core.deps import TokenPayload, get_current_user, require_agent_webhook_signature
 from app.core.exceptions import NotFoundError
 from app.database import get_db
-from app.models.call import Call, CallDirection, CallEvent, CallOutcome, CallStatus, CallTranscript
+from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
 from app.models.dnc import DNCReason, DoNotCallEntry
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
@@ -167,7 +165,7 @@ async def agent_report(
 
     # Log field names only (never values) for extracted_data -- caller_email/caller_phone
     # are PII and must not land in logs, but knowing *which* fields the agent sent lets us
-    # tell "Groq/agent sent nothing" apart from "backend dropped it" without a DB query.
+    # tell "the agent sent nothing" apart from "backend dropped it" without a DB query.
     log.info(
         "agent_report_received",
         call_id=str(call_id),
@@ -187,9 +185,7 @@ async def agent_report(
     # Idempotency guard: the agent retries this POST with real backoff
     # (agent/agent.py:_post_agent_report, up to 3 attempts) if the response is
     # ever lost after the backend already committed -- without this, a retry
-    # would double-increment Campaign.interested_count below, and (for inbound
-    # calls) double-bill credits and double-release the org's concurrency
-    # slot. reported_at is read here (before this request's own write) so it
+    # would double-increment Campaign.interested_count below. reported_at is read here (before this request's own write) so it
     # reflects whether an EARLIER request already completed this call's
     # one-time side effects, not this one.
     already_reported = bool(call_row and call_row.reported_at)
@@ -271,46 +267,6 @@ async def agent_report(
             existing.full_text = full_text
         else:
             db.add(CallTranscript(call_id=call_id, segments=segments, full_text=full_text))
-
-    # Inbound calls have no wrapping campaign/test-call Celery task to finalize
-    # duration/billing or release the org's concurrency slot the way outbound
-    # does (app/workers/tasks/campaign.py's _finalize / _run_test_call_async) --
-    # this report is the only signal that the call has ended, so do all three
-    # here: stamp ended_at/duration_seconds from answered_at (set when the call
-    # was accepted in app/api/agent_internal.py:start_inbound_call), bill the
-    # minutes the same way outbound calls are billed, and release the org slot
-    # acquired at accept-time. Only for calls that actually connected -- a call
-    # start_inbound_call itself rejected never reaches this endpoint at all.
-    # Guarded by already_reported: a retried report must not double-bill
-    # credits or release a slot a NEWER call may have since acquired.
-    if not already_reported and call_row and call_row.direction == CallDirection.INBOUND:
-        now = datetime.now(timezone.utc)
-        duration = int((now - call_row.answered_at).total_seconds()) if call_row.answered_at else None
-        finalize_values: dict = {"ended_at": now, "duration_seconds": duration}
-        if not body.error_message:
-            finalize_values["status"] = CallStatus.COMPLETED
-        await db.execute(update(Call).where(Call.id == call_id).values(**finalize_values))
-
-        usage = await record_call_credits(db, org_id=call_row.org_id, duration_seconds=duration)
-        if usage["overage_minutes"] > 0:
-            db.add(CallEvent(
-                call_id=call_row.id,
-                event_type="credit_overage_billed",
-                payload={
-                    "minutes_billed": usage["minutes_billed"],
-                    "overage_minutes": usage["overage_minutes"],
-                    "overage_cost_cents": usage["overage_cost_cents"],
-                    "credits_used_this_period": usage["credits_used_this_period"],
-                    "credits_per_month": usage["credits_per_month"],
-                },
-            ))
-        await release_org_slot(call_row.org_id)
-
-        if call_row.sip_trunk_id:
-            from app.workers.tasks.campaign import fetch_recording_for_inbound_call
-            fetch_recording_for_inbound_call.apply_async(
-                args=[str(call_id), str(call_row.sip_trunk_id)], queue="calls",
-            )
 
     await db.commit()
 

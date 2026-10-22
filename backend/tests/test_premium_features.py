@@ -1,9 +1,9 @@
 """
-tests/test_premium_features.py — Plan-based voice feature gating
-(app/core/plan_features.py), voice cloning (app/api/voice_cloning.py), and
-the campaign dispatcher's use of the resulting voice_id/voice_provider.
+tests/test_premium_features.py — Plan-gated voice cloning (app/core/plan_features.py,
+app/api/voice_cloning.py) and the campaign dispatcher's use of the resulting
+voice and the agent's filled-in placeholders.
 
-ElevenLabs and LiveKit are always mocked — these tests never touch the network.
+Sarvam and LiveKit are always mocked — these tests never touch the network.
 """
 from __future__ import annotations
 
@@ -15,10 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import select
 
 import app.workers.tasks.campaign as campaign_module
-from app.core.elevenlabs_voice import ElevenLabsVoiceError
 from app.core.plan_features import MAX_CLONED_VOICES_PER_ORG
 from app.core.security import create_access_token, create_platform_token, hash_password
-from app.models.agent import AgentTemplate, VoiceProvider
+from app.models.agent import AgentTemplate
 from app.models.call import Call, CallDirection, CallStatus
 from app.models.campaign import Campaign, CampaignContact, ContactStatus
 from app.models.cloned_voice import ClonedVoice
@@ -29,8 +28,9 @@ from app.models.user import Organization, User, UserRole
 from app.models.voice_clone_request import VoiceCloneRequest
 
 
-async def _make_org_and_admin(db, *, plan_features: dict | None = None) -> tuple[Organization, User, str]:
-    org = Organization(name=f"Org {uuid.uuid4().hex[:6]}", slug=f"org-{uuid.uuid4().hex[:8]}")
+async def _make_org_and_admin(db, *, plan_features: dict | None = None, cloning_allowed: bool = True) -> tuple[Organization, User, str]:
+    org = Organization(name=f"Org {uuid.uuid4().hex[:6]}", slug=f"org-{uuid.uuid4().hex[:8]}",
+                       sarvam_cloning_allowed=cloning_allowed)
     db.add(org)
     await db.flush()
 
@@ -80,161 +80,50 @@ def _fake_storage() -> MagicMock:
     return storage
 
 
-FREE_FEATURES = {"allowed_voice_providers": ["sarvam"], "voice_cloning": False}
-PRO_FEATURES = {"allowed_voice_providers": ["sarvam", "cartesia"], "voice_cloning": False}
-PREMIUM_FEATURES = {
-    "allowed_voice_providers": ["sarvam", "cartesia", "elevenlabs"],
-    "voice_cloning": True,
-}
+PRO_FEATURES = {"voice_cloning": False}
+PREMIUM_FEATURES = {"voice_cloning": True}
 
 
-# ── Agent template create/update gating ───────────────────────────────────
-
-async def test_create_agent_rejects_elevenlabs_on_free_plan(client, db):
-    _org, _user, token = await _make_org_and_admin(db, plan_features=FREE_FEATURES)
-
-    resp = await client.post(
-        "/api/agents",
-        json={"name": "Sales Bot", "voice_provider": "elevenlabs"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
-
-
-async def test_create_agent_allows_sarvam_on_free_plan(client, db):
-    _org, _user, token = await _make_org_and_admin(db, plan_features=FREE_FEATURES)
-
-    resp = await client.post(
-        "/api/agents",
-        json={"name": "Sales Bot", "voice_provider": "sarvam"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 201
-    assert resp.json()["voice_provider"] == "sarvam"
-
-
-async def test_create_agent_allows_elevenlabs_on_premium_plan(client, db):
-    _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-
-    resp = await client.post(
-        "/api/agents",
-        json={"name": "Sales Bot", "voice_provider": "elevenlabs"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 201
-
-
-async def test_create_agent_unrestricted_without_subscription(client, db):
-    """Orgs that predate the plan-gating scheme (no active subscription) are unrestricted."""
-    _org, _user, token = await _make_org_and_admin(db, plan_features=None)
-
-    resp = await client.post(
-        "/api/agents",
-        json={"name": "Sales Bot", "voice_provider": "elevenlabs"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 201
-
-
-async def test_update_agent_rejects_switching_to_disallowed_provider(client, db):
-    org, user, token = await _make_org_and_admin(db, plan_features=PRO_FEATURES)
-    agent = AgentTemplate(org_id=org.id, created_by_id=user.id, name="Bot", voice_provider=VoiceProvider.SARVAM)
-    db.add(agent)
-    await db.commit()
-    await db.refresh(agent)
-
-    resp = await client.patch(
-        f"/api/agents/{agent.id}",
-        json={"voice_provider": "elevenlabs"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
-
-    await db.refresh(agent)
-    assert agent.voice_provider == VoiceProvider.SARVAM  # unchanged
-
-
-async def test_create_agent_rejects_elevenlabs_when_org_flag_disabled(client, db):
-    org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    org.elevenlabs_enabled = False
-    await db.commit()
-
-    resp = await client.post(
-        "/api/agents",
-        json={"name": "Sales Bot", "voice_provider": "elevenlabs"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
+async def _submit_voice_clone(client, token, name: str = "My Voice"):
+    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
+        return await client.post(
+            "/api/voice-cloning",
+            data={"name": name, "language": "hindi"},
+            files={
+                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
+                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
 
 # ── Voice cloning API (submission → superadmin approval/rejection) ─────────
 
 async def test_voice_cloning_rejected_on_pro_plan(client, db):
     _org, _user, token = await _make_org_and_admin(db, plan_features=PRO_FEATURES)
-
-    resp = await client.post(
-        "/api/voice-cloning",
-        data={"name": "My Voice"},
-        files={
-            "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-            "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-        },
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
+    assert (await _submit_voice_clone(client, token)).status_code == 403
 
 
 async def test_voice_cloning_submission_creates_pending_request(client, db):
-    """Submitting no longer calls ElevenLabs directly -- it sits as pending
-    until a platform superadmin reviews the consent video."""
+    """Submitting never calls the voice provider -- it sits as pending until a
+    platform superadmin reviews the consent video."""
     org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
 
-    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
-        resp = await client.post(
-            "/api/voice-cloning",
-            data={"name": "My Voice"},
-            files={
-                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
+    resp = await _submit_voice_clone(client, token)
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "pending"
-    assert body["elevenlabs_voice_id"] is None
+    assert body["voice_id"] is None
 
     req = await db.scalar(select(VoiceCloneRequest).where(VoiceCloneRequest.org_id == org.id))
-    assert req is not None
-    assert req.status == "pending"
-    assert req.name == "My Voice"
-
+    assert (req.status, req.name, req.provider) == ("pending", "My Voice", "sarvam")
     # Not usable anywhere yet -- no ClonedVoice row exists until approval
-    cloned = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
-    assert cloned is None
-
-
-async def _submit_voice_clone(client, token, name: str):
-    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
-        return await client.post(
-            "/api/voice-cloning",
-            data={"name": name},
-            files={
-                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    assert await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id)) is None
 
 
 async def test_voice_cloning_capped_per_org(client, db):
-    """
-    Founder-requested cap: an org can have at most MAX_CLONED_VOICES_PER_ORG
-    cloned voices (counting pending requests, since those become real voices
-    if approved) -- must delete one to free a slot before cloning a different
-    voice, rather than accumulating unlimited ElevenLabs voices.
-    """
+    """At most MAX_CLONED_VOICES_PER_ORG voices, counting pending requests;
+    deleting one frees a slot."""
     _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
 
     request_ids = []
@@ -243,103 +132,20 @@ async def test_voice_cloning_capped_per_org(client, db):
         assert resp.status_code == 201
         request_ids.append(resp.json()["id"])
 
-    # At the cap -- the next submission is rejected, not silently queued.
-    over_cap_resp = await _submit_voice_clone(client, token, "One too many")
-    assert over_cap_resp.status_code == 409
+    assert (await _submit_voice_clone(client, token, "One too many")).status_code == 409
 
-    # Deleting one of the pending requests frees a slot for a new submission.
     with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
         del_resp = await client.delete(
             f"/api/voice-cloning/{request_ids[0]}", headers={"Authorization": f"Bearer {token}"}
         )
     assert del_resp.status_code == 204
-
-    after_delete_resp = await _submit_voice_clone(client, token, "A different voice")
-    assert after_delete_resp.status_code == 201
-
-
-async def test_voice_clone_request_approval_creates_model(client, db):
-    org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    _admin, admin_token = await _make_platform_admin(db)
-
-    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
-        submit_resp = await client.post(
-            "/api/voice-cloning",
-            data={"name": "My Voice"},
-            files={
-                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    request_id = submit_resp.json()["id"]
-
-    with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
-         patch("app.api.platform.clone_voice", new=AsyncMock(return_value="elevenlabs-voice-xyz")):
-        approve_resp = await client.post(
-            f"/api/platform/voice-clone-requests/{request_id}/approve",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        )
-
-    assert approve_resp.status_code == 200
-    assert approve_resp.json()["status"] == "approved"
-
-    cloned = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
-    assert cloned is not None
-    assert cloned.elevenlabs_voice_id == "elevenlabs-voice-xyz"
-    assert cloned.status == "ready"
-
-    # Now shows up as a real, ready voice in the org's own list
-    list_resp = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
-    items = list_resp.json()["items"]
-    assert len(items) == 1
-    assert items[0]["status"] == "ready"
-    assert items[0]["elevenlabs_voice_id"] == "elevenlabs-voice-xyz"
-
-
-async def test_voice_clone_request_approval_elevenlabs_rejection_returns_400(client, db):
-    _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    _admin, admin_token = await _make_platform_admin(db)
-
-    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
-        submit_resp = await client.post(
-            "/api/voice-cloning",
-            data={"name": "My Voice"},
-            files={
-                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    request_id = submit_resp.json()["id"]
-
-    with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
-         patch(
-             "app.api.platform.clone_voice",
-             new=AsyncMock(side_effect=ElevenLabsVoiceError("ElevenLabs rejected the sample")),
-         ):
-        approve_resp = await client.post(
-            f"/api/platform/voice-clone-requests/{request_id}/approve",
-            headers={"Authorization": f"Bearer {admin_token}"},
-        )
-    assert approve_resp.status_code == 400
+    assert (await _submit_voice_clone(client, token, "A different voice")).status_code == 201
 
 
 async def test_voice_clone_request_rejection_shows_reason_to_org_admin(client, db):
     _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
     _admin, admin_token = await _make_platform_admin(db)
-
-    with patch("app.api.voice_cloning.get_storage", return_value=_fake_storage()):
-        submit_resp = await client.post(
-            "/api/voice-cloning",
-            data={"name": "My Voice"},
-            files={
-                "file": ("sample.mp3", b"fake-audio-bytes", "audio/mpeg"),
-                "consent_video": ("consent.webm", b"fake-video-bytes", "video/webm"),
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    request_id = submit_resp.json()["id"]
+    request_id = (await _submit_voice_clone(client, token)).json()["id"]
 
     reject_resp = await client.post(
         f"/api/platform/voice-clone-requests/{request_id}/reject",
@@ -349,64 +155,52 @@ async def test_voice_clone_request_rejection_shows_reason_to_org_admin(client, d
     assert reject_resp.status_code == 200
     assert reject_resp.json()["status"] == "rejected"
 
-    list_resp = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
-    items = list_resp.json()["items"]
-    assert len(items) == 1
-    assert items[0]["status"] == "rejected"
-    assert items[0]["rejection_reason"] == "Video doesn't clearly show the person's face"
+    items = (await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})).json()["items"]
+    assert [(i["status"], i["rejection_reason"]) for i in items] == [
+        ("rejected", "Video doesn't clearly show the person's face")]
 
 
-async def test_voice_cloning_list_and_delete(client, db):
+async def test_old_elevenlabs_voices_are_hidden_and_not_counted(client, db):
     org, user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    cloned = ClonedVoice(org_id=org.id, created_by_id=user.id, name="Voice A", elevenlabs_voice_id="v-1")
-    db.add(cloned)
+    for i in range(MAX_CLONED_VOICES_PER_ORG):
+        db.add(ClonedVoice(org_id=org.id, created_by_id=user.id, name=f"Old {i}",
+                           elevenlabs_voice_id=f"el-{i}", provider="elevenlabs"))
     await db.commit()
-    await db.refresh(cloned)
 
-    list_resp = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
-    assert list_resp.status_code == 200
-    assert len(list_resp.json()["items"]) == 1
-
-    with patch("app.api.voice_cloning.delete_voice", new=AsyncMock(return_value=None)):
-        del_resp = await client.delete(
-            f"/api/voice-cloning/{cloned.id}", headers={"Authorization": f"Bearer {token}"}
-        )
-    assert del_resp.status_code == 204
-
-    await db.refresh(cloned)
-    assert cloned.deleted_at is not None
-
-    list_resp2 = await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})
-    assert list_resp2.json()["items"] == []
+    assert (await client.get("/api/voice-cloning", headers={"Authorization": f"Bearer {token}"})).json()["items"] == []
+    assert (await _submit_voice_clone(client, token)).status_code == 201
 
 
 # ── Using a cloned voice on an agent template ─────────────────────────────
 
+def _sarvam_clone(org_id, user_id, voice_id: str) -> ClonedVoice:
+    return ClonedVoice(org_id=org_id, created_by_id=user_id, name="Voice A",
+                       elevenlabs_voice_id=voice_id, provider="sarvam", language="hindi")
+
+
 async def test_agent_can_use_own_orgs_cloned_voice_on_premium_plan(client, db):
     org, user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    cloned = ClonedVoice(org_id=org.id, created_by_id=user.id, name="Voice A", elevenlabs_voice_id="v-mine")
-    db.add(cloned)
+    db.add(_sarvam_clone(org.id, user.id, "svc-mine"))
     await db.commit()
 
     resp = await client.post(
         "/api/agents",
-        json={"name": "Bot", "voice_provider": "elevenlabs", "voice_id": "v-mine"},
+        json={"name": "Bot", "language": "hindi", "voice_id": "svc-mine"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 201
-    assert resp.json()["voice_id"] == "v-mine"
+    assert resp.json()["voice_id"] == "svc-mine"
 
 
 async def test_agent_cannot_use_another_orgs_cloned_voice(client, db):
     other_org, other_user, _ = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    cloned = ClonedVoice(org_id=other_org.id, created_by_id=other_user.id, name="Voice A", elevenlabs_voice_id="v-theirs")
-    db.add(cloned)
+    db.add(_sarvam_clone(other_org.id, other_user.id, "svc-theirs"))
     await db.commit()
 
     _org, _user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
     resp = await client.post(
         "/api/agents",
-        json={"name": "Bot", "voice_provider": "elevenlabs", "voice_id": "v-theirs"},
+        json={"name": "Bot", "language": "hindi", "voice_id": "svc-theirs"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
@@ -414,86 +208,65 @@ async def test_agent_cannot_use_another_orgs_cloned_voice(client, db):
 
 async def test_agent_cannot_use_cloned_voice_after_downgrade_from_premium(client, db):
     org, user, token = await _make_org_and_admin(db, plan_features=PRO_FEATURES)
-    cloned = ClonedVoice(org_id=org.id, created_by_id=user.id, name="Voice A", elevenlabs_voice_id="v-mine")
-    db.add(cloned)
+    db.add(_sarvam_clone(org.id, user.id, "svc-mine"))
     await db.commit()
 
-    # Pro plan doesn't allow elevenlabs at all, so this is rejected at the
-    # provider-allowlist check before cloning is even considered.
     resp = await client.post(
         "/api/agents",
-        json={"name": "Bot", "voice_provider": "elevenlabs", "voice_id": "v-mine"},
+        json={"name": "Bot", "language": "hindi", "voice_id": "svc-mine"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
 
 
-# ── Campaign dispatcher: cloned voice flows through to _place_call ────────
+async def test_agent_rejects_a_voice_that_does_not_exist_in_its_language(client, db):
+    _org, _user, token = await _make_org_and_admin(db)
+    h = {"Authorization": f"Bearer {token}"}
+    bad = await client.post("/api/agents", json={"name": "Bot", "language": "hindi", "voice_id": "9BWtsMINqrJLrRacOk9x"}, headers=h)
+    assert bad.status_code == 422
+    ok = await client.post("/api/agents", json={"name": "Bot", "language": "hindi", "voice_id": "ritu_hi_conversation"}, headers=h)
+    assert ok.status_code == 201
 
-async def _make_campaign_setup_with_voice(db, *, voice_provider: str, voice_id: str, plan_features: dict):
+
+# ── Campaign dispatcher: voice + filled placeholders flow through to _place_call ──
+
+async def test_campaign_dispatch_sends_cloned_voice_and_filled_placeholders(db, fake_redis, monkeypatch):
     org = Organization(name=f"Dispatch Org {uuid.uuid4().hex[:6]}", slug=f"dispatch-{uuid.uuid4().hex[:8]}")
     db.add(org)
     await db.flush()
-
-    plan = Plan(
-        name=f"Plan-{uuid.uuid4().hex[:6]}", price_minor=1000, monthly_call_quota=1000,
-        max_concurrent_calls=5, credits_per_month=100, features=plan_features,
-    )
+    plan = Plan(name=f"Plan-{uuid.uuid4().hex[:6]}", price_minor=1000, monthly_call_quota=1000,
+                max_concurrent_calls=5, credits_per_month=100, features=PREMIUM_FEATURES)
     db.add(plan)
     await db.flush()
     db.add(Subscription(org_id=org.id, plan_id=plan.id, status="active"))
-
-    agent = AgentTemplate(
-        org_id=org.id, name="Premium Voice Agent",
-        voice_provider=voice_provider, voice_id=voice_id,
-    )
+    db.add(_sarvam_clone(org.id, None, "svc-cloned-premium"))
+    agent = AgentTemplate(org_id=org.id, name="Ananya", language="hindi", voice_id="svc-cloned-premium",
+                          welcome_message="Hi {userName}, this is Ananya from {partnerName}.",
+                          system_prompt="Talk to {userName} at {companyName}.",
+                          variables={"partnerName": "Acme", "userName": "there"})
     db.add(agent)
     await db.flush()
-
     campaign = Campaign(org_id=org.id, agent_template_id=agent.id, name="Premium Voice Campaign")
     db.add(campaign)
     await db.flush()
-
-    contact = CampaignContact(
-        campaign_id=campaign.id, org_id=org.id, name="Contact", phone="+911234567890",
-        status=ContactStatus.DIALING,
-    )
+    contact = CampaignContact(campaign_id=campaign.id, org_id=org.id, name="Ravi", phone="+911234567890",
+                              custom_fields={"username": "Ravi", "company_name": "Bharat Steel"},
+                              status=ContactStatus.DIALING)
     db.add(contact)
     await db.flush()
-
-    call = Call(
-        org_id=org.id, campaign_id=campaign.id, contact_id=contact.id,
-        livekit_room_name=f"cloned-voice-{contact.id.hex[:8]}",
-        phone_number=contact.phone, direction=CallDirection.OUTBOUND,
-        status=CallStatus.INITIATED,
-        # Backdated so the dispatcher's near-instant mocked call flow still
-        # produces a non-zero billable duration (see credit assertion below).
-        started_at=datetime.now(timezone.utc) - timedelta(minutes=4),
-    )
+    call = Call(org_id=org.id, campaign_id=campaign.id, contact_id=contact.id,
+                livekit_room_name=f"cloned-voice-{contact.id.hex[:8]}",
+                phone_number=contact.phone, direction=CallDirection.OUTBOUND, status=CallStatus.INITIATED,
+                # Backdated so the near-instant mocked call still bills (see assertion below).
+                started_at=datetime.now(timezone.utc) - timedelta(minutes=4))
     db.add(call)
     await db.commit()
-    await db.refresh(org)
-    await db.refresh(campaign)
-    await db.refresh(contact)
-    await db.refresh(call)
-    await db.refresh(agent)
-    return org, campaign, contact, call, agent
-
-
-async def test_campaign_dispatch_uses_cloned_voice_id_and_elevenlabs_provider(db, fake_redis, monkeypatch):
-    org, campaign, contact, call, agent = await _make_campaign_setup_with_voice(
-        db, voice_provider="elevenlabs", voice_id="v-cloned-premium", plan_features=PREMIUM_FEATURES,
-    )
 
     place_call_mock = AsyncMock(return_value="placed")
     monkeypatch.setattr(campaign_module, "_place_call", place_call_mock)
 
-    # _finalize bills credits from the real wall-clock gap between answered_at
-    # (stamped right before this call) and its own datetime.now() a moment
-    # later. An instant AsyncMock leaves that gap at ~0ms, which floors to
-    # duration_seconds=0 and bills nothing — this call needs to actually take
-    # just over a second so the ~4-minute-call assertion below has something
-    # real to measure (minutes_for_duration rounds up, so >0s already bills 1).
+    # _finalize bills from the real wall-clock gap after answered_at; an instant
+    # mock leaves ~0 s, so take just over a second.
     async def _wait_then_done(*args, **kwargs):
         await asyncio.sleep(1.1)
         return "done"
@@ -502,6 +275,13 @@ async def test_campaign_dispatch_uses_cloned_voice_id_and_elevenlabs_provider(db
     monkeypatch.setattr(campaign_module, "_acquire_cps_slot", AsyncMock(return_value=None))
     monkeypatch.setattr(campaign_module.settings, "VOBIZ_AUTH_ID", "")
     monkeypatch.setattr(campaign_module.settings, "VOBIZ_AUTH_TOKEN", "")
+
+    from app.core import agent_variables, pipelines
+    welcome, prompt, _ = agent_variables.render(
+        agent.welcome_message, agent.system_prompt,
+        columns=agent_variables.contact_columns(contact), defaults=agent.variables)
+    assert welcome == "Hi Ravi, this is Ananya from Acme." and prompt == "Talk to Ravi at Bharat Steel."
+    extra_meta = await pipelines.call_meta(db, org_id=org.id, language="hindi", voice_id=agent.voice_id)
 
     await campaign_module._run_one_call(
         http=MagicMock(),
@@ -516,16 +296,16 @@ async def test_campaign_dispatch_uses_cloned_voice_id_and_elevenlabs_provider(db
         livekit_trunk_id="ST_test_trunk",
         sip_caller_id="+910000000000",
         max_duration=600,
-        system_prompt="", welcome_message="", voice_id=agent.voice_id,
-        voice_provider=agent.voice_provider, language="hinglish",
-        llm_model="", llm_temperature=0.7,
+        system_prompt=prompt, welcome_message=welcome, llm_temperature=0.7,
+        extra_meta=extra_meta,
         org_max_concurrent=5,
     )
 
     place_call_mock.assert_awaited_once()
     _, kwargs = place_call_mock.call_args
-    assert kwargs["voice_provider"] == "elevenlabs"
-    assert kwargs["voice_id"] == "v-cloned-premium"
+    assert kwargs["welcome_message"] == "Hi Ravi, this is Ananya from Acme."
+    sarvam = kwargs["extra_meta"]["sarvam"]
+    assert (sarvam["voice_id"], sarvam["cloned"], sarvam["language"]) == ("svc-cloned-premium", True, "hindi")
 
     await db.refresh(org)
     assert org.credits_used_this_period > 0  # the call was billed too

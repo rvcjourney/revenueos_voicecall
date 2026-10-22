@@ -3,7 +3,6 @@ app/schemas/platform.py — Pydantic schemas for the SuperAdmin (platform) API.
 """
 from __future__ import annotations
 
-from typing import Literal
 
 from pydantic import BaseModel, EmailStr
 
@@ -101,7 +100,7 @@ class BillingCurrentOut(BaseModel):
 class CostSettingsOut(BaseModel):
     cost_per_minute_minor: int
     currency: str
-    # Indic Native (sarvam) engine's own rate; None = same as cost_per_minute_minor.
+    # Rate for calls on the current (Sarvam) engine; None = same as cost_per_minute_minor.
     sarvam_cost_per_minute_minor: int | None = None
 
 
@@ -110,41 +109,24 @@ class CostSettingsUpdateRequest(BaseModel):
     sarvam_cost_per_minute_minor: int | None = None
 
 
-class EngineLanguageCellOut(BaseModel):
-    enabled: bool
-    default_enabled: bool
-    effective: str            # "on" | "off: global switch" | "off: language"
-    tts_model: str | None = None          # sarvam only
-    default_tts_model: str | None = None
-    voices: list[dict] = []               # sarvam only: every valid voice for the model
-    shortlist: list[str] = []
-
-
 class EngineLanguageOut(BaseModel):
     key: str
     display: str
-    standard: EngineLanguageCellOut
-    sarvam: EngineLanguageCellOut
-
-
-class PausedCampaignOut(BaseModel):
-    id: str
-    name: str
-    org_id: str
-    org_name: str
+    enabled: bool
+    default_enabled: bool
+    tts_model: str
+    default_tts_model: str
+    voices: list[dict] = []     # every valid voice for the TTS model
+    shortlist: list[str] = []   # owner-picked subset offered to customers ([] = all)
 
 
 class EnginesOverviewOut(BaseModel):
-    global_enabled: bool
     languages: list[EngineLanguageOut]
-    paused_campaigns: list[PausedCampaignOut]
-    orgs_enabled: int
 
 
 class EnginesUpdateRequest(BaseModel):
-    global_enabled: bool | None = None
-    # {language: {"standard"|"sarvam": {"enabled"?: bool, "tts_model"?: str, "voices"?: [ids]}}}
-    languages: dict[str, dict[str, dict]] | None = None
+    # {language: {"enabled"?: bool, "tts_model"?: str, "voices"?: [ids]}}
+    languages: dict[str, dict] | None = None
 
 
 class OrgListItemOut(BaseModel):
@@ -169,12 +151,7 @@ class OrgDetailOut(OrgListItemOut):
     users_count: int
     subscription_status: str | None
     subscription_current_period_end: str | None
-    elevenlabs_enabled: bool
-    sarvam_pipeline_enabled: bool = False
-    default_pipeline: str = "standard"
     sarvam_cloning_allowed: bool = False
-    # What a new call asking for the sarvam engine actually gets for this org.
-    sarvam_effective: str = "off: organisation"
     # Plan pricing snapshot (from the org's currently-assigned Plan, not
     # frozen at signup) -- lets SuperAdmin see what each client is actually
     # being billed without cross-referencing the Plans screen separately.
@@ -187,9 +164,6 @@ class OrgPatchRequest(BaseModel):
     is_active: bool | None = None
     plan_id: str | None = None
     monthly_call_quota: int | None = None
-    elevenlabs_enabled: bool | None = None
-    sarvam_pipeline_enabled: bool | None = None
-    default_pipeline: Literal["standard", "sarvam"] | None = None
     sarvam_cloning_allowed: bool | None = None
 
 
@@ -222,7 +196,7 @@ class VoiceCloneRequestOut(BaseModel):
     name: str
     audio_url: str
     video_url: str
-    provider: str = "elevenlabs"  # owner panel only: real provider name is fine here
+    provider: str = "sarvam"  # owner panel only: real provider name is fine here
     language: str | None = None
     status: str  # "pending" | "approved" | "rejected"
     rejection_reason: str | None
@@ -254,7 +228,7 @@ class UsageAnalyticsOut(BaseModel):
     `series`) multiplied by the superadmin-set cost_per_minute_minor rate
     (app/api/platform.py: /settings/cost), compared against the MRR snapshot.
     Not a precise per-org P&L — there's no real per-call provider cost capture
-    (Groq/ElevenLabs/Vobiz/LiveKit) anywhere in the system yet.
+    (Sarvam/Vobiz/LiveKit) anywhere in the system yet.
     """
     series: list[UsageSeriesPoint]
     mrr_minor: int
@@ -274,29 +248,17 @@ class PlatformHealthOut(BaseModel):
     redis: bool
     celery_workers_online: int
     celery_worker_names: list[str]
-    elevenlabs_ok: bool
-    elevenlabs_tier: str | None = None
-    elevenlabs_characters_used: int | None = None
-    elevenlabs_characters_limit: int | None = None
-    elevenlabs_next_reset_unix: int | None = None
     db_size_bytes: int
     db_size_limit_bytes: int
     db_connections_current: int
     db_connections_max: int
     db_tables_missing_rls: list[str]
-    # Groq deprecated the post-call classification model with no warning once
-    # already (Aug 2026) -- every real call silently landed at outcome=pending
-    # until someone noticed on the calls page. This actively verifies the
-    # model is still valid on Groq instead of waiting to find out from
-    # customer-facing symptoms.
-    groq_ok: bool
-    groq_error: str | None = None
     # COMPLETED calls still sitting at outcome=pending 10+ minutes after
     # ending -- the visible version of the flag_stale_pending_calls Beat task
     # (app/workers/tasks/campaign.py), which previously only wrote a log line
     # nobody was watching. A nonzero count here means SOMETHING in the
     # post-call classification pipeline is broken right now, whatever the
-    # cause -- not just the specific Groq-model failure mode above.
+    # cause.
     stale_pending_calls_count: int
     # Call rows still sitting at status=INITIATED (the very first state, set
     # the instant a call is created — before it's even dialed) 10+ minutes

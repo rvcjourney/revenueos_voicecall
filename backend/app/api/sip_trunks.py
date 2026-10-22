@@ -14,14 +14,9 @@ Admin endpoints  (require role=admin):
                                                    outbound trunk for it
   POST   /api/sip-trunks/{trunk_id}/test       — place a short test call;
                                                    flips is_active on success
-  POST   /api/sip-trunks/{trunk_id}/inbound    — set up inbound calling for
-                                                   this number (fully automated:
-                                                   Vobiz inbound trunk + number
-                                                   assign, LiveKit inbound trunk
-                                                   + dispatch rule)
-  PATCH  /api/sip-trunks/{trunk_id}/inbound    — change which InboundAgentTemplate
-                                                   answers this number
-  DELETE /api/sip-trunks/{trunk_id}/inbound    — tear down inbound calling
+  DELETE /api/sip-trunks/{trunk_id}/inbound    — tear down inbound routing set
+                                                   up before inbound calling was
+                                                   removed
 
 User endpoint (any authenticated user):
   GET    /api/sip-trunks/my                    — list trunks assigned to me
@@ -51,15 +46,12 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError as
 from app.core.security import sign_vobiz_webhook_token
 from app.core.vobiz import (
     VobizValidationError,
-    assign_vobiz_number_to_trunk,
-    create_vobiz_inbound_trunk,
     create_vobiz_outbound_trunk,
     delete_vobiz_trunk,
     unassign_vobiz_number,
     validate_vobiz_account_and_did,
 )
 from app.database import get_db
-from app.models.inbound_agent import InboundAgentTemplate
 from app.models.sip import SipTrunk, SipTransport, UserSipTrunk
 from app.models.user import User
 
@@ -100,18 +92,12 @@ class TrunkOut(BaseModel):
     is_active: bool
     created_at: datetime
     inbound_enabled: bool
-    inbound_agent_template_id: str | None = None
     hangup_webhook_url: str | None = None
-
-
-class InboundSetupBody(BaseModel):
-    inbound_agent_template_id: UUID
 
 
 class InboundOut(BaseModel):
     trunk_id: str
     inbound_enabled: bool
-    inbound_agent_template_id: str | None
 
 
 class AssignBody(BaseModel):
@@ -163,7 +149,6 @@ def _to_out(trunk: SipTrunk) -> TrunkOut:
         is_active=trunk.is_active,
         created_at=trunk.created_at,
         inbound_enabled=trunk.inbound_enabled,
-        inbound_agent_template_id=str(trunk.inbound_agent_template_id) if trunk.inbound_agent_template_id else None,
         hangup_webhook_url=hangup_webhook_url,
     )
 
@@ -450,149 +435,7 @@ async def test_trunk(
     )
 
 
-# ── Admin: set up inbound calling ─────────────────────────────────────────────
-
-async def _get_inbound_agent(db: AsyncSession, agent_id: UUID, org_id: UUID) -> InboundAgentTemplate:
-    agent = await db.get(InboundAgentTemplate, agent_id)
-    if not agent or agent.org_id != org_id or agent.deleted_at:
-        raise NotFoundError("Inbound agent not found")
-    return agent
-
-
-@router.post("/{trunk_id}/inbound", response_model=InboundOut, status_code=201)
-async def setup_inbound(
-    trunk_id: UUID,
-    body: InboundSetupBody,
-    token: TokenPayload = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Fully automated inbound setup: create a Vobiz inbound trunk pointed at this
-    platform's LiveKit SIP endpoint, assign the org's DID to it, create a
-    matching LiveKit inbound trunk + dispatch rule (naming the same
-    "voice-call-agent" worker used for outbound). No Vobiz console or LiveKit
-    dashboard steps required.
-    """
-    trunk = await _get_trunk(db, trunk_id, token.org_id)
-    await _get_inbound_agent(db, body.inbound_agent_template_id, token.org_id)
-
-    if trunk.inbound_enabled:
-        raise ConflictError("Inbound calling is already set up for this number — use PATCH to change the agent")
-    if not trunk.vobiz_auth_id or not trunk.vobiz_auth_token:
-        raise HTTPException(status_code=503, detail="This number has no Vobiz credentials on file")
-    if not settings.LIVEKIT_SIP_HOSTNAME:
-        raise HTTPException(status_code=503, detail="LIVEKIT_SIP_HOSTNAME is not configured on this server")
-
-    vobiz_auth_id = trunk.vobiz_auth_id
-    vobiz_auth_token = trunk.vobiz_auth_token
-    did = trunk.caller_id
-
-    # 1. Vobiz: create the inbound trunk, then assign this DID to it.
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-            vobiz_inbound_trunk_id = await create_vobiz_inbound_trunk(
-                http,
-                auth_id=vobiz_auth_id,
-                auth_token=vobiz_auth_token,
-                did=did,
-                inbound_destination=settings.LIVEKIT_SIP_HOSTNAME,
-            )
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-            await assign_vobiz_number_to_trunk(
-                http, auth_id=vobiz_auth_id, auth_token=vobiz_auth_token, did=did, trunk_id=vobiz_inbound_trunk_id,
-            )
-    except VobizValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # 2. LiveKit: create the inbound trunk (scoped to this DID) + a dispatch
-    #    rule naming the existing agent worker. Room metadata is deliberately
-    #    minimal (just enough to look the call up) -- the agent fetches the
-    #    live system_prompt/voice config at call time via
-    #    POST /api/internal/inbound/start, the same way outbound always
-    #    builds it fresh from the DB rather than caching it anywhere.
-    lk = LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
-    livekit_inbound_trunk_id = None
-    try:
-        try:
-            inbound_trunk_info = await lk.sip.create_inbound_trunk(
-                lk_api.CreateSIPInboundTrunkRequest(
-                    trunk=lk_api.SIPInboundTrunkInfo(
-                        name=f"vobiz-inbound-{did}",
-                        # LiveKit matches this list against the exact digit string
-                        # Vobiz sends in the INVITE's destination number, and Vobiz
-                        # doesn't guarantee which of "+91XXXXXXXXXX" / "91XXXXXXXXXX"
-                        # it uses -- registering both formats is the documented way
-                        # to cover that ambiguity (confirmed with Vobiz support after
-                        # a real inbound call 404'd on a trunk that only had the "+"
-                        # form registered).
-                        numbers=[did, did.lstrip("+")],
-                    )
-                )
-            )
-            livekit_inbound_trunk_id = inbound_trunk_info.sip_trunk_id
-
-            dispatch_rule_info = await lk.sip.create_dispatch_rule(
-                lk_api.CreateSIPDispatchRuleRequest(
-                    trunk_ids=[livekit_inbound_trunk_id],
-                    name=f"inbound-{did}",
-                    rule=lk_api.SIPDispatchRule(
-                        dispatch_rule_individual=lk_api.SIPDispatchRuleIndividual(room_prefix=f"inbound-{did.lstrip('+')}-")
-                    ),
-                    room_config=lk_api.RoomConfiguration(
-                        metadata=json.dumps({"call_type": "inbound", "sip_trunk_id": str(trunk.id)}),
-                        agents=[lk_api.RoomAgentDispatch(agent_name=settings.LIVEKIT_AGENT_NAME)],
-                    ),
-                )
-            )
-        except TwirpError as exc:
-            # Persist whatever succeeded so DELETE /inbound can clean it up later
-            # instead of leaving an orphaned, untracked Vobiz/LiveKit resource.
-            trunk.vobiz_inbound_trunk_id = vobiz_inbound_trunk_id
-            trunk.livekit_inbound_trunk_id = livekit_inbound_trunk_id
-            await db.commit()
-            log.warning("inbound_setup_livekit_failed", trunk_id=str(trunk.id), error=exc.message)
-            raise HTTPException(status_code=400, detail=f"Could not set up LiveKit inbound routing: {exc.message}")
-    finally:
-        await lk.aclose()
-
-    trunk.vobiz_inbound_trunk_id = vobiz_inbound_trunk_id
-    trunk.livekit_inbound_trunk_id = livekit_inbound_trunk_id
-    trunk.livekit_inbound_dispatch_rule_id = dispatch_rule_info.sip_dispatch_rule_id
-    trunk.inbound_agent_template_id = body.inbound_agent_template_id
-    trunk.inbound_enabled = True
-    await db.commit()
-    await db.refresh(trunk)
-
-    return InboundOut(
-        trunk_id=str(trunk.id),
-        inbound_enabled=trunk.inbound_enabled,
-        inbound_agent_template_id=str(trunk.inbound_agent_template_id),
-    )
-
-
-@router.patch("/{trunk_id}/inbound", response_model=InboundOut)
-async def update_inbound_agent(
-    trunk_id: UUID,
-    body: InboundSetupBody,
-    token: TokenPayload = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Swap which InboundAgentTemplate answers this number. No Vobiz/LiveKit
-    calls needed -- the agent config is always fetched live at call time."""
-    trunk = await _get_trunk(db, trunk_id, token.org_id)
-    if not trunk.inbound_enabled:
-        raise HTTPException(status_code=400, detail="Inbound calling isn't set up for this number yet")
-    await _get_inbound_agent(db, body.inbound_agent_template_id, token.org_id)
-
-    trunk.inbound_agent_template_id = body.inbound_agent_template_id
-    await db.commit()
-    await db.refresh(trunk)
-    return InboundOut(
-        trunk_id=str(trunk.id),
-        inbound_enabled=trunk.inbound_enabled,
-        inbound_agent_template_id=str(trunk.inbound_agent_template_id),
-    )
-
+# ── Admin: tear down old inbound routing ─────────────────────────────────────
 
 @router.delete("/{trunk_id}/inbound", response_model=InboundOut)
 async def teardown_inbound(
@@ -649,13 +492,12 @@ async def teardown_inbound(
             await lk.aclose()
 
     trunk.inbound_enabled = False
-    trunk.inbound_agent_template_id = None
     trunk.vobiz_inbound_trunk_id = None
     trunk.livekit_inbound_trunk_id = None
     trunk.livekit_inbound_dispatch_rule_id = None
     await db.commit()
 
-    return InboundOut(trunk_id=str(trunk.id), inbound_enabled=False, inbound_agent_template_id=None)
+    return InboundOut(trunk_id=str(trunk.id), inbound_enabled=False)
 
 
 # ── Admin: update trunk ───────────────────────────────────────────────────────

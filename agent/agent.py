@@ -1,16 +1,22 @@
 """
-agent.py — Hinglish Voice Sales Agent
-Pipeline: Sarvam STT → Groq LLM → ElevenLabs/Sarvam/Cartesia/Chatterbox TTS (per-agent voice_provider)
+agent.py — the voice call agent. Every call runs on Sarvam: realtime STT,
+sarvam-105b-conversations and Bulbul TTS (built in sarvam_pipeline.py).
+
+The agent speaks the Greeting, then follows the agent's Instructions — the
+backend has already filled every {variable}. Hanging up, switching language and
+booking a next step are tools the LLM calls; no rules are hidden in the prompt.
 """
 
 import os
 import asyncio
-import functools
 import hashlib
 import hmac
 import json
 import re
 import time
+import uuid
+from typing import Literal
+
 import certifi
 import structlog
 from datetime import datetime
@@ -20,12 +26,10 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, StopResponse, TurnHandlingOptions, stt, tts
+from livekit.agents import AgentSession, Agent, JobProcess, RunContext, StopResponse, function_tool, stt, tts
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
-from livekit.plugins import groq, silero, elevenlabs, cartesia, sarvam
 
-import languages
 import sarvam_pipeline
 try:
     # Separate package (livekit-plugins-noise-cancellation) -- the livekit-agents
@@ -35,37 +39,13 @@ try:
     from livekit.plugins import noise_cancellation
 except ImportError:
     noise_cancellation = None
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
-import chatterbox_tts
 
 from config import (
     AGENT_SYSTEM_PROMPT,
-    AGENT_WELCOME_MESSAGE,
     LIVEKIT_AGENT_NAME,
-    GROQ_MODEL,
-    GROQ_LLM_TEMPERATURE,
-    GROQ_CLASSIFY_MODEL,
-    SARVAM_LLM_MODEL,
-    ELEVENLABS_API_KEY,
-    ELEVENLABS_VOICE_ID,
-    ELEVENLABS_MODEL_ID,
-    ELEVENLABS_MULTILINGUAL_MODEL,
-    CARTESIA_API_KEY,
-    CARTESIA_VOICE_ID,
-    CARTESIA_MODEL_ID,
-    CHATTERBOX_BASE_URL,
-    CHATTERBOX_VOICE_ID,
-    CHATTERBOX_LANGUAGE,
-    CHATTERBOX_SAMPLE_RATE,
-    CHATTERBOX_VOICE_MODE,
     SARVAM_API_KEY,
-    SARVAM_MODEL,
-    SARVAM_VOICE_ID,
-    SARVAM_SAMPLE_RATE,
-    SARVAM_STT_MODEL,
-    SARVAM_STT_MODE,
-    SARVAM_STT_LANGUAGE,
-    SARVAM_REGIONAL_SPEAKER,
+    SARVAM_CHAT_URL,
+    SARVAM_CLASSIFY_MODEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
     FAILED_REPORTS_PATH,
@@ -78,33 +58,6 @@ configure_logging()
 init_sentry()
 logger = structlog.get_logger("voice-agent")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-_LLM_MAX_TOKENS = 400  # must be high enough for tool-call JSON + speech prefix (~120 tokens); 110 caused Groq "Failed to call a function" truncation errors
-
-# Smallest schedule ElevenLabs allows (floor is 50/chunk): once a chunk's audio
-# starts playing it can't be recalled, so a caller's interruption can only take
-# effect at the next chunk boundary. Large chunks (this was [120, 200, 280, 360])
-# meant that boundary could be a full sentence away, so an interruption only cut
-# the agent off after it finished speaking — this shrinks that window to a few
-# words at most, at the cost of very slightly more segmented prosody between chunks.
-_CHUNK_LENGTH_SCHEDULE = [50, 90, 120, 150]
-
-# Single source of truth for both the real TTS object and its connection-warmup
-# throwaway call below -- these drifting apart is exactly what caused two
-# separate live bugs (2026-09-16): stability/style left at looser defaults than
-# intended (audible tone drift mid-call), and the warmup call using ElevenLabs'
-# own default voice instead of this one (welcome message sounding like a
-# different voice on cold start). stability=0.85/style=0.0 = one steady,
-# consistent tone across all chunks; similarity_boost=0.75 keeps it close to
-# the source voice. speed was left unset (ElevenLabs' own NOT_GIVEN default)
-# until reported live the same day as speaking pace swinging "very fast to
-# very slow" turn to turn -- pinned to 1.0 (neutral, ElevenLabs' own baseline
-# pace) for the same reason stability/style are pinned: one steady value
-# instead of letting it vary per generation.
-_ELEVENLABS_VOICE_SETTINGS = elevenlabs.VoiceSettings(
-    stability=0.85, similarity_boost=0.75, style=0.0, speed=1.0, use_speaker_boost=True,
-)
-
 
 def _safe_task(coro, name: str = "") -> asyncio.Task:
     """create_task wrapper that logs instead of raising 'Future exception was never retrieved'."""
@@ -112,9 +65,8 @@ def _safe_task(coro, name: str = "") -> asyncio.Task:
     def _on_done(t: asyncio.Task) -> None:
         if not t.cancelled() and (exc := t.exception()) is not None:
             # Was logger.debug — background tasks include the report-posting paths
-            # (voicemail/bot/keyword hangups, disconnect handler), so a debug-level
-            # log here meant a lost call report never showed up anywhere anyone
-            # would actually look.
+            # (voicemail/bot hangups, disconnect handler), so a debug-level log here
+            # meant a lost call report never showed up anywhere anyone would look.
             logger.error("background task %s raised: %s", name or repr(coro), exc)
     task.add_done_callback(_on_done)
     return task
@@ -152,353 +104,33 @@ def _sign_webhook_body(body: bytes) -> str:
     return f"t={ts},v1={mac}"
 
 
-async def _resolve_inbound_call(meta: dict, participant, room_name: str) -> dict | None:
-    """
-    Called once for every inbound call, right after the SIP participant joins.
-    Reads which number was dialed off the participant's SIP attributes, asks
-    the backend which InboundAgentTemplate answers it (and has it create the
-    Call row -- inbound calls have no campaign/test-call flow to do that
-    ahead of time the way outbound does), and returns a dict shaped exactly
-    like the fields entrypoint() already reads from outbound room metadata.
-
-    Returns None if the call can't be resolved (backend down, number not
-    configured for inbound, etc.) -- entrypoint() hangs up in that case.
-    """
+async def _sarvam_chat(messages: list[dict], *, max_tokens: int) -> tuple[str, str | None]:
+    """One non-streaming Sarvam chat completion (post-call classification).
+    Returns (content, finish_reason)."""
     import httpx
 
-    sip_trunk_id = meta.get("sip_trunk_id", "")
-    attrs = dict(getattr(participant, "attributes", None) or {})
-    # NOTE: standard LiveKit SIP attribute keys -- log the full set below so a
-    # live inbound test call can confirm/correct these if this project's
-    # LiveKit Cloud version names them differently.
-    from_number = attrs.get("sip.phoneNumber", "")
-    to_number = attrs.get("sip.trunkPhoneNumber", "")
-    logger.info(
-        "inbound_participant_attributes | sip_trunk_id=%s from=%s to=%s all=%s",
-        sip_trunk_id, from_number, to_number, attrs,
-    )
-
-    if not sip_trunk_id:
-        logger.error("inbound_call_missing_sip_trunk_id | room metadata=%s", meta)
-        return None
-
-    payload = {
-        "sip_trunk_id": sip_trunk_id,
-        "room_name": room_name,
-        "from_number": from_number,
-        "to_number": to_number,
-    }
-    body = json.dumps(payload).encode()
-    headers = {
-        "Content-Type": "application/json",
-        "X-Webhook-Signature": _sign_webhook_body(body),
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.post(
-                f"{BACKEND_INTERNAL_URL}/api/internal/inbound/start",
-                content=body,
-                headers=headers,
-            )
-        if resp.status_code != 200:
-            logger.error("inbound_resolve_failed | status=%s body=%s", resp.status_code, resp.text[:500])
-            return None
-        return resp.json()
-    except Exception as exc:
-        logger.error("inbound_resolve_error | %s", exc)
-        return None
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        resp = await http.post(
+            SARVAM_CHAT_URL,
+            headers={"api-subscription-key": SARVAM_API_KEY},
+            json={
+                "model": SARVAM_CLASSIFY_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0,
+                "reasoning_effort": "low",
+            },
+        )
+        resp.raise_for_status()
+        choice = resp.json()["choices"][0]
+        return (choice["message"].get("content") or "").strip(), choice.get("finish_reason")
 
 
-# =============================================================================
-# Groq LLM wrapper — caps max_tokens on every call
-# =============================================================================
-# Reasoning models add real chain-of-thought latency before the visible answer
-# even at their lowest setting -- openai/gpt-oss-20b/120b can only go as low as
-# "low" (confirmed in the installed livekit-plugins-groq SDK, which auto-sets
-# reasoning_effort="low" for those two models and nothing lower is available),
-# which measured as an 18s+ welcome-message delay in real testing. qwen/qwen3.6-27b
-# is the one model on this list that supports a genuine non-thinking mode via
-# reasoning_effort="none" -- explicitly forced here since the installed SDK
-# version predates this model and has no built-in default for it (it would
-# otherwise fall through to Groq's server-side default, which is "default"/
-# thinking-mode-on).
-_REASONING_EFFORT_OVERRIDES = {
-    "qwen/qwen3.6-27b": "none",
-}
-
-# Confirmed via a real 400 from Groq: "failed to template request: ... minijinja:
-# rendering failed: raise_exception: No user query found in messages." -- this
-# model's chat template hard-rejects a request containing only a system prompt
-# and no user turn, which is exactly how the welcome message is generated (no
-# customer has spoken yet). Every other model tolerates this; only listing the
-# ones confirmed to need the workaround in on_enter() below.
-_NEEDS_SYNTHETIC_FIRST_TURN = {"qwen/qwen3.6-27b"}
-
-
-class _CappedGroqLLM(groq.LLM):
-    def chat(self, *, chat_ctx, **kwargs):
-        ek = dict(kwargs.pop("extra_kwargs", {}) or {})
-        ek.setdefault("max_tokens", _LLM_MAX_TOKENS)
-        return super().chat(chat_ctx=chat_ctx, extra_kwargs=ek, **kwargs)
-
-
-# ── Hangup detection ──────────────────────────────────────────────────────────
-# Sarvam's STT transcribes Hindi words in Devanagari script even in codemix mode
-# (confirmed against real call transcripts — e.g. "नहीं", not "nahi") while
-# English loanwords ("bye", "ok", "interested") stay in Latin script. Every
-# Hindi word below is matched in BOTH scripts for exactly this reason — the
-# original Latin-only version of this pattern (alvida/chalta hoon/band karo/...)
-# was very likely never matching a single real Hindi-spoken hangup, since real
-# transcripts never come back romanized.
-_alvida  = r"(?:alvida|अलविदा)"
-_chalta  = r"(?:chalta|चलता)"
-_chalti  = r"(?:chalti|चलती)"
-_nikalta = r"(?:nikalta|निकलता)"
-_nikalti = r"(?:nikalti|निकलती)"
-_hoon    = r"(?:hoon|hu|हूँ|हूं)"
-_phone   = r"(?:phone|फोन)"
-_rakhna  = r"(?:rakhna|रखना)"
-_rakh    = r"(?:rakh|रख)"
-_band    = r"(?:band|बंद)"
-_karo    = r"(?:karo|करो)"
-_rakho   = r"(?:rakho|रखो)"
-_do_w    = r"(?:do|दो)"
-_call_w  = r"(?:call|कॉल)"
-_khatam  = r"(?:khatam|khatm|खतम|ख़त्म)"
-_karte   = r"(?:karte|करते)"
-_hain    = r"(?:hain|हैं)"
-_rakhta  = r"(?:rakhta|रखता)"
-_rakhti  = r"(?:rakhti|रखती)"
-_rahi    = r"(?:rahi|रही)"
-_chalo   = r"(?:chalo|चलो)"
-_theek   = r"(?:theek|ठीक)"
-_hai_w   = r"(?:hai|है)"
-_ji_w    = r"(?:ji|जी)"
-_accha   = r"(?:accha|अच्छा)"
-_interest = r"interest(?:ed)?"  # "interest" and "interested" both occur in real transcripts
-_nahi_w   = r"(?:nahi|नहीं)"
-# Up to 2 filler words between the negation and "interest"/"chahiye" -- real
-# speech doesn't always put them adjacent (e.g. "interest भी नहीं है" has
-# "bhi"/"hai" in between). Bounded rather than unbounded so an unrelated "nahi"
-# elsewhere in a longer sentence ("interested hoon, bas price ki clarity nahi
-# hai") can't falsely trigger a hangup on a customer who's still interested.
-_GAP      = r"(?:\s+\S+){0,2}\s+"
-
-# Devanagari letters are built from a base consonant plus separate combining
-# vowel-sign codepoints (matras) -- Python's stdlib `re` module's \b/\w do NOT
-# treat those combining marks as word characters, so \b silently splits a word
-# like "अलविदा" mid-letter and never matches it with a trailing \b (confirmed:
-# \b-wrapped Devanagari alternatives never matched ANY real or synthetic test
-# string). These lookarounds define "boundary" as "not touching another
-# non-space, non-punctuation character" instead -- script-agnostic, and still
-# allows punctuation with no space before it (real transcripts do this, e.g.
-# "interested. Thank you").
-_LB = r"(?<![^\s.,!?;:\"'()\-])"
-_LA = r"(?![^\s.,!?;:\"'()\-])"
-
-_HANGUP_RE = re.compile(
-    _LB + r"(" +
-    # Universal — these words are ONLY ever used to end a call
-    rf"bye|goodbye|{_alvida}"
-    # Hinglish bye combos ("bye"/"ok" stay Latin as English loanwords)
-    rf"|ok\s*bye|{_chalo}\s*bye|{_theek}\s*{_hai_w}\s*bye|ok\s+{_ji_w}\s+bye|{_accha}\s+bye"
-    # "I'm heading off" — very unambiguous phone-enders
-    rf"|{_chalta}\s+{_hoon}|{_chalti}\s+{_hoon}|{_nikalta}\s+{_hoon}|{_nikalti}\s+{_hoon}"
-    # Putting down the phone — only said when actually ending
-    rf"|{_phone}\s+{_rakhna}|{_phone}\s+{_rakh}|{_band}\s+{_karo}|{_rakho}\s+{_phone}|{_rakh}\s+{_do_w}"
-    rf"|{_call_w}\s+{_khatam}|{_khatam}\s+{_karte}\s+{_hain}"
-    rf"|{_rakhta}\s+{_hoon}|{_rakhti}\s+{_hoon}|{_rakh}\s+{_rahi}\s+{_hoon}"
-    # Firm rejection — customer isn't just pausing/thinking, they've said no.
-    # A clear decline should end the call at ANY turn count (see _trigger_hangup's
-    # firm_decline check below) — nothing to gain by continuing to pitch someone
-    # who has already refused.
-    r"|not\s+interested|no\s+thanks|no\s+thank\s+you"
-    rf"|{_nahi_w}{_GAP}{_interest}|{_interest}{_GAP}{_nahi_w}"
-    rf"|{_nahi_w}\s*(?:hai\s*)?चाहिए|चाहिए\s*{_nahi_w}"
-    # System-level
-    r"|disconnect|hang\s*up|call\s+end"
-    r")" + _LA,
-    re.IGNORECASE | re.UNICODE,
-)
-_FAREWELL = "Bahut shukriya ji, aapka time dene ke liye! Take care, Bye"
-
-# ── Silence / voicemail / bot detection ───────────────────────────────────────
-_SILENCE_INITIAL_SLEEP  = 15.0   # initial wait (covers welcome TTS playback + response window)
+# ── Silence handling ──────────────────────────────────────────────────────────
+_SILENCE_INITIAL_SLEEP  = 15.0   # initial wait (covers greeting playback + response window)
 _SILENCE_FIRST_TIMEOUT  = 18.0   # seconds of no user speech before first probe
 _SILENCE_PROBE_INTERVAL = 10.0   # seconds between subsequent probes
-_SILENCE_PROBES = [
-    "Hello ji? Kya aap sun rahe hain mujhe? Am I audible?",
-    "Koi awaaz nahi aa rahi aapki taraf se. Are you still there?",
-]
-
-# ── Time-of-day greeting + gender-neutral address ─────────────────────────────
-# Every campaign in this system already defaults to "Asia/Kolkata" when no
-# timezone is configured (see Campaign.timezone / _in_calling_window in
-# backend/app/workers/tasks/campaign.py) — reuse the same default here so a
-# stored welcome_message's greeting always matches the real time of the call,
-# and never assumes the customer's gender via "Sir"/"Ma'am".
-_GREETING_RE = re.compile(r"\bgood\s+(morning|afternoon|evening|night)\b", re.IGNORECASE)
-_HONORIFIC_RE = re.compile(r"\b(sir|ma'?am|madam)\b", re.IGNORECASE)
-
-
-def _time_of_day_greeting(tz_name: str = "Asia/Kolkata") -> str:
-    try:
-        hour = datetime.now(ZoneInfo(tz_name)).hour
-    except Exception:
-        # Covers ZoneInfoNotFoundError (bad tz name) AND the IANA tzdata
-        # package being entirely unavailable (e.g. Windows / slim Docker
-        # images without the `tzdata` PyPI package) — never let a timezone
-        # lookup failure crash the whole call. Falls back to system local
-        # time, which is still correct for the single-region (India) case
-        # this deployment runs in.
-        hour = datetime.now().hour
-    if hour < 12:
-        return "Good Morning"
-    if hour < 17:
-        return "Good Afternoon"
-    return "Good Evening"
-
-
-def _localize_welcome_message(text: str, tz_name: str = "Asia/Kolkata") -> str:
-    """Correct a stored welcome_message's time-of-day greeting to match right now,
-    and swap gendered honorifics for the neutral Hinglish "ji" — same message,
-    spoken at the right time to the right person."""
-    if not text:
-        return text
-    try:
-        corrected = _GREETING_RE.sub(_time_of_day_greeting(tz_name), text)
-        corrected = _HONORIFIC_RE.sub("ji", corrected)
-        return corrected
-    except Exception:
-        logger.warning("greeting localization failed — using original text unchanged", exc_info=True)
-        return text
-
-
-_HONORIFIC_GREETING_RE = re.compile(
-    r"\bgood\s+(?:morning|afternoon|evening|night)\b|\b(?:sir|ma'?am|madam)\b",
-    re.IGNORECASE,
-)
-
-
-def _honorific_greeting_filter_transform(tz_name: str = "Asia/Kolkata", honorific: str = "ji"):
-    """Backstop for the LIVE TTS stream, not just the pre-corrected welcome_message text.
-    Guardrail 1a tells the LLM not to say "Sir"/"Ma'am" and to use the right time-of-day
-    greeting, but that's a soft instruction — the LLM can still improvise it on the opening
-    line ("speak naturally") or later in the call. Rewrite every chunk deterministically so
-    a wrong honorific/greeting can never actually reach the caller.
-
-    `honorific` is the call's own language.honorific (languages.py) — "ji" for Hindi/
-    Hinglish/Marathi/Punjabi, "" for Tamil/Telugu/Kannada/Bengali/Gujarati/English, which
-    don't use it. Forcing "ji" onto every call regardless of language used to put a Hindi
-    word into every single reply of a Gujarati or Telugu call (reported as "speaking mix
-    like Hindi+Gujarati" / "Hindi+Telugu"). Empty honorific just drops Sir/Ma'am instead of
-    substituting the wrong-language word.
-
-    A match is only substituted once `tail` further characters have arrived after it —
-    i.e. once its right word-boundary is confirmed by text actually received, not just
-    "nothing else happened to arrive yet". Without that, a chunk boundary landing right
-    after "Sir" (before the "f" of "Sirf" arrives) would wrongly treat "Sir" as a whole
-    word and mangle it into "jif"."""
-    tail = max(len("good afternoon"), len("madam")) - 1
-    greeting = _time_of_day_greeting(tz_name)
-    pattern = _HONORIFIC_GREETING_RE
-
-    def _replace(m: re.Match) -> str:
-        # honorific="" (Tamil/Telugu/Kannada/Bengali/Gujarati/English) means this language
-        # has no local equivalent, so Sir/Ma'am is simply dropped rather than replaced with
-        # the Hindi word "ji".
-        return greeting if m.group(0)[0].lower() == "g" else honorific
-
-    async def _filter(text_stream):
-        buf = ""
-        async for chunk in text_stream:
-            buf += chunk
-            confirmed_end = len(buf) - tail
-            if confirmed_end > 0:
-                # Build output from the matches themselves (using their real position in
-                # `buf`, which already has `tail` chars of real lookahead past them) rather
-                # than slicing off a prefix and re-running the regex on it in isolation —
-                # re-matching an isolated slice loses that lookahead and reintroduces the
-                # exact false-positive ("Sirf" split right after "Sir") this is guarding against.
-                out_end = confirmed_end
-                parts, last = [], 0
-                for m in pattern.finditer(buf):
-                    if m.end() > confirmed_end:
-                        out_end = min(out_end, m.start())
-                        break
-                    parts.append(buf[last:m.start()])
-                    parts.append(_replace(m))
-                    last = m.end()
-                if out_end > 0:
-                    parts.append(buf[last:out_end])
-                    yield "".join(parts)
-                    buf = buf[out_end:]
-        if buf:
-            yield pattern.sub(_replace, buf)
-
-    return _filter
-
-
-_DIGIT_RUN_RE = re.compile(r"\b\d(?:[ \-]?\d){6,}\b")
-# A digit run still being dictated, touching the end of the buffered text so far —
-# either mid-digit or on a dangling separator waiting for the next digit. Used to
-# hold back output rather than flush a short prefix (e.g. "788") before the rest
-# of the number ("7881708") arrives in a later chunk.
-_TRAILING_DIGIT_RUN_RE = re.compile(r"\d(?:[ \-]?\d)*[ \-]?$")
-_DIGIT_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
-
-
-def _digit_spellout_transform():
-    """Backstop for phone numbers / OTPs read back to the customer.
-
-    Guardrail 14 asks the LLM to speak digit sequences as English words (never
-    Hindi 'ek/do/teen...'), but that's a soft instruction — the LLM can still
-    emit a bare numeral string or Hindi words. Rewrite any run of 7+ digits
-    deterministically into spelled-out English digit words before it reaches
-    TTS, so a hi-IN-configured voice (Sarvam Bulbul, Chatterbox) can't localize
-    a bare numeral into Hindi number words.
-
-    Same "confirmed match" buffering as _honorific_greeting_filter_transform,
-    plus an extra guard: a short digit run (fewer than 7 digits so far) touching
-    the tail of the buffer doesn't match _DIGIT_RUN_RE at all yet, so without
-    this it would get flushed as bare digits before the rest of the number
-    arrives in the next chunk. _TRAILING_DIGIT_RUN_RE catches that in-progress
-    run (of any length) and holds it back too.
-    """
-    tail = 2
-
-    def _spell(m: re.Match) -> str:
-        digits = re.sub(r"\D", "", m.group(0))
-        return " ".join(_DIGIT_WORDS[int(d)] for d in digits)
-
-    async def _filter(text_stream):
-        buf = ""
-        async for chunk in text_stream:
-            buf += chunk
-            confirmed_end = len(buf) - tail
-            if confirmed_end > 0:
-                out_end = confirmed_end
-                parts, last = [], 0
-                for m in _DIGIT_RUN_RE.finditer(buf):
-                    if m.end() > confirmed_end:
-                        out_end = min(out_end, m.start())
-                        break
-                    parts.append(buf[last:m.start()])
-                    parts.append(_spell(m))
-                    last = m.end()
-                trailing = _TRAILING_DIGIT_RUN_RE.search(buf, last)
-                if trailing:
-                    out_end = min(out_end, trailing.start())
-                if out_end > last:
-                    parts.append(buf[last:out_end])
-                if out_end > 0:
-                    yield "".join(parts)
-                    buf = buf[out_end:]
-        if buf:
-            yield _DIGIT_RUN_RE.sub(_spell, buf)
-
-    return _filter
+_SILENCE_PROBE_COUNT    = 2      # probes before hanging up; each speaks the language's repeat_line
 
 # Listening sounds ("backchannels") a caller makes WHILE the agent is talking —
 # "haan", "hmm", "achha", "theek hai", "yes" — which mean "go on", not "stop".
@@ -595,213 +227,19 @@ _FORWARDING_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-# Strips "end_call" text (and Llama tool-call leakage variants) before TTS.
-_END_CALL_STRIP_RE = re.compile(
-    r'(?:function\s+)?[\[\(]?\bend[_\s]call\b[\]\)]?(?:\s+function)?'
-    r'|\{[^{}]*\bend[_\s]call\b[^{}]*\}',
-    re.IGNORECASE,
-)
 
+def build_instructions(instructions: str, state: "sarvam_pipeline.SarvamCallState") -> str:
+    """The agent's own Instructions plus the call's language — a campaign setting
+    the LLM can't otherwise know. Nothing else is added."""
+    return f"{instructions.strip()}\n\n# Call language\nThis call is in {state.lang['display']}."
 
-# The LLM emits [lang:tamil] when the customer asks it to switch language. Like
-# [end_call] it is a silent control marker: stripped here, never spoken, and it
-# re-points both TTS and STT at that language for the rest of the call.
-_LANG_SWITCH_RE = re.compile(r"[\[\(]\s*lang\s*[:=]\s*([A-Za-zऀ-ൿ ]{2,20})\s*[\]\)]", re.IGNORECASE)
-
-
-def _language_switch_filter_transform(switch_fn):
-    """Strip [lang:x] markers from spoken text and apply the switch."""
-    tail = len("[lang:gujarati]") - 1  # rolling buffer so a split marker isn't missed
-
-    async def _filter(text_stream):
-        buf = ""
-        async for chunk in text_stream:
-            buf += chunk
-            match = _LANG_SWITCH_RE.search(buf)
-            while match:
-                _safe_task(switch_fn(match.group(1)), "language-switch")
-                # No strip(): the buffer is mid-stream, and trimming its edges
-                # would glue the words on either side of the marker together.
-                buf = buf[:match.start()] + " " + buf[match.end():]
-                match = _LANG_SWITCH_RE.search(buf)
-            if len(buf) > tail:
-                yield buf[:-tail]
-                buf = buf[-tail:]
-        if buf:
-            match = _LANG_SWITCH_RE.search(buf)
-            while match:
-                _safe_task(switch_fn(match.group(1)), "language-switch")
-                buf = buf[:match.start()] + " " + buf[match.end():]
-                match = _LANG_SWITCH_RE.search(buf)
-            if buf:
-                yield buf
-
-    return _filter
-
-
-def _end_call_filter_transform(hangup_fn):
-    tail = len("end_call") - 1  # rolling buffer so split tokens aren't missed
-
-    async def _filter(text_stream):
-        buf = ""
-        fired = False
-        async for chunk in text_stream:
-            buf += chunk
-            if not fired and _END_CALL_STRIP_RE.search(buf):
-                fired = True
-                _safe_task(hangup_fn(), "hangup-from-tts-filter")
-                buf = _END_CALL_STRIP_RE.sub("", buf).strip()
-            if len(buf) > tail:
-                yield buf[:-tail]
-                buf = buf[-tail:]
-        if buf:
-            if not fired:
-                buf = _END_CALL_STRIP_RE.sub("", buf).strip()
-            if buf:
-                yield buf
-
-    return _filter
-
-
-# ── System prompt guardrails ──────────────────────────────────────────────────
-def _build_prompt(raw: str, welcome_message: str = "", language: str = "hinglish") -> str:
-    p = raw.strip()
-    lang_cfg = languages.get(language)
-
-    # Inject the welcome message as a first-turn instruction.
-    # This makes the LLM generate the opening through the same streaming
-    # LLM→TTS pipeline as every other turn — identical voice tone and prosody.
-    # (session.say() sends a static text block to ElevenLabs which produces
-    #  a noticeably different prosody from streamed LLM output.)
-    opening_block = ""
-    if welcome_message and welcome_message.strip():
-        opening_block = (
-            "[FIRST TURN — no customer input yet]\n"
-            f'Open the call with this line, spoken naturally: "{welcome_message.strip()}"\n'
-            "This line's time-of-day greeting and address term are already correct for right "
-            "now — say it as-is, naturally, like a real person on the phone, not read off a script.\n"
-            "Then stop immediately and wait for the customer to respond.\n\n"
-        )
-
-    honorific_clause = (
-        f"use the warm, gender-neutral honorific '{lang_cfg.honorific}', or their name once you know it."
-        if lang_cfg.honorific else
-        "this language has no 'ji'-style honorific — use their name once you know it, or address "
-        "them plainly and warmly without one."
-    )
-    # Every spoken example written out elsewhere in these rules (closings, confirmations,
-    # the WhatsApp ask, filler-word lists) is phrased in Hindi/Hinglish for illustration —
-    # these instructions are reused unchanged for every language. Without this rule a
-    # non-Hindi call would imitate those literal Hindi words (most visibly "ji", "haan",
-    # "theek hai", "bilkul"), which is exactly what got reported as the agent "speaking
-    # Hindi + Gujarati" / "Hindi + Telugu" instead of "{language} + English".
-    script_clause = (
-        f" Write it in {lang_cfg.display}'s own native script (not Romanised/English letters) — the "
-        "voice engine reading your words aloud is tuned for that script and mispronounces Romanised "
-        "text; keep English loanwords (names, technical/business terms) in Roman letters inline, "
-        "exactly as a real bilingual speaker's native-script text normally does."
-        if lang_cfg.native_script else ""
-    )
-    no_mixing_clause = (
-        "9c. LANGUAGE PURITY — every spoken example elsewhere in these rules (closing lines, "
-        "confirmations, phrases like 'ji', 'haan', 'theek hai', 'accha', 'bilkul', 'shukriya') is "
-        "written in Hindi/Hinglish only as an illustration of WHAT to say, reused for every call. "
-        f"Your actual language for this call is {lang_cfg.display.upper()}. Express the same meaning "
-        f"fully in {lang_cfg.display} (ordinary English business words like 'enquiry' or 'automate' "
-        "are fine and expected, exactly as a real bilingual speaker would use them) — never copy a "
-        f"literal Hindi/Hinglish word from an example unless your language IS Hindi or Hinglish.{script_clause} "
-        "This applies everywhere in the call, not only the opening.\n"
-    ) if language not in ("hindi", "hinglish") else ""
-    guardrails = (
-        "[ABSOLUTE RULES — never break these]\n"
-        "1. Speak like a real Indian salesperson on a phone call — warm, natural, confident. "
-        "Replies should feel human and conversational. Usually 1-2 sentences, occasionally 3 if needed. "
-        "Never lecture. Never sound robotic or scripted.\n"
-        f"1a. Never assume or state the customer's gender. Do not address them as 'Sir' or 'Ma'am' — "
-        f"{honorific_clause}\n"
-        "2. Keep the SAME tone and energy from the very first word to the last — consistent warmth throughout.\n"
-        "3. Never invent product grades, prices, or specs not in your instructions.\n"
-        "4. Never reveal you are an AI, chatbot, or language model — and never name any company, "
-        "software, platform, or model you might be built on, even if asked directly. Deflect warmly "
-        "and stay in character as a real person calling on behalf of the business.\n"
-        "5. Never use bullet points, lists, numbers, or markdown — this is a phone call, speak naturally.\n"
-        "6. If unsure about anything: politely say you will confirm and get back.\n"
-        "7. Never ask more than ONE question per reply.\n"
-        "8. Stay in character at ALL times as described in your instructions.\n"
-        f"9. LANGUAGE — speak {language.upper()} for the whole call. Do NOT drift into another "
-        "language just because the customer replies in one; stay consistent.\n"
-        "9a. LANGUAGE CHANGE — the ONE exception: if the customer explicitly ASKS you to speak "
-        f"another language (e.g. 'Tamil mein baat kijiye', 'can you speak Marathi?'), and it is one of: "
-        f"{languages.spoken_list()} — then output the silent marker [lang:<language>] "
-        "(e.g. [lang:tamil]) ONCE, at the very START of that reply, and speak that reply and every "
-        "reply after it in the new language. The marker is never spoken aloud; it only switches the "
-        "voice. Do not mention markers, settings or systems.\n"
-        "9b. If they ask for a language NOT on that list, do not output any marker — apologise "
-        "briefly in the current language and politely continue in the current one.\n"
-        f"{no_mixing_clause}"
-        "10. ONLY discuss topics related to this sales call. Politely redirect off-topic questions.\n"
-        "11. To end the call: first say a complete warm goodbye OUT LOUD, in your own words in "
-        f"{lang_cfg.display} — thank them, invite them to call again if they need anything, and wish "
-        "them well — then immediately output the EXACT text [end_call] on its own. "
-        "The system will end the call automatically — never say 'end_call' as a spoken word.\n"
-        "12. Only end the call when ALL of these are true:\n"
-        "    (A) At least 5 back-and-forth exchanges have happened.\n"
-        "    (B) If the customer showed ANY interest, you have already asked for their WhatsApp or email.\n"
-        "    (C) The customer has clearly said goodbye OR firmly rejected: "
-        "bye / goodbye / alvida / ok bye / chalo bye / theek hai bye / "
-        "band karo / call khatam / rakhta hoon / rakhti hoon / nahi chahiye / mat karo call.\n"
-        "These are NOT goodbyes — never end for them: "
-        "ok / theek hai / accha / haan / hmm / ji / bilkul / shukriya / phir milenge / sochta hoon.\n"
-        "If ANY condition is not met — keep the conversation going. "
-        "If the customer has not given contact info yet, ask for their WhatsApp number so you can "
-        f"send the catalogue — phrase that naturally in {lang_cfg.display}. "
-        "Never end early.\n"
-        "13. TELLING REAL INTEREST FROM POLITENESS — these are common Hindi/Hinglish filler words "
-        "Indian customers use on calls in any language, so recognise them from the CUSTOMER even on "
-        "a non-Hindi call (this does not mean YOU should use them — see 9c). Words like 'haan', "
-        "'theek hai', 'accha', 'ok', 'hmm', 'ji', 'bilkul' are just the customer being polite or "
-        "listening — they are "
-        "NOT interest. Never treat them as a buying signal, never skip ahead to pitching harder "
-        "or asking for contact info just because you heard one of these. To confirm real interest, "
-        "ask a direct question about their actual need, current usage, budget, or timeline, and "
-        "judge the ANSWER — a specific question back from them, a clear 'yes I want this', or "
-        "agreeing to receive info/catalogue/quote are real signals; a one-word acknowledgement is "
-        "not. If after 2-3 such questions the customer keeps giving only vague one-word replies "
-        "with no real engagement, treat them as not interested and close the call politely and "
-        "briefly — do not keep pushing a disinterested person, it wastes the call and sounds dumb.\n"
-        "14. VALIDATING PHONE / WHATSAPP NUMBERS — a real Indian mobile number has exactly 10 "
-        "digits and starts with 6, 7, 8, or 9. When the customer speaks a number, listen for "
-        "this shape. If what you hear has the wrong number of digits, is an obvious non-number "
-        "(all the same digit repeated, a plain sequence like 123456789 or 0000000000), or was "
-        "unclear/cut off, do NOT accept it silently — say so naturally, in your own words in "
-        f"{lang_cfg.display} (the number didn't come through clearly, please repeat it slowly, one "
-        "digit at a time) and ask again. Once you have a number that looks like a real 10-digit "
-        "mobile number, always "
-        "read it back to the customer digit-by-digit to confirm before moving on or ending the "
-        "call. IMPORTANT — when reading digits back (phone numbers, OTPs, any numeric sequence), "
-        "always say them as ENGLISH digit words: 'one', 'two', 'three', 'four', 'five', 'six', "
-        "'seven', 'eight', 'nine', 'zero' — never as Hindi digit words ('ek', 'do', 'teen', 'saat', "
-        "'aath'...). This is the one exception to rule 9's 'speak only in that language' rule — "
-        "digits are always English words even mid-Hinglish-sentence. "
-        "Do the same for an email address — if it sounds incomplete or malformed (no '@', "
-        "no domain), ask them to repeat or spell it. This check still applies even if the customer "
-        "says the number in the very same breath as 'bye' or hangs up right after — a goodbye "
-        "never excuses skipping the number check. If a customer says goodbye while leaving you an "
-        "invalid number, your reply must still ask them to repeat it clearly before you say your "
-        "own farewell — never let the word 'bye' from the customer make you accept a bad number "
-        "silently.\n"
-    )
-    return opening_block + guardrails + "\n" + p
 
 # =============================================================================
 # LLM WARMUP
 # =============================================================================
-async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
-    """
-    Send a real warmup call to Groq using the actual system prompt so Groq
-    pre-loads and caches the full context. Without this, the first real turn
-    is slow because Groq processes a large system prompt cold.
-    """
+async def _warmup_llm(llm, system_prompt: str = "") -> None:
+    """Send a real warmup request with the actual system prompt so the first
+    real turn isn't slowed by a cold, large prompt."""
     try:
         ctx = ChatContext()
         if system_prompt:
@@ -821,22 +259,10 @@ async def _warmup_llm(llm: _CappedGroqLLM, system_prompt: str = "") -> None:
 # PREWARM — runs once per worker process on startup
 # =============================================================================
 def prewarm(proc: JobProcess) -> None:
-    proc.userdata["vad"] = silero.VAD.load(
-        min_speech_duration     = 0.20,  # require ~200ms of sustained speech-like audio before
-                                          # VAD confirms onset — rejects short noise transients
-                                          # (clicks/coughs/horns) without missing real words
-        min_silence_duration    = 0.5,   # was 0.35 — too short for the natural pauses between
-                                          # digit groups when a customer dictates a phone number,
-                                          # causing premature end-of-turn mid-number
-        activation_threshold    = 0.88,
-        deactivation_threshold  = 0.40,
-        sample_rate             = 8000,
-    )
-    logger.info("VAD loaded in prewarm ✓")
     try:
         sarvam_pipeline.validate_components()
         proc.userdata["sarvam_ok"] = True
-    except Exception as exc:  # standard calls must keep working; sarvam calls refuse cleanly
+    except Exception as exc:  # calls refuse cleanly instead of failing mid-call
         proc.userdata["sarvam_ok"] = False
         logger.error("sarvam_engine_invalid_config | %s", exc)
     if noise_cancellation is None:
@@ -847,30 +273,124 @@ def prewarm(proc: JobProcess) -> None:
 # AGENT
 # =============================================================================
 class VoiceAgent(Agent):
+    """One phone call: greeting, the agent's instructions, three tools
+    (end_interaction, switch_language, book_next_step), voicemail/IVR/silence
+    handling, an empty-reply guard, history trimmed to the model's window, and a
+    signed post-call report."""
+
+    # Per-turn numbers LiveKit attaches to each ChatMessage (llm.MetricsReport).
+    _LATENCY_KEYS = ("e2e_latency", "transcription_delay", "end_of_turn_delay", "llm_node_ttft", "tts_node_ttfb")
+
     def __init__(
         self, room, *,
         instructions: str,
         welcome_message: str,
+        sarvam_state: "sarvam_pipeline.SarvamCallState",
         call_id: str = "",
         backend_url: str = "",
         webhook_secret: str = "",
+        max_duration: int = 600,
     ) -> None:
         self._room            = room
         self._ending          = False
         self._reported        = False
         self._welcome_message = welcome_message
+        self._sarvam          = sarvam_state
         self._call_id         = call_id
         self._backend_url     = backend_url
         self._webhook_secret  = webhook_secret
+        self._max_duration    = max_duration
         self._user_messages: list[str] = []
         self._turn_count      = 0
         self._last_user_activity = 0.0  # time.monotonic() — updated on user speech
         self._probing = False  # True while _silence_watchdog's own say() is in flight
         self._speaking_done = asyncio.Event()
         self._speaking_done.set()  # not speaking initially
+        self._booking: dict | None = None
+        self._last_reply_text = ""  # words the LLM spoke in its latest step (end_interaction checks it)
+        self._false_interruptions = 0
+        self._recoverable_errors = 0
+        self._tts_engine = None  # set by entrypoint(); switch_language retargets them
+        self._stt_engine = None
 
-        super().__init__(instructions=instructions)
+        super().__init__(instructions=instructions, tools=[self._switch_language_tool()])
 
+    # ── Tools ─────────────────────────────────────────────────────────────────
+    @function_tool
+    async def end_interaction(self, ctx: RunContext) -> str | None:
+        """End the phone call, once the conversation is over and you have said goodbye. Never call it mid-conversation."""
+        if self._ending:
+            return None
+        self._ending = True
+        said_goodbye = bool(self._last_reply_text.strip())
+        logger.info("end_interaction called at turn %d (goodbye spoken: %s)", self._turn_count, said_goodbye)
+        # The tool reply (if any) plays on this same speech handle, so hang up once
+        # it's done. A callback, not an await: awaiting the handle from inside its
+        # own tool would wait on itself.
+        ctx.speech_handle.add_done_callback(lambda _: _safe_task(self._hangup_after_goodbye(), "end-interaction"))
+        # Sarvam's model often calls this with no words first (checked live
+        # 2026-10-22) — then ask for the goodbye as the tool reply.
+        return None if said_goodbye else "Say a brief, warm goodbye now, in the call's language. Do not call any tool."
+
+    async def _hangup_after_goodbye(self) -> None:
+        await asyncio.sleep(0.5)  # let the last audio frames flush through the SIP path
+        await self._post_call_report()
+        await self._disconnect()
+
+    @function_tool
+    async def book_next_step(
+        self,
+        ctx: RunContext,
+        prospect_name: str,
+        company: str,
+        next_step_type: str,
+        date_time: str,
+        attendees: str = "",
+    ) -> dict:
+        """Book the next step (demo, meeting or follow-up) the prospect just agreed to.
+
+        Args:
+            prospect_name: The prospect's name.
+            company: The prospect's company.
+            next_step_type: What was agreed, e.g. "demo" or "discovery follow-up".
+            date_time: The confirmed date and time, in natural language.
+            attendees: Anyone else the prospect named to join, comma-separated.
+        """
+        reference = f"NS-{uuid.uuid4().hex[:6].upper()}"
+        self._booking = {
+            "prospect_name": prospect_name, "company": company, "next_step_type": next_step_type,
+            "date_time": date_time, "attendees": attendees, "reference": reference,
+        }
+        logger.info("book_next_step | call=%s reference=%s when=%s", self._call_id, reference, date_time)
+        return {"status": "confirmed", "reference": reference, "date_time": date_time}
+
+    def _switch_language_tool(self):
+        keys = tuple(self._sarvam.languages)
+        names = ", ".join(f"{k} ({v['display']})" for k, v in self._sarvam.languages.items())
+        language_type = Literal[keys]  # type: ignore[valid-type]
+
+        async def switch_language(ctx: RunContext, language: language_type) -> str:  # type: ignore[valid-type]
+            """Switch the call's spoken language (speech recognition and voice).
+
+            Args:
+                language: The language to switch to.
+            """
+            if self._tts_engine is None or not sarvam_pipeline.switch_language(
+                self._sarvam, language, self._tts_engine, self._stt_engine,
+            ):
+                return f"{language} is not available on this call; continue in {self._sarvam.lang['display']}."
+            return f"Switched. Continue the conversation in {self._sarvam.lang['display']}."
+
+        return function_tool(
+            switch_language,
+            name="switch_language",
+            description=f"Switch the spoken language when the caller asks to talk in another language. Available: {names}.",
+        )
+
+    def attach_engines(self, tts_engine, stt_engine) -> None:
+        self._tts_engine, self._stt_engine = tts_engine, stt_engine
+
+    # ── Call lifecycle ────────────────────────────────────────────────────────
     async def _disconnect(self) -> None:
         try:
             self.session.shutdown(drain=False)
@@ -882,57 +402,6 @@ class VoiceAgent(Agent):
         except Exception as e:
             logger.warning("room.disconnect: %s", e)
 
-    async def _trigger_hangup(self) -> None:
-        """Called when agent's own speech contains [end_call] — agent already said goodbye."""
-        if self._ending:
-            return
-        # A customer who just firmly declined ("not interested", "nahi chahiye", "bye"...)
-        # should be allowed to end the call at ANY turn count -- the <5 floor below exists
-        # to catch the LLM bailing too early with no real signal from the customer yet
-        # (e.g. after a single "haan"), not to force it to keep pitching someone who has
-        # already said no. Real bug this fixed: customer declined at turn 4, got stuck in
-        # silence probes for the rest of the call instead of a clean goodbye.
-        last_user_text = self._user_messages[-1] if self._user_messages else ""
-        firm_decline = bool(_HANGUP_RE.search(last_user_text))
-        if self._turn_count < 5 and not firm_decline:
-            # LLM generated [end_call] too early — suppress and let conversation continue
-            logger.warning("[end_call] at turn %d (<5) — suppressing early exit", self._turn_count)
-            return
-        logger.info("TTS filter: [end_call] detected at turn %d — waiting for farewell TTS to finish", self._turn_count)
-        self._ending = True
-
-        # Bind directly to the SpeechHandle for the in-flight turn (which contains the
-        # farewell text + [end_call]) instead of the call-wide `_speaking_done` Event.
-        # That Event is a single shared flag: if this task starts running before
-        # agent_state_changed has flipped to "speaking" for THIS farewell, the Event
-        # can still be left set() from the end of the PREVIOUS turn, making .wait()
-        # return instantly — before the farewell audio has even started.
-        # session.current_speech doesn't have this race: AgentActivity assigns it
-        # before generation (LLM stream -> TTS text-transforms -> synthesis) begins,
-        # and we're reached here from inside that very TTS text-transform stream, so
-        # it's already bound to this exact farewell handle by construction.
-        speech = self.session.current_speech
-        if speech is None:
-            # Defensive-only fallback in case a future SDK version changes this ordering.
-            for _ in range(20):  # up to ~1s
-                await asyncio.sleep(0.05)
-                speech = self.session.current_speech
-                if speech is not None:
-                    break
-
-        try:
-            if speech is not None:
-                await asyncio.wait_for(speech.wait_for_playout(), timeout=15.0)
-            else:
-                logger.warning("current_speech unavailable for farewell — falling back to state-change wait")
-                await asyncio.wait_for(self._speaking_done.wait(), timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning("Timed out waiting for farewell TTS to finish — hanging up anyway")
-
-        await asyncio.sleep(0.5)  # let the last audio frames flush through the SIP path
-        await self._post_call_report()
-        await self._disconnect()
-
     async def on_enter(self) -> None:
         logger.info("Agent entered room — pipeline ready")
         await asyncio.sleep(0.1)  # let TTS output track attach
@@ -940,53 +409,26 @@ class VoiceAgent(Agent):
             return  # participant left before on_enter ran (rejected call)
         self.session.on("agent_state_changed", self._on_agent_state_changed)
         try:
-            logger.info("Generating welcome via LLM pipeline...")
-            reply_kwargs: dict = {}
-            model_name = getattr(self.session.llm, "model", "")
-            if model_name in _NEEDS_SYNTHETIC_FIRST_TURN:
-                # Short bracketed trigger (matches the existing "[FIRST TURN...]"
-                # convention already in the system prompt) satisfies this model's
-                # template requirement without reading as real customer speech.
-                reply_kwargs["user_input"] = (
-                    "[SYSTEM: The call has just connected — greet the customer now, "
-                    "following your welcome-turn instructions.]"
-                )
-            handle = await self.session.generate_reply(**reply_kwargs)
-            if not handle.chat_items:
-                # generate_reply() completed without raising but produced zero
-                # output -- e.g. a provider-side API error logged deep inside the
-                # SDK's generation pipeline that never propagates up as a Python
-                # exception here. Previously this silently logged "Welcome
-                # generated" even though nothing was ever spoken, leaving the
-                # caller in dead air until they spoke first themselves.
-                raise RuntimeError("generate_reply produced no output (empty chat_items)")
-            logger.info("Welcome generated ✓")
+            if self._welcome_message.strip():
+                await self.session.say(self._welcome_message)
+            else:
+                await self.session.generate_reply()
+            logger.info("Greeting spoken ✓")
         except Exception as e:
             msg = str(e).lower()
             if "closing" in msg or "closed" in msg or "shutdown" in msg:
-                # Session already closing — call was rejected/dropped before agent spoke
-                logger.debug("Session closed before welcome (call rejected early)")
+                logger.debug("Session closed before greeting (call rejected early)")
                 return
-            logger.error("generate_reply failed — falling back to say(): %s", e)
-            try:
-                await self.session.say(self._welcome_message)
-            except Exception as e2:
-                if "closing" in str(e2).lower() or "closed" in str(e2).lower():
-                    logger.debug("Session closed before fallback say()")
-                    return
-                # Both the LLM-generated reply and the plain say() fallback failed —
-                # the TTS pipeline itself is broken (bad voice_id, provider auth
-                # failure, etc). The call is connected but the agent can never speak.
-                # Previously this was only logged, leaving the call to run silently
-                # for up to _max_duration_guard's 600s and get misreported by the
-                # outcome classifier. End it now and flag it as a real system failure.
-                logger.error("say() fallback also failed — TTS is broken, ending call: %s", e2)
-                self._ending = True
-                await self._report_system_failure(f"TTS failed: {e2}")
-                await self._disconnect()
-                return
+            # The voice pipeline itself is broken (bad voice, provider auth failure):
+            # the call is connected but the agent can never speak. End it now and
+            # flag it as a real system failure instead of a quiet conversation.
+            logger.error("Greeting failed — ending call: %s", e)
+            self._ending = True
+            await self._report_system_failure(f"Greeting failed: {e}")
+            await self._disconnect()
+            return
         self._last_user_activity = time.monotonic()
-        _safe_task(self._max_duration_guard(max_seconds=600), "max-duration-guard")
+        _safe_task(self._max_duration_guard(), "max-duration-guard")
         _safe_task(self._silence_watchdog(), "silence-watchdog")
 
     def _on_agent_state_changed(self, ev) -> None:
@@ -994,38 +436,31 @@ class VoiceAgent(Agent):
             self._speaking_done.clear()
         if ev.old_state == "speaking" and ev.new_state != "speaking":
             self._speaking_done.set()
-            # The silence clock must start counting from when the AGENT stops talking —
-            # not from the last user turn. Otherwise the agent's own thinking+speaking
-            # time silently eats into the "silence" budget, and the probe can fire
-            # almost immediately after the agent finishes a sentence.
-            # Skip this during _silence_watchdog's own probe utterance — otherwise the
-            # probe itself resets the clock to "just now", probe_idx keeps getting reset
-            # to 0 next loop iteration, and the watchdog can never advance past probe #1
-            # or reach its hangup-after-N-probes path (silence just resets indefinitely).
+            # The silence clock counts from when the AGENT stops talking, not from the
+            # last user turn — skipped during the watchdog's own probe, otherwise the
+            # probe resets the clock and the watchdog never reaches its hang-up path.
             if not self._probing:
                 self._last_user_activity = time.monotonic()
 
-    async def _max_duration_guard(self, max_seconds: float) -> None:
-        await asyncio.sleep(max_seconds)
+    async def _max_duration_guard(self) -> None:
+        await asyncio.sleep(self._max_duration)
         if not self._ending:
             logger.warning("Max call duration reached — auto-hangup")
             self._ending = True
-            await self._do_hangup()
+            await self._silent_hangup()
 
     async def stt_node(self, audio, model_settings):
         # Drops pure listening sounds ("haan", "hmm", "yes"...) said while the agent
-        # is mid-sentence, so they never reach the SDK as a transcript. Without this,
-        # a final transcript of "haan" both cuts the agent's speech for good
-        # (on_final_transcript -> _cancel_speech_pause) and commits it as a user turn
-        # the LLM then replies to -- breaking the pitch on every "hmm".
-        # With it: VAD still pauses the audio briefly (interruption.min_duration),
-        # no transcript follows, and false_interruption_timeout resumes the sentence.
-        # Filtering has to happen here rather than via interruption.min_words: Sarvam
-        # only emits FINAL transcripts (no interims), so a word gate would make every
-        # real interruption wait until the caller finished talking.
-        # "haan" after the agent's speech has finished (answering its question) is
-        # untouched -- current_speech is done by then.
+        # is mid-sentence, so they never reach the SDK as a transcript — otherwise a
+        # "haan" both cuts the agent's sentence for good and becomes a user turn the
+        # LLM replies to. "haan" after the agent finished (answering its question)
+        # is untouched: current_speech is done by then.
+        logged = False
         async for ev in Agent.default.stt_node(self, audio, model_settings):
+            rid = getattr(ev, "request_id", None)
+            if rid and not logged:
+                logged = True
+                logger.info("sarvam_stt_session | request_id=%s language=%s", rid, self._sarvam.language)
             if (
                 isinstance(ev, stt.SpeechEvent)
                 and ev.type in (
@@ -1048,6 +483,27 @@ class VoiceAgent(Agent):
         speech = self.session.current_speech
         return speech is not None and not speech.interrupted and not speech.done()
 
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        ctx = sarvam_pipeline.trim_to_budget(chat_ctx)
+        logger.info("llm_prompt_size | turn=%d est_tokens=%d", self._turn_count, sarvam_pipeline.estimate_tokens(ctx))
+        text, called_tool = "", False
+        self._last_reply_text = ""
+        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+            delta = getattr(chunk, "delta", None)
+            if getattr(delta, "tool_calls", None):
+                called_tool = True
+            text += chunk if isinstance(chunk, str) else (getattr(delta, "content", None) or "")
+            self._last_reply_text = text
+            yield chunk
+        # Only after a real customer turn, and not when the model answered with a tool call.
+        if self._turn_count > 0 and not text.strip() and not called_tool and not self._ending:
+            self._sarvam.empty_replies += 1
+            logger.warning("empty_llm_reply | turn=%d total=%d", self._turn_count, self._sarvam.empty_replies)
+            yield self._sarvam.lang.get("repeat_line") or "Sorry, could you say that again?"
+        elif text and sarvam_pipeline.looks_romanised(text, self._sarvam.language):
+            self._sarvam.romanised_replies += 1
+            logger.warning("romanised_llm_reply | turn=%d language=%s", self._turn_count, self._sarvam.language)
+
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         if self._ending:
             raise StopResponse()
@@ -1055,43 +511,81 @@ class VoiceAgent(Agent):
         text = (getattr(new_message, "text_content", "") or "").strip()
         self._turn_count += 1
         logger.info("Turn %d: %r", self._turn_count, text[:80])
+        if not text:
+            return
 
-        if text:
-            self._user_messages.append(text)
-            self._last_user_activity = time.monotonic()
+        self._user_messages.append(text)
+        self._last_user_activity = time.monotonic()
 
-            # Voicemail detected — hang up silently (don't leave a message)
-            if _VOICEMAIL_RE.search(text):
-                logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
-                self._ending = True
-                _safe_task(self._silent_hangup(outcome_override="voicemail"), "voicemail-hangup")
-                raise StopResponse()
-
-            # Call-forwarding announcement detected (not the actual person) — hang up silently
-            if _FORWARDING_RE.search(text):
-                logger.info("Call forwarding announcement detected at turn %d — silent hangup", self._turn_count)
-                self._ending = True
-                _safe_task(self._silent_hangup(), "forwarding-hangup")
-                raise StopResponse()
-
-            # IVR / automated bot detected — hang up silently
-            if _BOT_IVR_RE.search(text):
-                logger.info("IVR/bot detected at turn %d — silent hangup", self._turn_count)
-                self._ending = True
-                _safe_task(self._silent_hangup(), "bot-hangup")
-                raise StopResponse()
-
-        # Only allow hangup-by-keyword after at least 6 customer turns (agent needs time to pitch)
-        if self._turn_count >= 6 and _HANGUP_RE.search(text):
+        # Voicemail detected — hang up silently (don't leave a message)
+        if _VOICEMAIL_RE.search(text):
+            logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
             self._ending = True
-            _safe_task(self._do_hangup(), "hangup-from-keyword")
+            _safe_task(self._silent_hangup(outcome_override="voicemail"), "voicemail-hangup")
             raise StopResponse()
 
+        # Call-forwarding announcement detected (not the actual person) — hang up silently
+        if _FORWARDING_RE.search(text):
+            logger.info("Call forwarding announcement detected at turn %d — silent hangup", self._turn_count)
+            self._ending = True
+            _safe_task(self._silent_hangup(), "forwarding-hangup")
+            raise StopResponse()
+
+        # IVR / automated bot detected — hang up silently
+        if _BOT_IVR_RE.search(text):
+            logger.info("IVR/bot detected at turn %d — silent hangup", self._turn_count)
+            self._ending = True
+            _safe_task(self._silent_hangup(), "bot-hangup")
+            raise StopResponse()
+
+    async def apology_hangup(self, *, can_speak: bool) -> None:
+        if can_speak:
+            line = self._sarvam.lang.get("failure_line") or "Sorry, we have a technical problem. Thank you for your time."
+            try:
+                await asyncio.wait_for(self.session.say(line, allow_interruptions=False), timeout=10.0)
+            except Exception as exc:
+                logger.warning("Apology TTS failed: %s", exc)
+        await self._silent_hangup()
+
+    async def _silent_hangup(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
+        """Hang up without a goodbye (voicemail, bot, silence, max duration)."""
+        await self._post_call_report(outcome_override=outcome_override, abrupt_disconnect=abrupt_disconnect)
+        await self._disconnect()
+
+    async def _silence_watchdog(self) -> None:
+        """Probe if customer is silent; hang up after all probes are exhausted."""
+        await asyncio.sleep(_SILENCE_INITIAL_SLEEP)
+        probe_idx = 0
+        while not self._ending:
+            silence_sec = time.monotonic() - self._last_user_activity
+            if silence_sec < _SILENCE_FIRST_TIMEOUT:
+                probe_idx = 0  # user recently spoke — reset probe counter
+                await asyncio.sleep(2.0)
+                continue
+            if probe_idx < _SILENCE_PROBE_COUNT:
+                probe_idx += 1
+                logger.info("Silence probe #%d (%.1fs silent)", probe_idx, silence_sec)
+                self._probing = True
+                try:
+                    line = self._sarvam.lang.get("repeat_line") or "Hello, can you hear me?"
+                    await self.session.say(line, allow_interruptions=True)
+                except Exception as e:
+                    logger.warning("Silence probe TTS failed: %s", e)
+                finally:
+                    self._probing = False
+                await asyncio.sleep(_SILENCE_PROBE_INTERVAL)
+            else:
+                logger.info("Silence hangup — %.1fs no response after %d probes", silence_sec, _SILENCE_PROBE_COUNT)
+                if not self._ending:
+                    self._ending = True
+                    await self._silent_hangup()
+                return
+
+    # ── Reporting ─────────────────────────────────────────────────────────────
     async def _report_system_failure(self, error_text: str) -> None:
-        """The TTS pipeline itself failed before the agent ever spoke — the call
+        """The voice pipeline failed before the agent ever spoke — the call
         connected but is completely silent. Report it as a real system failure
-        (CallStatus.FAILED + error_message) instead of leaving it to be silently
-        misclassified as a normal (but quiet) conversation outcome."""
+        (CallStatus.FAILED + error_message) instead of a quiet conversation."""
         if not self._call_id or not self._backend_url:
             logger.warning(
                 "report_system_failure_skipped | call_id=%r backend_url=%r — nothing to report to",
@@ -1109,12 +603,6 @@ class VoiceAgent(Agent):
         except Exception as exc:
             logger.error("report_system_failure failed to reach backend: %s", exc)
 
-    # Per-turn numbers LiveKit attaches to each ChatMessage (llm.MetricsReport).
-    _LATENCY_KEYS = ("e2e_latency", "transcription_delay", "end_of_turn_delay", "llm_node_ttft", "tts_node_ttfb")
-    _pipeline = "standard"
-    _false_interruptions = 0
-    _recoverable_errors = 0
-
     def _latency_report(self) -> dict:
         """Numbers only (never transcript text): per-turn samples, capped, so the
         backend can compute real p50/p95 across calls, plus per-call counts."""
@@ -1128,28 +616,27 @@ class VoiceAgent(Agent):
                 value = metrics.get(key)
                 if isinstance(value, (int, float)) and value >= 0:
                     samples[key].append(round(float(value), 3))
-        counts = {"turns": self._turn_count, "false_interruptions": self._false_interruptions,
-                  "recoverable_errors": self._recoverable_errors}
-        sarvam_state = getattr(self, "_sarvam", None)
-        if sarvam_state is not None:
-            counts.update(empty_replies=sarvam_state.empty_replies,
-                          romanised_replies=sarvam_state.romanised_replies,
-                          clone_fallback=int(bool(sarvam_state.extra.get("clone_fallback"))))
+        counts = {
+            "turns": self._turn_count,
+            "false_interruptions": self._false_interruptions,
+            "recoverable_errors": self._recoverable_errors,
+            "empty_replies": self._sarvam.empty_replies,
+            "romanised_replies": self._sarvam.romanised_replies,
+            "clone_fallback": int(bool(self._sarvam.extra.get("clone_fallback"))),
+        }
         return {"samples": {k: v[:100] for k, v in samples.items() if v}, "counts": counts}
 
     async def _post_agent_report(self, payload: dict, *, attempts: int = 3) -> None:
         """POST the call report to the backend, retrying transient failures.
 
-        A single dropped connection or momentary backend restart used to lose
-        the whole report permanently (one-shot POST, no retry) — the call would
-        then sit at outcome=pending forever with no way to recover the data,
-        since the transcript/summary only ever exist in this in-memory report.
+        The transcript/summary only ever exist in this in-memory report, so a
+        dropped connection or backend restart must not lose it.
         """
         import httpx
 
         url = f"{self._backend_url}/api/calls/{self._call_id}/agent-report"
         try:
-            payload = {**payload, "pipeline": self._pipeline, "latency_metrics": self._latency_report()}
+            payload = {**payload, "pipeline": sarvam_pipeline.PIPELINE, "latency_metrics": self._latency_report()}
         except Exception as exc:  # metrics must never cost us the report itself
             logger.warning("latency_report_failed | %s", exc)
         body = json.dumps(payload).encode()
@@ -1163,10 +650,8 @@ class VoiceAgent(Agent):
             try:
                 async with httpx.AsyncClient(timeout=10.0) as http:
                     resp = await http.post(url, content=body, headers=headers)
-                    # A 4xx/5xx from the backend was previously indistinguishable from
-                    # success here (no status check) — the loop would return on the
-                    # first attempt and silently drop the report on e.g. a 500 during
-                    # a backend restart, with no retry and no error anywhere.
+                    # Without a status check a 500 during a backend restart looked
+                    # like success and the report was silently dropped.
                     resp.raise_for_status()
                 return
             except Exception as exc:
@@ -1187,18 +672,12 @@ class VoiceAgent(Agent):
         raise last_exc
 
     async def _post_call_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
-        """Classify outcome with Groq and POST to backend. Called once after every call.
+        """Classify the outcome and POST it to the backend. Called once after every call.
 
-        outcome_override: when the caller already KNOWS the outcome with certainty
-        (e.g. deterministic voicemail-phrase detection), skip the transcript-based
-        classifier entirely and report this value directly — see _send_report.
-        abrupt_disconnect: the customer's own line disconnected before the agent
-        got a chance to close the call gracefully (see _on_participant_left in
-        entrypoint() below) — as opposed to the agent hanging up after saying its
-        own farewell (_do_hangup), a silence timeout, or a session-level error.
-        Lets _send_report tell "customer dropped off mid-conversation" apart from
-        "conversation reached some real conclusion" when there wasn't much to
-        go on either way.
+        outcome_override: the outcome is already known for certain (e.g. voicemail
+        phrase detection) — skip the classifier and report this value directly.
+        abrupt_disconnect: the customer's line dropped before the agent closed the
+        call, so "barely anything said" means call_dropped, not not_interested.
         """
         if not self._call_id or not self._backend_url:
             logger.warning(
@@ -1213,27 +692,19 @@ class VoiceAgent(Agent):
         try:
             await asyncio.wait_for(
                 self._send_report(outcome_override=outcome_override, abrupt_disconnect=abrupt_disconnect),
-                timeout=15.0,
+                timeout=40.0,
             )
         except asyncio.TimeoutError:
             logger.error("post_call_report timed out — backend may be unreachable at %s", self._backend_url)
         except Exception as exc:
             logger.error("post_call_report failed: %s", exc)
 
-    async def _send_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
-        import json as _json
-
-        # Try to get full conversation (user + agent) from session history
+    def _transcript(self) -> list[dict]:
         full_transcript: list[dict] = []
         try:
             ctx = getattr(self.session, "history", None) or getattr(self.session, "_chat_ctx", None)
             if ctx:
-                # ChatContext.messages is a METHOD (not a property) — must be
-                # called. `getattr(ctx, "messages", None)` alone returns a
-                # truthy bound method, which previously short-circuited the
-                # `or ctx.items` fallback and then raised TypeError when
-                # iterated, silently swallowed below and degrading every
-                # transcript to customer-only.
+                # ChatContext.messages is a METHOD (not a property) — must be called.
                 messages_attr = getattr(ctx, "messages", None)
                 items = messages_attr() if callable(messages_attr) else getattr(ctx, "items", [])
                 for msg in items:
@@ -1253,20 +724,17 @@ class VoiceAgent(Agent):
                         full_transcript.append({"role": role_out, "text": text})
         except Exception as exc:
             logger.warning("transcript_history_read_failed | call=%s error=%s", self._call_id, exc)
-
         # Fallback: if session history unavailable, use only captured user messages
-        if not full_transcript:
-            full_transcript = [{"role": "user", "text": t} for t in self._user_messages]
+        return full_transcript or [{"role": "user", "text": t} for t in self._user_messages]
+
+    async def _send_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
+        full_transcript = self._transcript()
+        extra = {"next_step_booking": self._booking} if self._booking else {}
 
         if not full_transcript and not outcome_override:
             if abrupt_disconnect:
-                # The exact shape of a call that never really started: the
-                # customer's line disconnected before either side said anything
-                # that made it into history (e.g. cut off during/before the
-                # welcome message). Previously this returned here with nothing
-                # reported at all, leaving outcome stuck at the DB default
-                # "pending" forever -- indistinguishable from "still being
-                # classified" on a call that will never be classified.
+                # A call that never really started: the line dropped before anyone
+                # spoke. Report it, or the outcome sits at "pending" forever.
                 await self._post_agent_report({
                     "outcome": "call_dropped",
                     "summary": "Call disconnected before any conversation happened.",
@@ -1277,10 +745,7 @@ class VoiceAgent(Agent):
             logger.info("post_call_report_skipped | call=%s reason=no_conversation_captured", self._call_id)
             return  # nothing was said by either side; leave outcome as PENDING
 
-        # A deterministic detector (voicemail phrasing, etc.) already knows the real
-        # outcome with certainty -- skip the word-count gate and the LLM classifier
-        # entirely rather than letting a voicemail greeting get misread as a normal
-        # (dis)interested customer response.
+        # A deterministic detector (voicemail phrasing) already knows the outcome.
         if outcome_override:
             summary = f"Call ended automatically: {outcome_override.replace('_', ' ')} detected."
             await self._post_agent_report({
@@ -1289,28 +754,18 @@ class VoiceAgent(Agent):
             logger.info("post_call_report_sent | call=%s outcome=%s (override)", self._call_id, outcome_override)
             return
 
-        # Build text for Groq — show both sides when available
         transcript_text = "\n".join(
             f"{'CUSTOMER' if m['role'] == 'user' else 'AGENT'}: {m['text']}"
             for m in full_transcript
-        ) or "\n".join(f"CUSTOMER: {t}" for t in self._user_messages)
+        )
 
         # ── Minimum engagement gate ────────────────────────────────────────────
-        # Count how many words the customer actually said across all turns.
-        # If they barely spoke, there isn't enough for the LLM to reliably judge
-        # either way — skip it and classify deterministically instead.
+        # If the customer barely spoke there isn't enough to judge either way —
+        # classify deterministically instead of asking the LLM.
         customer_word_count = sum(
-            len(m.get("text", "").split())
-            for m in full_transcript
-            if m.get("role") == "user"
+            len(m.get("text", "").split()) for m in full_transcript if m.get("role") == "user"
         )
-        if customer_word_count < 8:
-            # Two different stories behind "barely any words," and they read very
-            # differently to a sales team: the customer's line disconnecting
-            # abruptly mid-conversation (before the agent could even close things
-            # out gracefully) isn't a rejection — there's no real signal either
-            # way, just a dropped call. Only call it not_interested when nothing
-            # about how the call ended suggests it was cut short.
+        if customer_word_count < 8 and not self._booking:
             if abrupt_disconnect:
                 outcome = "call_dropped"
                 summary = "Call disconnected before a real conversation happened."
@@ -1325,266 +780,85 @@ class VoiceAgent(Agent):
             logger.info("post_call_report_sent | call=%s outcome=%s words=%d", self._call_id, outcome, customer_word_count)
             return
 
-        # ── LLM classification (customer said enough to judge) ─────────────────
-        outcome, summary = "not_interested", ""
-        raw = None          # stays None if the Groq call itself never returned a response
-        finish_reason = None
-        # Only offered as a candidate outcome when the call actually ended via an
-        # abrupt customer-side disconnect (see _post_call_report's docstring) --
-        # otherwise the classifier has no reason to ever reach for it, since every
-        # other hangup path (agent's own farewell, silence timeout, session error)
-        # isn't "the customer cut the conversation short."
-        call_dropped_rule = (
-            "  call_dropped        — The customer's line disconnected abruptly before the "
-            "conversation reached any real conclusion — cut off mid-sentence, mid-question, "
-            "or before answering what the agent had just asked. Use this ONLY when there "
-            "isn't enough in the transcript to judge real interest either way because it "
-            "was cut short. Do NOT use this if the customer's own words already gave a "
-            "clear signal before hanging up (a clear rejection, a specific question, "
-            "agreeing to share contact info, etc.) — classify those normally even though "
-            "the call still ended abruptly.\n\n"
-        ) if abrupt_disconnect else ""
-        try:
-            import groq as _groq
-            client = _groq.AsyncGroq(api_key=os.environ.get("GROQ_API_KEY", ""))
-            resp = await client.chat.completions.create(
-                # Configurable via GROQ_CLASSIFY_MODEL (config.py) instead of a
-                # hardcoded literal -- Groq deprecated the previous model
-                # (llama-3.1-8b-instant, June 2026) with no warning, and every
-                # call silently landed on outcome=pending via the except block
-                # below (model_not_found) until someone noticed. Swappable via
-                # env now, and the backend's SuperAdmin health check actively
-                # verifies this exact model is still valid on Groq (keep
-                # GROQ_CLASSIFY_MODEL and the backend's GROQ_SUMMARY_MODEL in
-                # sync). This step runs after the call ends, off the live
-                # conversation path, so there's no latency cost to a larger model.
-                model=GROQ_CLASSIFY_MODEL,
-                # Was 350 -- confirmed live 2026-09-16 that a normal call with a full
-                # extracted_data blob (name/email/phone/requirements/budget/decision_maker)
-                # plus a summary can hit finish_reason=length and get truncated mid-JSON,
-                # which json.loads then can't parse -> silently fell back to
-                # outcome=pending. 700 gives real headroom for the full schema.
-                max_tokens=700,
-                temperature=0.0,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You classify sales call outcomes strictly from the CUSTOMER's words in the transcript. "
-                            "Ignore STT errors — judge intent, not exact wording. "
-                            "Reply ONLY with valid JSON: {\"outcome\": \"...\", \"summary\": \"...\", "
-                            "\"extracted_data\": {\"caller_name\": ..., \"caller_email\": ..., "
-                            "\"caller_phone\": ..., \"requirements\": ..., \"budget\": ..., "
-                            "\"decision_maker\": ...}}\n\n"
-                            "extracted_data fields — fill in ONLY what the CUSTOMER actually said in the "
-                            "transcript; use null for anything not explicitly mentioned. Never guess or "
-                            "invent a value:\n"
-                            "  caller_name     — the customer's name, if they gave one\n"
-                            "  caller_email    — an email address, if they gave one\n"
-                            "  caller_phone    — a callback/contact number, if they gave one\n"
-                            "  requirements    — 1 short sentence on what they want/need (product, design, "
-                            "service, etc.), if they described anything\n"
-                            "  budget          — budget they mentioned, if any\n"
-                            "  decision_maker  — true/false only if the transcript makes it clear whether "
-                            "they can make the purchase decision themselves, else null\n\n"
-                            "OUTCOME RULES — read carefully:\n\n"
-                            "  interested         — Customer showed CLEAR, ACTIVE interest. Requires at least ONE of:\n"
-                            "                       • Asked a specific question about price, availability, delivery, or specs\n"
-                            "                       • Shared or agreed to share contact info (WhatsApp, phone, email)\n"
-                            "                       • Agreed to receive catalogue, sample, demo, or quote\n"
-                            "                       • Confirmed they currently buy or use this type of product\n"
-                            "                       • Explicitly said they want to place an order or inquire\n"
-                            "                       IMPORTANT: Passive replies only ('haan', 'hmm', 'theek hai', 'okay', 'bol') "
-                            "do NOT count as interest — the customer must have asked something or agreed to something.\n\n"
-                            "  callback_requested — Customer asked to be called back AND gave a SPECIFIC later time "
-                            "(a day, date, or time of day — e.g. 'kal subah', 'shaam ko', 'Monday', 'next week'). "
-                            "A vague 'baad mein call karo' / 'call me later' with NO specific time is NOT enough by "
-                            "itself — that phrasing is a common brush-off to end the call politely, not a real booking.\n\n"
-                            "  not_interested     — DEFAULT for all other cases:\n"
-                            "                       • Customer only gave short/vague replies without engaging\n"
-                            "                       • Customer never asked a question or agreed to anything\n"
-                            "                       • Rejection: 'nahi chahiye', 'busy hoon', 'mat karo call', hung up\n"
-                            "                       • Said 'call me later'/'I'll give you my number' with no specific "
-                            "time, especially right before hanging up\n"
-                            "                       WHEN IN DOUBT → use not_interested\n\n"
-                            f"{call_dropped_rule}"
-                            "  wrong_number       — Wrong person or wrong business.\n\n"
-                            "  do_not_call        — Customer demanded never to be called again.\n\n"
-                            "RED FLAG — fake contact info: if the phone/WhatsApp number in the transcript is implausible "
-                            "(wrong digit count for a 10-digit Indian mobile, all one repeated digit, or an obvious "
-                            "sequence like '123456789' or '0000000000'), that is a strong signal the customer was "
-                            "brushing you off, not giving real contact info. In that case do NOT classify as "
-                            "'interested' or 'callback_requested' on the strength of that number alone — fall back to "
-                            "'not_interested' unless something else in the transcript shows genuine engagement.\n\n"
-                            "summary: 1–2 sentences. State what the customer actually said and what (if anything) was agreed."
-                        ),
-                    },
-                    {"role": "user", "content": f"Transcript:\n{transcript_text}"},
-                ],
-            )
-            finish_reason = resp.choices[0].finish_reason
-            raw = resp.choices[0].message.content.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
-            result = _json.loads(raw)
-            outcome = result.get("outcome", "not_interested")
-            summary = result.get("summary", "")
-            raw_extracted = result.get("extracted_data") or {}
-            extracted_data = {k: v for k, v in raw_extracted.items() if v is not None}
-            valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
-            # call_dropped is only a legal choice on the same calls where the prompt
-            # above actually offered it as an option -- otherwise a model that
-            # hallucinates it anyway still falls back to not_interested like any
-            # other invalid value.
-            if abrupt_disconnect:
-                valid.add("call_dropped")
-            if outcome not in valid:
-                outcome = "not_interested"
-            # finish_reason == "length" means Groq hit max_tokens and cut the response off —
-            # if this ever shows up on a *successful* parse it means we got lucky (the JSON
-            # happened to close before the cut), and it's a warning sign max_tokens=700 is
-            # running too close to the edge for calls with a lot to extract.
-            logger.info(
-                "classify_llm: call=%s outcome=%s words=%d finish_reason=%s completion_tokens=%s",
-                self._call_id, outcome, customer_word_count, finish_reason,
-                getattr(getattr(resp, "usage", None), "completion_tokens", None),
-            )
-        except Exception as exc:
-            # A genuine classification failure used to silently fall back to
-            # the pre-try "not_interested" default -- indistinguishable from a
-            # confident real classification, so a Groq outage could quietly
-            # mislabel every affected call that day with no visible flag
-            # anywhere. "pending" is a real, already-monitored value instead:
-            # the backend's flag_stale_pending_calls beat task (10 min later)
-            # logs any COMPLETED call still sitting at outcome=pending, which
-            # this now reaches on purpose instead of by accident.
-            outcome = "pending"
-            # raw is None  -> failed before/during the Groq API call itself (network,
-            #                 auth, rate limit) -- never got a response to parse.
-            # raw is set   -> Groq responded but json.loads/field access failed; raw_preview
-            #                 + finish_reason show whether max_tokens=700 truncated it
-            #                 mid-JSON (finish_reason="length" is the smoking gun).
-            logger.warning(
-                "groq_classify_error | call=%s error_type=%s error=%s stage=%s finish_reason=%s "
-                "raw_len=%s raw_preview=%r",
-                self._call_id,
-                type(exc).__name__,
-                exc,
-                "groq_api_call" if raw is None else "parse_or_extract",
-                finish_reason,
-                len(raw) if raw is not None else None,
-                raw[:500] if raw else None,
-            )
-            extracted_data = {}
-
+        outcome, summary, extracted_data = await self._classify(transcript_text, abrupt_disconnect)
         await self._post_agent_report({
             "outcome": outcome,
             "summary": summary,
             "transcript": full_transcript,
-            "extracted_data": extracted_data,
+            "extracted_data": {**extracted_data, **extra},
         })
         logger.info("post_call_report_sent | call=%s outcome=%s", self._call_id, outcome)
 
-    async def _do_hangup(self) -> None:
-        logger.info("Hangup — saying farewell")
+    async def _classify(self, transcript_text: str, abrupt_disconnect: bool) -> tuple[str, str, dict]:
+        """Sarvam LLM reads the transcript (and the agent's instructions, to know
+        which details it was told to capture). On failure: outcome "pending",
+        which the backend's flag_stale_pending_calls task already watches."""
+        call_dropped_rule = (
+            "  call_dropped        — The customer's line disconnected abruptly before the "
+            "conversation reached any real conclusion. Use this ONLY when the transcript was cut "
+            "short before any clear signal; classify a clear signal normally even if the call "
+            "ended abruptly.\n\n"
+        ) if abrupt_disconnect else ""
+        booked_rule = (
+            "A next step was booked on this call (see NEXT STEP BOOKED below) — that is clear interest.\n\n"
+            if self._booking else ""
+        )
+        system = (
+            "You classify sales call outcomes strictly from the CUSTOMER's words in the transcript. "
+            "Ignore speech-recognition errors — judge intent, not exact wording. "
+            "Reply ONLY with valid JSON: {\"outcome\": \"...\", \"summary\": \"...\", \"extracted_data\": {...}}\n\n"
+            "extracted_data — every detail the AGENT INSTRUCTIONS below say to capture, using the exact "
+            "snake_case names they mention (e.g. pain_points_mentioned, timeline_to_decide), plus "
+            "caller_name, caller_email and caller_phone if the customer gave them. Fill ONLY what the "
+            "customer actually said; use null for anything not mentioned. Never guess.\n\n"
+            "OUTCOME RULES:\n\n"
+            "  interested         — Customer showed CLEAR, ACTIVE interest: asked a specific question about "
+            "price/availability/specs, shared or agreed to share contact info, agreed to a demo, meeting, "
+            "catalogue or quote, or said they want to buy. Passive replies only ('haan', 'hmm', 'theek "
+            "hai', 'okay') do NOT count.\n\n"
+            "  callback_requested — Customer asked to be called back AND gave a SPECIFIC later time (a day, "
+            "date or time of day). A vague 'call me later' with no time is a brush-off, not a callback.\n\n"
+            "  not_interested     — DEFAULT for everything else, including rejections and vague replies. "
+            "WHEN IN DOUBT → not_interested.\n\n"
+            f"{call_dropped_rule}"
+            "  wrong_number       — Wrong person or wrong business.\n\n"
+            "  do_not_call        — Customer demanded never to be called again.\n\n"
+            f"{booked_rule}"
+            "summary: 1–2 sentences. State what the customer actually said and what (if anything) was agreed."
+        )
+        user = f"AGENT INSTRUCTIONS:\n{self.instructions}\n\nTRANSCRIPT:\n{transcript_text}"
+        if self._booking:
+            user += f"\n\nNEXT STEP BOOKED: {json.dumps(self._booking)}"
+
+        raw, finish_reason = None, None
         try:
-            # session.say() already awaits true end-to-end playback completion
-            # (SpeechHandle.wait_for_playout(), driven by the audio sink's real
-            # "playback_finished" event). TTS generation alone has been observed
-            # to take 8s+ for a single utterance (see _trigger_hangup below), so
-            # 20s gives real safety margin above the worst observed case.
-            await asyncio.wait_for(
-                self.session.say(_FAREWELL, allow_interruptions=False),
-                timeout=20.0,
+            raw, finish_reason = await _sarvam_chat(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=1500,
             )
-        except asyncio.TimeoutError:
-            logger.warning("Farewell TTS timed out — disconnecting anyway")
-        except Exception as e:
-            logger.warning("Farewell TTS failed: %s", e)
-        await asyncio.sleep(0.3)
-        await self._post_call_report()
-        await self._disconnect()
-
-    async def _silent_hangup(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
-        """Hang up without a farewell (voicemail, bot, or prolonged silence)."""
-        await self._post_call_report(outcome_override=outcome_override, abrupt_disconnect=abrupt_disconnect)
-        await self._disconnect()
-
-    async def _silence_watchdog(self) -> None:
-        """Probe if customer is silent; hang up after all probes are exhausted."""
-        await asyncio.sleep(_SILENCE_INITIAL_SLEEP)
-        probe_idx = 0
-        while not self._ending:
-            silence_sec = time.monotonic() - self._last_user_activity
-            if silence_sec < _SILENCE_FIRST_TIMEOUT:
-                probe_idx = 0  # user recently spoke — reset probe counter
-                await asyncio.sleep(2.0)
-                continue
-            if probe_idx < len(_SILENCE_PROBES):
-                probe_idx += 1
-                logger.info("Silence probe #%d (%.1fs silent)", probe_idx, silence_sec)
-                self._probing = True
-                try:
-                    await self.session.say(_SILENCE_PROBES[probe_idx - 1], allow_interruptions=True)
-                except Exception as e:
-                    logger.warning("Silence probe TTS failed: %s", e)
-                finally:
-                    self._probing = False
-                await asyncio.sleep(_SILENCE_PROBE_INTERVAL)
-            else:
-                logger.info("Silence hangup — %.1fs no response after %d probes", silence_sec, len(_SILENCE_PROBES))
-                if not self._ending:
-                    self._ending = True
-                    await self._silent_hangup()
-                return
-
-
-class SarvamVoiceAgent(VoiceAgent):
-    """VoiceAgent for the "sarvam" engine: identical call logic, plus an
-    empty-reply guard, trimming history to the model's 32K window (never the
-    system script), a romanised-output log check, and the one fixed apology +
-    clean hang-up when the engine fails mid-call (no fallback to another vendor)."""
-
-    def __init__(self, *args, sarvam_state: "sarvam_pipeline.SarvamCallState", **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._sarvam = sarvam_state
-
-    async def stt_node(self, audio, model_settings):
-        logged = False
-        async for ev in super().stt_node(audio, model_settings):
-            rid = getattr(ev, "request_id", None)
-            if rid and not logged:
-                logged = True
-                logger.info("sarvam_stt_session | request_id=%s language=%s", rid, self._sarvam.language)
-            yield ev
-
-    async def llm_node(self, chat_ctx, tools, model_settings):
-        ctx = sarvam_pipeline.trim_to_budget(chat_ctx)
-        logger.info("llm_prompt_size | turn=%d est_tokens=%d", self._turn_count, sarvam_pipeline.estimate_tokens(ctx))
-        text = ""
-        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
-            text += chunk if isinstance(chunk, str) else (getattr(getattr(chunk, "delta", None), "content", None) or "")
-            yield chunk
-        # Only after a real customer turn: an empty welcome keeps its own fallback (say()).
-        if self._turn_count > 0 and not text.strip() and not self._ending:
-            self._sarvam.empty_replies += 1
-            logger.warning("empty_llm_reply | turn=%d total=%d", self._turn_count, self._sarvam.empty_replies)
-            yield self._sarvam.lang.get("repeat_line") or "Sorry, could you say that again?"
-        elif text and sarvam_pipeline.looks_romanised(text, self._sarvam.language):
-            self._sarvam.romanised_replies += 1
-            logger.warning("romanised_llm_reply | turn=%d language=%s", self._turn_count, self._sarvam.language)
-
-    async def apology_hangup(self, *, can_speak: bool) -> None:
-        if can_speak:
-            line = self._sarvam.lang.get("failure_line") or "Sorry, we have a technical problem. Thank you for your time."
-            try:
-                await asyncio.wait_for(self.session.say(line, allow_interruptions=False), timeout=10.0)
-            except Exception as exc:
-                logger.warning("Apology TTS failed: %s", exc)
-        await self._silent_hangup()
+            text = raw
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            result = json.loads(text.strip())
+            outcome = result.get("outcome", "not_interested")
+            summary = result.get("summary", "")
+            extracted = {k: v for k, v in (result.get("extracted_data") or {}).items() if v is not None}
+            valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
+            if abrupt_disconnect:
+                valid.add("call_dropped")
+            if outcome not in valid:
+                outcome = "not_interested"
+            logger.info("classify_llm: call=%s outcome=%s finish_reason=%s", self._call_id, outcome, finish_reason)
+            return outcome, summary, extracted
+        except Exception as exc:
+            logger.warning(
+                "classify_error | call=%s error_type=%s error=%s stage=%s finish_reason=%s raw_preview=%r",
+                self._call_id, type(exc).__name__, exc,
+                "api_call" if raw is None else "parse", finish_reason, raw[:500] if raw else None,
+            )
+            return "pending", "", {}
 
 
 def _sentry_message(message: str, level: str) -> None:
@@ -1595,10 +869,10 @@ def _sentry_message(message: str, level: str) -> None:
         pass
 
 
-def handle_sarvam_error(voice_agent: "SarvamVoiceAgent", ev) -> None:
-    """session.on("error") for the sarvam engine. A non-recoverable LLM/TTS error
-    ends the call cleanly: one fixed apology (when the voice still works), then
-    the normal report + hang-up. Never switches to another vendor mid-call."""
+def handle_session_error(voice_agent: "VoiceAgent", ev) -> None:
+    """session.on("error"). A non-recoverable LLM/TTS error ends the call cleanly:
+    one fixed apology (when the voice still works), then the normal report +
+    hang-up."""
     source = type(ev.source).__name__
     status = getattr(ev.error, "status_code", None) or getattr(getattr(ev.error, "error", None), "status_code", None)
     if getattr(ev.error, "recoverable", True):
@@ -1619,20 +893,12 @@ def handle_sarvam_error(voice_agent: "SarvamVoiceAgent", ev) -> None:
 def handle_session_close(voice_agent: "VoiceAgent", ev) -> None:
     """Registered on session.on("close", ...) in entrypoint() below.
 
-    Covers the one teardown path nothing else in this file reacts to: the SDK
-    itself force-closing the session (AgentSession._on_error, livekit/
-    agents/voice/agent_session.py) after max_unrecoverable_errors (3)
-    consecutive LLM/TTS failures. Without this, a mid-call provider outage
-    left the caller connected to a dead session for up to the full 600s
-    max-duration guard before anything hung up or reported it. Also fires on
-    every teardown WE already initiated (our own _disconnect() calls
-    session.shutdown(), which emits this same event) -- harmless there since
-    _post_call_report() is idempotent (guarded by voice_agent._reported) and
-    _disconnect() is already safe to call more than once.
-
-    A standalone function (not a closure inside entrypoint()) specifically so
-    it's unit-testable without a real JobContext/AgentSession -- see
-    tests/test_session_close_handler.py.
+    Covers the SDK force-closing the session after repeated LLM/TTS failures —
+    without this the caller sat on a dead line until the max-duration guard.
+    Also fires on every teardown we initiated ourselves; harmless, since the
+    report is idempotent (voice_agent._reported) and _disconnect() is safe to
+    call twice. A standalone function so it's unit-testable without a real
+    session — see tests/test_session_close_handler.py.
     """
     if ev.error is not None:
         logger.error("AgentSession closed due to an unrecoverable error | reason=%s error=%s",
@@ -1650,27 +916,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info("Job received | room=%s", ctx.room.name)
     await ctx.connect()
 
-    # Primary source: dispatch metadata (JobContext.job.metadata) -- delivered as part of
-    # the job assignment itself (see _place_call() in campaign.py, which now puts the full
-    # payload on CreateAgentDispatchRequest), available the instant the job starts with no
-    # dependency on room state sync. ctx.room.metadata is set by the same backend call but
-    # over a separate path (room state, synced to this process after ctx.connect()) that can
-    # race it -- confirmed in practice: ctx.room.metadata read back empty on some jobs even
-    # though create_room() had already completed and returned before dispatch was requested.
-    # Falls back to room metadata for inbound calls, which carry only
-    # {"call_type":"inbound","sip_trunk_id":...} via a static SIP dispatch rule
-    # (app/api/sip_trunks.py setup_inbound()), not per-job dispatch metadata.
+    # Dispatch metadata arrives with the job itself; room metadata (same payload,
+    # set by the backend's _place_call) can race ctx.connect() and read back empty.
     raw_meta = ctx.job.metadata or ctx.room.metadata
-    # Logged unconditionally (length/preview only, never the raw system_prompt in full)
-    # so an empty-vs-malformed metadata gap is visible instead of silently defaulting
-    # every field (voice_provider, call_id, etc.) with no trace of why.
     logger.info(
-        "job_metadata_raw | room=%s job_present=%s room_present=%s len=%s preview=%r",
-        ctx.room.name,
-        bool(ctx.job.metadata),
-        bool(ctx.room.metadata),
-        len(raw_meta) if raw_meta else 0,
-        raw_meta[:300] if raw_meta else None,
+        "job_metadata_raw | room=%s job_present=%s room_present=%s len=%s",
+        ctx.room.name, bool(ctx.job.metadata), bool(ctx.room.metadata), len(raw_meta) if raw_meta else 0,
     )
     meta: dict = {}
     if raw_meta:
@@ -1682,418 +933,88 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 ctx.room.name, type(exc).__name__, exc, raw_meta[:300],
             )
 
-    # Inbound calls (LiveKit SIP dispatch rule, see app/api/sip_trunks.py
-    # setup_inbound()) carry only {"call_type":"inbound","sip_trunk_id":...} --
-    # nothing to build a prompt from yet. Resolve the real config from the
-    # backend first, merging it into `meta` so every line below reads exactly
-    # like it does for outbound. This means the participant wait happens here
-    # (before warmup) instead of after, since we need the participant's SIP
-    # attributes before we know which agent answers -- warmup can't overlap
-    # with the participant wait the way it does for outbound.
-    inbound_participant = None
-    if meta.get("call_type") == "inbound":
-        try:
-            inbound_participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
-            logger.info("Inbound participant joined: %s", getattr(inbound_participant, "identity", "unknown"))
-        except asyncio.TimeoutError:
-            logger.error("No inbound participant joined in 30s — exiting")
-            return
-
-        inbound_config = await _resolve_inbound_call(meta, inbound_participant, ctx.room.name)
-        if inbound_config is None:
-            logger.error("Could not resolve inbound call — hanging up")
-            return
-        meta = {**meta, **inbound_config}
-
-    tz_name         = meta.get("timezone") or "Asia/Kolkata"
-    # Correct greeting/honorific wording wherever it lives — either the dedicated
-    # welcome_message field, or baked into the system_prompt's own OPENING section
-    # (older templates generated before the gender-neutral/time-of-day fix have it
-    # hardcoded there, e.g. a literal "Good Morning Sir" line).
-    raw_prompt      = _localize_welcome_message(
-        meta.get("system_prompt") or AGENT_SYSTEM_PROMPT, tz_name
-    )
-    welcome_message = _localize_welcome_message(
-        meta.get("welcome_message") or AGENT_WELCOME_MESSAGE, tz_name
-    )
-    # LOCAL_TEST_VOICE_PROVIDER only matters when there's no real call metadata at
-    # all (i.e. `agent.py console` locally) -- meta.get() always wins on a real
-    # call, so this has no effect in production.
-    voice_provider  = (meta.get("voice_provider") or os.getenv("LOCAL_TEST_VOICE_PROVIDER") or "elevenlabs").lower()
-    voice_id        = meta.get("voice_id") or (
-        CARTESIA_VOICE_ID if voice_provider == "cartesia"
-        else CHATTERBOX_VOICE_ID if voice_provider == "chatterbox"
-        else SARVAM_VOICE_ID if voice_provider == "sarvam"
-        else ELEVENLABS_VOICE_ID
-    )
-    language        = (meta.get("language") or languages.DEFAULT_LANGUAGE).lower()
-    lang_cfg        = languages.get(language)
-    tts_model_id    = meta.get("tts_model_id") or ELEVENLABS_MODEL_ID
-    # Testing section only -- production campaigns/agents never set this, so
-    # llm_provider is always "groq" there and llm_model keeps meaning a Groq model.
-    llm_provider    = (meta.get("llm_provider") or "groq").lower()
-    llm_model       = meta.get("llm_model") or (SARVAM_LLM_MODEL if llm_provider == "sarvam" else GROQ_MODEL)
-    llm_temperature = float(meta.get("llm_temperature") or GROQ_LLM_TEMPERATURE)
-    call_id         = meta.get("call_id", "")
-    campaign_id     = meta.get("campaign_id", "")
-    pipeline        = meta.get("pipeline") or "standard"
-    is_sarvam       = pipeline == sarvam_pipeline.PIPELINE
-    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id, pipeline=pipeline)
-    sarvam_state = sarvam_pipeline.parse_meta(meta) if is_sarvam else None
-    if is_sarvam and not ctx.proc.userdata.get("sarvam_ok", True):
+    call_id     = meta.get("call_id", "")
+    campaign_id = meta.get("campaign_id", "")
+    set_log_context(call_id=call_id, room=ctx.room.name, campaign_id=campaign_id, pipeline=sarvam_pipeline.PIPELINE)
+    if not ctx.proc.userdata.get("sarvam_ok", True):
         logger.error("sarvam_engine_unavailable | worker failed its startup check — refusing this call")
         return
+    try:
+        sarvam_state = sarvam_pipeline.parse_meta(meta)
+    except Exception as exc:
+        logger.error("call_config_invalid | %s meta_keys=%s", exc, list(meta.keys()))
+        return
 
-    if meta.get("system_prompt"):
-        logger.info("system_prompt | source=room_metadata campaign=%s len=%d", campaign_id, len(raw_prompt))
-    else:
-        logger.warning(
-            "system_prompt | source=CONFIG_FALLBACK — room metadata had no system_prompt! "
-            "campaign=%s meta_keys=%s",
-            campaign_id, list(meta.keys()),
-        )
+    if not meta.get("system_prompt"):
+        logger.warning("system_prompt | source=CONFIG_FALLBACK — metadata had no system_prompt! campaign=%s", campaign_id)
+    system_prompt   = build_instructions(meta.get("system_prompt") or AGENT_SYSTEM_PROMPT, sarvam_state)
+    welcome_message = meta.get("welcome_message") or ""
+    sarvam_cfg      = meta.get("sarvam") or {}
 
-    system_prompt = _build_prompt(raw_prompt, welcome_message, language)
-    if is_sarvam:
-        system_prompt = sarvam_pipeline.prompt_adapter(system_prompt, sarvam_state)
-    logger.info("template | voice=%s llm=%s/%s temperature=%s", voice_id, llm_provider, llm_model, llm_temperature)
-
-    if is_sarvam:
-        llm = sarvam_pipeline.build_llm(llm_temperature)
-    elif llm_provider == "sarvam":
-        llm = sarvam.LLM(model=llm_model, api_key=SARVAM_API_KEY, temperature=llm_temperature)
-    else:
-        llm_kwargs: dict = {"model": llm_model, "temperature": llm_temperature}
-        if llm_model in _REASONING_EFFORT_OVERRIDES:
-            llm_kwargs["reasoning_effort"] = _REASONING_EFFORT_OVERRIDES[llm_model]
-        llm = _CappedGroqLLM(**llm_kwargs)
-    # Start warmup immediately with the real system prompt so Groq caches the full context.
-    # Runs concurrently while we wait for the SIP participant to connect (usually 3-8s).
+    llm = sarvam_pipeline.build_llm(float(meta.get("llm_temperature") or 0.7))
+    # Warm up while we wait for the SIP participant to connect (usually 3-8s).
     warmup_task = _safe_task(_warmup_llm(llm, system_prompt), "llm-warmup")
 
-    # ElevenLabs' plugin has no real prewarm() -- tts.prewarm() below is a no-op for it
-    # (only Sarvam/Cartesia implement a connection pool it can actually warm), so
-    # without this, the very first request pays a full TLS+WebSocket handshake to
-    # elevenlabs.io inline with the welcome message: extra silence before the agent
-    # speaks, AND a colder/differently-paced opening chunk than every turn after it,
-    # which is what read as "a different tone" on the first line. Firing a tiny
-    # throwaway synthesis now reuses the same participant-connect window LLM warmup
-    # already gets for free, and warms the shared HTTP session (_ensure_session() in
-    # the plugin) so the real welcome request reuses an already-open connection.
-    if voice_provider == "elevenlabs" and not is_sarvam:
-        async def _warm_elevenlabs_tts() -> None:
-            # Must match the REAL tts object below (voice_id, model, voice_settings)
-            # exactly -- this used to call elevenlabs.TTS(api_key=...) with none of
-            # those, which warms the HTTP connection but synthesizes with
-            # ElevenLabs' own default demo voice/settings. Reported live 2026-09-16
-            # as "welcome message speaking in a different voice" — the org's actual
-            # configured voice was still cold on its own first real request even
-            # though a connection had already been opened for a different one.
-            warm_tts = elevenlabs.TTS(
-                api_key        = ELEVENLABS_API_KEY,
-                voice_id       = voice_id,
-                model          = tts_model_id,
-                voice_settings = _ELEVENLABS_VOICE_SETTINGS,
-            )
-            try:
-                async for _ in warm_tts.synthesize("hi"):
-                    pass
-            finally:
-                await warm_tts.aclose()
-        _safe_task(_warm_elevenlabs_tts(), "elevenlabs-tts-warmup")
+    try:
+        participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
+        logger.info("Participant joined: %s", getattr(participant, "identity", "unknown"))
+    except asyncio.TimeoutError:
+        logger.error("No participant joined in 30s — exiting")
+        warmup_task.cancel()
+        return
 
-    if inbound_participant is not None:
-        participant = inbound_participant  # already awaited above, before this config was known
-    else:
-        try:
-            participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=30.0)
-            logger.info("Participant joined: %s", getattr(participant, "identity", "unknown"))
-        except asyncio.TimeoutError:
-            logger.error("No participant joined in 30s — exiting")
-            warmup_task.cancel()
-            return
-
-    # Ensure warmup is complete before the first turn so the first response is fast.
-    # Participant just connected — we have a few seconds while TTS/session setup happens.
     try:
         await asyncio.wait_for(asyncio.shield(warmup_task), timeout=6.0)
         logger.info("LLM warmup confirmed complete ✓")
     except (asyncio.TimeoutError, Exception) as e:
         logger.debug("LLM warmup await skipped: %s", e)  # proceed anyway
 
-    if is_sarvam:
-        tts = sarvam_pipeline.build_tts(sarvam_state)
-        logger.info("Sarvam engine TTS ready ✓ (model=%s speaker=%s lang=%s)",
-                    sarvam_state.lang["tts_model"], sarvam_state.voice_id, sarvam_state.lang["tts"])
-    elif voice_provider == "cartesia":
-        # Cartesia sonic models only support: "en", "de", "es", "fr".
-        # Hindi ("hi") is NOT supported — passing it causes hallucination.
-        # For Hinglish/Hindi use "en"; the model phonetically handles mixed text correctly.
-        _cartesia_lang_map = {
-            "english":  "en",
-            "german":   "de",
-            "spanish":  "es",
-            "french":   "fr",
-        }
-        cartesia_language = _cartesia_lang_map.get(language, "en")  # all Indian languages → "en"
-        tts = cartesia.TTS(
-            api_key     = CARTESIA_API_KEY,
-            voice       = voice_id,
-            model       = CARTESIA_MODEL_ID,
-            language    = cartesia_language,
-            speed       = 1,        # default is 1.0 — 0.85 is natural phone-call pace
-            encoding    = "pcm_s16le",
-            sample_rate = 24000,
-        )
-        logger.info("Cartesia TTS ready ✓ (model=%s voice=%s lang=%s speed=0.85)", CARTESIA_MODEL_ID, voice_id, cartesia_language)
-    elif voice_provider == "chatterbox":
-        # Chatterbox's multilingual model genuinely supports Hindi ("hi") — validated
-        # separately with good quality. But forcing "hi" on purely English text (e.g. the
-        # generic AGENT_WELCOME_MESSAGE fallback when no welcome_message is configured)
-        # causes hallucinated/garbled audio. Map English content to "en" explicitly;
-        # keep "hi" for hindi/hinglish, which tested fine.
-        _chatterbox_lang_map = {
-            "english":  "en",
-            "hindi":    "hi",
-            "hinglish": "hi",
-            "marathi":  "hi",  # not natively supported by Chatterbox — closest available
-        }
-        chatterbox_language = _chatterbox_lang_map.get(language, CHATTERBOX_LANGUAGE)
-        tts = chatterbox_tts.TTS(
-            base_url    = CHATTERBOX_BASE_URL,
-            voice       = voice_id,
-            language    = chatterbox_language,
-            sample_rate = CHATTERBOX_SAMPLE_RATE,
-            voice_mode  = CHATTERBOX_VOICE_MODE,
-        )
-        logger.info("Chatterbox TTS ready ✓ (base_url=%s voice=%s lang=%s mode=%s)", CHATTERBOX_BASE_URL, voice_id, chatterbox_language, CHATTERBOX_VOICE_MODE)
-    elif voice_provider == "sarvam" or languages.uses_sarvam_voice(language):
-        # Sarvam's Bulbul models are native to all 10 platform languages, so every
-        # regional language (Tamil, Telugu, Bengali…) speaks through Sarvam even when
-        # the agent is configured for ElevenLabs, whose Indian voices are Hindi /
-        # Indian-English only. Hindi, Hinglish and English keep their own provider.
-        sarvam_language = lang_cfg.sarvam_tts
-        if voice_provider != "sarvam":
-            voice_id = SARVAM_REGIONAL_SPEAKER
-            logger.info("Regional language %s — using Sarvam voice '%s' instead of %s",
-                        language, voice_id, voice_provider)
-        # NOTE: pitch/loudness are silently ignored by Sarvam's API on bulbul:v3 and
-        # v3-beta (only bulbul:v2 honors them) — so tuning pitch here would do nothing.
-        # temperature controls per-utterance sampling randomness. Every conversational
-        # turn opens a brand-new TTS session (see logs: distinct session_id per turn),
-        # so higher temperature = each line sampled more independently = audible tone
-        # drift turn-to-turn — bad for a sales call, which needs one steady voice
-        # (same reasoning behind _ELEVENLABS_VOICE_SETTINGS above). Keep it at
-        # Sarvam's own default for consistency; pace alone fixes the sluggish pacing.
-        tts = sarvam.TTS(
-            api_key             = SARVAM_API_KEY,
-            target_language_code= sarvam_language,
-            model               = meta.get("tts_model_id") or SARVAM_MODEL,  # Testing section can override (bulbul:v3-beta/v3/v4-flash — v2 is deprecated on Sarvam's side)
-            speaker             = voice_id,
-            speech_sample_rate  = SARVAM_SAMPLE_RATE,
-            pace                = 1.0,   # 1.0 reads sluggish for phone calls; 1.10 is natural conversational pace
-            temperature         = 0.6,    # Sarvam's own default — lowest that still sounds natural; higher caused tone drift between turns
-        )
-        logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s pace=1.10 temp=0.6)", SARVAM_MODEL, voice_id, sarvam_language)
-    else:
-        tts = elevenlabs.TTS(
-            api_key               = ELEVENLABS_API_KEY,
-            voice_id              = voice_id,
-            model                 = tts_model_id,
-            encoding              = "pcm_16000",  # phone SIP path uses ≤16kHz; pcm_24000 was overkill and caused more WS drops
-            chunk_length_schedule = _CHUNK_LENGTH_SCHEDULE,
-            voice_settings        = _ELEVENLABS_VOICE_SETTINGS,
-        )
-        logger.info("ElevenLabs TTS ready ✓ (voice=%s model=%s)", voice_id, tts_model_id)
+    tts_engine = sarvam_pipeline.build_tts(sarvam_state)
+    logger.info("Sarvam TTS ready ✓ (model=%s speaker=%s lang=%s)",
+                sarvam_state.lang["tts_model"], sarvam_state.voice_id, sarvam_state.lang["tts"])
+    # Pre-open the TTS WebSocket now rather than on the agent's first spoken turn.
+    tts_engine.prewarm()
+    stt_engine = sarvam_pipeline.build_stt(sarvam_state, sarvam_cfg.get("stt_prompt"))
 
-    # Pre-open the TTS connection (WebSocket for Sarvam/Cartesia) in the background now,
-    # rather than paying that handshake latency on the agent's very first spoken turn.
-    # No-op for providers that don't implement it.
-    tts.prewarm()
-
-    voice_agent = (
-        functools.partial(SarvamVoiceAgent, sarvam_state=sarvam_state) if is_sarvam else VoiceAgent
-    )(
+    voice_agent = VoiceAgent(
         ctx.room,
         instructions=system_prompt,
         welcome_message=welcome_message,
+        sarvam_state=sarvam_state,
         call_id=call_id,
         backend_url=BACKEND_INTERNAL_URL,
         webhook_secret=AGENT_WEBHOOK_SECRET,
+        max_duration=int(meta.get("max_duration") or 600),
     )
-    end_call_transform = _end_call_filter_transform(voice_agent._trigger_hangup)
-    honorific_greeting_transform = _honorific_greeting_filter_transform(tz_name, lang_cfg.honorific)
-    digit_spellout_transform = _digit_spellout_transform()
-
-    # STT follows the agent's language; "codemix" only exists for the Hindi model,
-    # which is also the one that handles the Hindi/English mixing in real calls.
-    # Testing section can override the model (saarika:v2.5/saaras:v2.5/saaras:v3) --
-    # "codemix" mode only works on saaras:v3/v4, so it's skipped for any other
-    # model rather than letting a mismatched (model, mode) pair reject the connection.
-    stt_model = meta.get("stt_model") or SARVAM_STT_MODEL
-    stt_engine = sarvam_pipeline.build_stt(sarvam_state, (meta.get("sarvam") or {}).get("stt_prompt")) if is_sarvam else sarvam.STT(
-        api_key  = SARVAM_API_KEY,
-        language = lang_cfg.sarvam_stt,
-        model    = stt_model,
-        mode     = SARVAM_STT_MODE if stt_model in ("saaras:v3", "saaras:v4") and lang_cfg.sarvam_stt == "hi-IN" else "transcribe",
-    )
-
-    async def _switch_language(spoken_name: str) -> None:
-        """Apply a [lang:x] marker: re-point TTS and STT at that language.
-
-        Only ever called for a language the prompt lists as supported — anything
-        else the LLM is told to apologise for instead, so this just logs and
-        leaves the call as it is.
-        """
-        target = languages.resolve(spoken_name)
-        if target is None:
-            logger.warning("Language switch requested for unsupported '%s' — ignored", spoken_name)
-            return
-        if is_sarvam:
-            try:
-                sarvam_pipeline.switch_language(sarvam_state, target.key, tts, stt_engine)
-            except Exception as exc:
-                logger.error("Language switch to %s failed: %s", spoken_name, exc)
-            return
-        try:
-            if isinstance(tts, sarvam.TTS):
-                tts.update_options(target_language_code=target.sarvam_tts)
-            else:
-                # Same ElevenLabs voice, but the configured model may not cover this
-                # language (eleven_turbo_v2_5 = Hindi/Tamil only), so move that call
-                # to the multilingual turbo model for the rest of the conversation.
-                tts.update_options(model=ELEVENLABS_MULTILINGUAL_MODEL,
-                                   language=target.sarvam_tts.split("-")[0])
-            # sarvam.STT has no update_options of its own (unlike sarvam.TTS) —
-            # the plugin only exposes it on the live SpeechStream object, which
-            # it keeps a reference to internally while the call's one long-lived
-            # STT connection is open. Reach into that to retarget it.
-            stt_streams = list(getattr(stt_engine, "_streams", ()))
-            if not stt_streams:
-                logger.warning(
-                    "Language switch: no active Sarvam STT stream found for '%s' — "
-                    "speech recognition stays on the previous language",
-                    spoken_name,
-                )
-            for s in stt_streams:
-                s.update_options(
-                    language = target.sarvam_stt,
-                    model    = stt_model,  # keep whichever STT model this call started with
-                    mode     = SARVAM_STT_MODE if stt_model in ("saaras:v3", "saaras:v4") and target.sarvam_stt == "hi-IN" else "transcribe",
-                )
-            logger.info("Language switched mid-call → %s (tts=%s stt=%s)",
-                        target.display, target.sarvam_tts, target.sarvam_stt)
-        except Exception as exc:
-            logger.error("Language switch to %s failed: %s", spoken_name, exc)
-
-    language_switch_transform = _language_switch_filter_transform(_switch_language)
+    voice_agent.attach_engines(tts_engine, stt_engine)
 
     def _log_tts_ttfb(metrics) -> None:
-        # ttfb = seconds from "synthesis requested" to "first audio byte back
-        # from the provider" -- the number that actually answers "did the
-        # caller hear a real pause", as opposed to the full-utterance
-        # synthesis duration already logged by the Sarvam/ElevenLabs plugins
-        # ("WebSocket session completed successfully"), which covers the
-        # whole reply and isn't when playback actually started.
+        # ttfb = "synthesis requested" -> "first audio byte back": whether the
+        # caller heard a real pause before the agent started speaking.
         if getattr(metrics, "type", None) != "tts_metrics":
             return
-        logger.info(
-            "TTS time-to-first-audio-byte: %.3fs (turn %d)",
-            metrics.ttfb, voice_agent._turn_count,
-        )
+        logger.info("TTS time-to-first-audio-byte: %.3fs (turn %d)", metrics.ttfb, voice_agent._turn_count)
 
-    tts.on("metrics_collected", _log_tts_ttfb)
+    tts_engine.on("metrics_collected", _log_tts_ttfb)
 
     session = AgentSession(
         stt=stt_engine,
         llm=llm,
-        tts=tts,
-        vad=None if is_sarvam else ctx.proc.userdata["vad"],
-        **({k: v for k, v in sarvam_pipeline.SESSION_KWARGS.items() if k != "vad"} if is_sarvam else {}),
-        turn_handling=sarvam_pipeline.turn_handling() if is_sarvam else TurnHandlingOptions(
-            turn_detection=MultilingualModel(),  # semantic end-of-turn model (Hindi/English) — judges
-                                                  # whether an utterance actually sounds finished instead
-                                                  # of relying on silence length alone, so a pause mid
-                                                  # phone-number no longer gets treated as "done talking"
-            endpointing={
-                "min_delay": 0.9,  # was dropped to the SDK default 0.5s trusting turn_detection
-                                   # (above) alone to catch a mid-sentence pause -- in practice it
-                                   # doesn't catch every case, and the agent started replying while
-                                   # the customer had only paused briefly, not actually finished.
-                                   # Restoring the floor to 0.9s (proven previously for the same
-                                   # mid-phone-number case) so every turn gets at least this much
-                                   # silence before committing, with turn_detection still handling
-                                   # the smarter judgment call on top of that floor.
-                "max_delay": 3.0,  # unchanged (SDK default) — ceiling the model can stretch to when unsure
-            },
-            interruption={
-                "min_duration": 0.35,  # was 0.6 -- a single short word ("ruko", "wait", "sorry")
-                                      # rarely sustains 600ms of speech, so real short interruptions were
-                                      # being silently ignored (this check must pass before min_words is
-                                      # even evaluated). 0.35s is still comfortably above VAD's own 0.20s
-                                      # onset requirement (prewarm() below), so it still filters clicks/
-                                      # breaths shorter than a real word.
-                "min_words":    0,    # was 1 -- requiring even one recognized word meant waiting on STT
-                                      # to transcribe it (real latency on top of min_duration above),
-                                      # which is what made interruptions feel like they only landed after
-                                      # the agent finished its sentence. 0 disables the word-recognition
-                                      # gate entirely: min_duration's 0.35s of sustained VAD-detected
-                                      # speech is now the only bar, so the agent stops on raw voice
-                                      # activity alone -- true human-conversation-style barge-in, at the
-                                      # cost of occasionally reacting to a loud breath/cough/background
-                                      # noise VAD mistakes for speech (no longer filtered by a real word).
-                "false_interruption_timeout": 1.0,  # Safety net for min_words=0 above: a detected
-                                      # interruption PAUSES the agent's audio, and if the caller produced
-                                      # no real transcribed turn within 1s (cough, horn, background
-                                      # voice, line echo) the agent RESUMES from where it paused instead
-                                      # of going silent. A real "ruko"/"wait" transcribes well inside 1s
-                                      # and cuts the agent off for good. Was None (disabled) back when
-                                      # interruptions needed 600ms + a recognised word; once those gates
-                                      # were dropped to 0.35s/0 words, every noise burst killed the
-                                      # sentence permanently. Was 2.0 (SDK default) before that, which
-                                      # paused long enough to sound like the agent ignored the caller --
-                                      # 1.0 matches Vapi's backoffSeconds recovery window.
-                "resume_false_interruption": True,  # SDK default, pinned explicitly: the resume half
-                                      # of false_interruption_timeout above.
-            },
-            preemptive_generation={
-                "preemptive_tts": True,  # SDK default False. LLM text-generation already starts
-                                      # speculatively before the turn is confirmed (enabled=True is
-                                      # the SDK default and was never overridden) -- this makes TTS
-                                      # synthesis start on that speculative text too, instead of
-                                      # waiting for turn confirmation before synthesis even begins.
-                                      # If the guess is wrong (customer kept talking / interrupted),
-                                      # the SDK cleanly cancels the in-flight TTS task
-                                      # (agent_activity.py: cancel_and_wait) before anything is
-                                      # played -- no audio artifact, just an occasionally-wasted TTS
-                                      # synthesis call on a discarded guess.
-            },
-        ),
-        tts_text_transforms=["filter_markdown", "filter_emoji", honorific_greeting_transform, digit_spellout_transform, language_switch_transform, end_call_transform]
-        + ([sarvam_pipeline.no_ji_transform(sarvam_state)] if is_sarvam else []),
+        tts=tts_engine,
+        **sarvam_pipeline.SESSION_KWARGS,
+        turn_handling=sarvam_pipeline.turn_handling(),
+        tts_text_transforms=["filter_markdown", "filter_emoji"],
     )
 
     def _on_user_state_changed(ev) -> None:
-        # Brackets the part of the latency budget that "Turn N" / TTS-ttfb logs
-        # don't show: old_state->new_state fires the instant VAD+turn_detection
-        # decide the customer stopped talking, i.e. BEFORE the 0.9s-3.0s
-        # endpointing wait that runs before "Turn N" is even logged. Diffing
-        # this timestamp against the next "Turn N" log gives the real
-        # customer-stopped-talking -> turn-committed delay; diffing it against
-        # the next TTS ttfb log gives the full customer-perceived gap.
+        # Fires the instant the customer stopped talking, i.e. BEFORE the
+        # endpointing wait — diff against "Turn N" / TTS ttfb logs for real gaps.
         if ev.new_state == "listening":
-            logger.info(
-                "User stopped speaking (endpointing wait starts now) | turn %d",
-                voice_agent._turn_count,
-            )
+            logger.info("User stopped speaking (endpointing wait starts now) | turn %d", voice_agent._turn_count)
 
     session.on("user_state_changed", _on_user_state_changed)
 
     def _on_speech_created(ev) -> None:
-        # Proves whether turn_handling.interruption (above) is actually cutting
-        # the agent off mid-sentence, rather than inferring it indirectly from
-        # turn timestamps -- wait_for_playout() resolves whether the speech
-        # finished normally or was cut short, and .interrupted tells us which.
         speech_handle = ev.speech_handle
 
         async def _log_if_interrupted() -> None:
@@ -2107,30 +1028,20 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         _safe_task(_log_if_interrupted(), "interruption-logger")
 
     session.on("speech_created", _on_speech_created)
-
     session.on("close", lambda ev: handle_session_close(voice_agent, ev))
-    voice_agent._pipeline = pipeline
+    session.on("error", lambda ev: handle_session_error(voice_agent, ev))
 
     def _on_false_interruption(_ev) -> None:
         voice_agent._false_interruptions += 1
 
     session.on("agent_false_interruption", _on_false_interruption)
-    if is_sarvam:
-        session.on("error", lambda ev: handle_sarvam_error(voice_agent, ev))
 
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(participant):
         # Customer hung up — classify + POST the outcome BEFORE tearing the room
-        # down ourselves. close_on_disconnect is deliberately off (below): with it
-        # on, RoomIO closes the session/room on this same event, and that teardown
-        # was consistently winning the race against this handler's fire-and-forget
-        # report (an httpx POST plus a Groq LLM call — real network time), because
-        # a customer-initiated hangup has no farewell TTS to wait out first. The
-        # job process exits once the room disconnects, killing the report
-        # mid-flight, which is why every customer-hangup call was landing on
-        # outcome=pending regardless of how the call actually went. Routing through
-        # _silent_hangup (await report, then disconnect) makes this path match the
-        # agent-initiated hangup paths, which already await the report first.
+        # down ourselves (close_on_disconnect is off below): with it on, the room
+        # teardown won the race against the report and every customer-hangup call
+        # landed on outcome=pending.
         if not voice_agent._ending:
             voice_agent._ending = True
             logger.info("Participant disconnected — reporting outcome before disconnect")
@@ -2143,10 +1054,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             room_options= RoomOptions(
                 close_on_disconnect  = False,
                 delete_room_on_close = True,
-                # Strips traffic/TV/background voices from the caller's audio BEFORE
-                # VAD and the interruption check hear it (same role as Krisp in Vapi).
-                # BVCTelephony is the variant tuned for narrowband SIP phone audio.
-                # Requires LiveKit Cloud; without it min_words=0 above reacts to noise.
+                # Strips traffic/TV/background voices from the caller's audio before
+                # the interruption check hears it. BVCTelephony is tuned for
+                # narrowband SIP phone audio. Requires LiveKit Cloud.
                 audio_input          = AudioInputOptions(
                     noise_cancellation=noise_cancellation.BVCTelephony() if noise_cancellation else None,
                 ),

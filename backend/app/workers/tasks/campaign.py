@@ -45,7 +45,7 @@ from google.protobuf.duration_pb2 import Duration
 from sqlalchemy import func, select, update
 
 from app.config import settings
-from app.core import pipelines
+from app.core import agent_variables, pipelines
 from app.core.concurrency import (
     acquire_org_slot,
     acquire_user_slot,
@@ -342,15 +342,8 @@ async def _place_call(
     agent_template_id: str,
     system_prompt: str = "",
     welcome_message: str = "",
-    voice_id: str = "",
-    voice_provider: str = "elevenlabs",
-    language: str = "hinglish",
-    llm_provider: str = "groq",
-    llm_model: str = "",
     llm_temperature: float = 0.7,
-    tts_model_id: str = "",
-    stt_model: str = "",
-    timezone_name: str = "",
+    max_duration: int = 600,
     extra_meta: dict | None = None,
 ) -> str:
     """
@@ -370,16 +363,9 @@ async def _place_call(
             "contact_name": contact_name,
             "system_prompt": system_prompt,
             "welcome_message": welcome_message,
-            "voice_id": voice_id,
-            "voice_provider": voice_provider,
-            "language": language,
-            "llm_provider": llm_provider,
-            "llm_model": llm_model,
             "llm_temperature": llm_temperature,
-            "tts_model_id": tts_model_id,
-            "stt_model": stt_model,
-            "timezone": timezone_name,
-            **(extra_meta or {}),
+            "max_duration": max_duration,
+            **(extra_meta or {}),  # {"sarvam": {...}} from pipelines.call_meta
         }
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
@@ -656,76 +642,6 @@ async def _save_recording_async(
 
 # ── Per-call coroutine (runs in parallel inside the dispatch loop) ────────────
 
-async def _prepare_prime_prompt(
-    *,
-    contact_id: uuid.UUID,
-    org_id: uuid.UUID,
-    base_prompt: str,
-    base_welcome: str,
-    language: str,
-) -> tuple[str, str]:
-    """Return (system_prompt, welcome_message) personalised for this contact.
-
-    Generated once and saved on the contact, so retries reuse it. Never raises:
-    if generation fails the call still goes out on the agent's normal prompt
-    with the contact's CSV details appended (prompt_error records why).
-    """
-    from app.models.company_profile import OrgCompanyProfile
-    from app.services.prime_prompt import ContactInfo, fallback_prompt, generate_contact_prompt
-
-    try:
-        async with AsyncSessionLocal() as session:
-            contact = await session.get(CampaignContact, contact_id)
-            profile = await session.scalar(
-                select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == org_id)
-            )
-        if contact is None:
-            return base_prompt, base_welcome
-        if contact.generated_system_prompt:
-            return contact.generated_system_prompt, contact.generated_welcome_message or base_welcome
-
-        info = ContactInfo(
-            name=contact.name, phone=contact.phone, email=contact.email,
-            company=contact.company, custom_fields=contact.custom_fields or {},
-        )
-    except Exception as exc:
-        log.error("prime_prompt_load_failed", contact_id=str(contact_id), error=str(exc)[:300])
-        return base_prompt, base_welcome
-
-    started = time.monotonic()
-    try:
-        if profile is None or not profile.is_complete:
-            raise RuntimeError("Company profile is missing or incomplete")
-        result = await generate_contact_prompt(
-            profile=profile, base_prompt=base_prompt, language=language, contact=info,
-        )
-        values = dict(
-            generated_system_prompt=result.system_prompt,
-            generated_welcome_message=result.welcome_message,
-            prompt_generated_at=datetime.now(timezone.utc),
-            prompt_error=None,
-        )
-        prompt, welcome = result.system_prompt, result.welcome_message
-        log.info("prime_prompt_generated", contact_id=str(contact_id),
-                 website_used=result.website_used, web_searched=result.web_searched, seconds=round(time.monotonic() - started, 1))
-    except Exception as exc:
-        prompt, welcome = fallback_prompt(base_prompt, base_welcome, info)
-        # Fallback is not saved as generated_* so the next retry tries the LLM again
-        values = dict(prompt_error=str(exc)[:1000])
-        log.warning("prime_prompt_fallback", contact_id=str(contact_id), error=str(exc)[:300])
-
-    try:
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                await session.execute(
-                    update(CampaignContact).where(CampaignContact.id == contact_id).values(**values)
-                )
-    except Exception as exc:
-        log.error("prime_prompt_save_failed", contact_id=str(contact_id), error=str(exc)[:300])
-
-    return prompt, welcome
-
-
 async def _run_one_call(
     http: aiohttp.ClientSession,
     *,
@@ -741,17 +657,6 @@ async def _run_one_call(
     """
     contact_id = kwargs["contact_id"]
     contact_phone = kwargs["contact_phone"]
-
-    # Prime Calling: personalise the prompt BEFORE taking any slot, so the
-    # website fetch + LLM round-trip (several seconds) never holds a phone line.
-    if kwargs.pop("is_prime", False):
-        kwargs["system_prompt"], kwargs["welcome_message"] = await _prepare_prime_prompt(
-            contact_id=contact_id,
-            org_id=kwargs["org_id"],
-            base_prompt=kwargs["system_prompt"],
-            base_welcome=kwargs["welcome_message"],
-            language=kwargs["language"],
-        )
 
     user_slot_acquired = owner_user_id is None  # no owner to attribute to -- fail open
     if owner_user_id is not None:
@@ -807,13 +712,8 @@ async def _run_one_call_body(
     max_duration: int,
     system_prompt: str,
     welcome_message: str,
-    voice_id: str,
-    voice_provider: str,
-    language: str,
-    llm_model: str,
     llm_temperature: float,
     org_max_concurrent: int,
-    timezone_name: str = "",
     extra_meta: dict | None = None,
 ) -> None:
     """Place one call, wait for it to finish, and finalize — all with its own DB session.
@@ -907,12 +807,8 @@ async def _run_one_call_body(
                 agent_template_id=str(agent_template_id) if agent_template_id else "",
                 system_prompt=system_prompt,
                 welcome_message=welcome_message,
-                voice_id=voice_id,
-                voice_provider=voice_provider,
-                language=language,
-                llm_model=llm_model,
                 llm_temperature=llm_temperature,
-                timezone_name=timezone_name,
+                max_duration=max_duration,
                 extra_meta=extra_meta,
             )
 
@@ -1119,50 +1015,20 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         )
                         return
 
+                    language = campaign.language or (str(tmpl.language) if tmpl else pipelines.DEFAULT_LANGUAGE)
                     tmpl_kwargs = dict(
                         agent_template_id=campaign.agent_template_id,
-                        # 15 min / qwen / 0.7 are the fixed platform defaults for a Prime
-                        # campaign with no agent template at all (pitch_structure alone).
-                        max_duration=tmpl.max_call_duration_seconds if tmpl else 900,
-                        # Campaign's own pitch structure wins over the agent template's
-                        # system prompt -- same override pattern as language/voice_id.
-                        system_prompt=campaign.pitch_structure or ((tmpl.system_prompt or "") if tmpl else ""),
-                        welcome_message=(tmpl.welcome_message or "") if tmpl else "",
-                        # Campaign's own cloned-voice override wins over the agent's voice;
-                        # always ElevenLabs underneath since cloned voices only exist there.
-                        voice_id=campaign.voice_id or ((tmpl.voice_id or "") if tmpl else ""),
-                        voice_provider="elevenlabs" if campaign.voice_id else (str(tmpl.voice_provider) if tmpl else "elevenlabs"),
-                        # Campaign language wins; NULL falls back to the agent's own
-                        language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
-                        # Empty llm_model falls back to GROQ_MODEL (agent/config.py's own
-                        # default, "qwen/qwen3.6-27b") once it reaches the agent process.
-                        llm_model=(tmpl.llm_model or "") if tmpl else "",
+                        max_duration=tmpl.max_call_duration_seconds if tmpl else 600,
                         llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
-                        timezone_name=campaign.timezone or "",
-                        is_prime=bool(campaign.is_prime),
+                        # Campaign's voice/language win over the agent's own
+                        extra_meta=await pipelines.call_meta(
+                            session, org_id=campaign.org_id, language=language,
+                            voice_id=campaign.voice_id or ((tmpl.voice_id or "") if tmpl else ""),
+                        ),
                     )
-                    engine = await pipelines.resolve_call_engine(
-                        session,
-                        org_id=campaign.org_id,
-                        campaign_pipeline=campaign.pipeline,
-                        agent_pipeline=tmpl.pipeline if tmpl else None,
-                        language=tmpl_kwargs["language"],
-                        voice_id=tmpl_kwargs["voice_id"],
-                        voice_provider=tmpl_kwargs["voice_provider"],
-                    )
-                    if engine.pause:
-                        await session.execute(
-                            update(Campaign)
-                            .where(Campaign.id == campaign.id)
-                            .values(status=CampaignStatus.PAUSED, pause_reason=pipelines.PAUSE_REASON_ENGINE_OFF)
-                        )
-                        log.warning("campaign_paused_engine_off", campaign_id=campaign_id)
-                        return
-                    tmpl_kwargs.update(
-                        voice_id=engine.voice_id,
-                        voice_provider=engine.voice_provider,
-                        extra_meta=engine.meta,
-                    )
+                    greeting = (tmpl.welcome_message or "") if tmpl else ""
+                    instructions = (tmpl.system_prompt or "") if tmpl else ""
+                    defaults = (tmpl.variables or {}) if tmpl else {}
 
                     for contact in contacts:
                         # DNC check
@@ -1192,18 +1058,23 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                             direction=CallDirection.OUTBOUND,
                             status=CallStatus.INITIATED,
                             started_at=datetime.now(timezone.utc),
-                            pipeline=engine.pipeline,
-                            pipeline_fallback=engine.fallback,
+                            pipeline=pipelines.SARVAM,
                         )
                         session.add(call_obj)
                         await session.flush()
 
+                        welcome, prompt, _ = agent_variables.render(
+                            greeting, instructions, columns=agent_variables.contact_columns(contact),
+                            defaults=defaults, tz_name=campaign.timezone,
+                        )
                         batch.append(dict(
                             call_id=call_obj.id,
                             contact_id=contact.id,
                             contact_phone=contact.phone,
                             contact_name=contact.name,
                             room_name=room_name,
+                            system_prompt=prompt,
+                            welcome_message=welcome,
                         ))
 
         if needs_retry_wait:
@@ -1350,7 +1221,6 @@ async def _run_test_call_async(
     org_id: str,
     trunk_id: str | None = None,
     user_id: str | None = None,
-    overrides: dict | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign).
 
@@ -1364,7 +1234,7 @@ async def _run_test_call_async(
     from uuid import UUID as _UUID
 
     try:
-        await _run_test_call_body(agent_id, phone_number, call_id, org_id, trunk_id, overrides)
+        await _run_test_call_body(agent_id, phone_number, call_id, org_id, trunk_id)
     finally:
         if user_id:
             await release_user_slot(_UUID(user_id))
@@ -1376,10 +1246,8 @@ async def _run_test_call_body(
     call_id: str,
     org_id: str,
     trunk_id: str | None = None,
-    overrides: dict | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
-    overrides = overrides or {}
     from uuid import UUID as _UUID
 
     async with AsyncSessionLocal() as session:
@@ -1418,40 +1286,14 @@ async def _run_test_call_body(
         livekit_trunk_id = (chosen_trunk.livekit_trunk_id if chosen_trunk else None) or settings.DEFAULT_SIP_TRUNK_ID
         sip_caller_id    = (chosen_trunk.caller_id        if chosen_trunk else None) or settings.DEFAULT_SIP_CALLER_ID
 
-        system_prompt   = agent.system_prompt or ""
-        welcome_msg     = agent.welcome_message or ""
-        # Every override below wins over the agent template's own setup, for this
-        # one call only -- the Testing section trying a different language/voice/
-        # STT/LLM/TTS combination. agent.py's own TTS/STT selection already switches
-        # engines correctly for whichever language ends up here, regardless of
-        # voice_provider, so overriding language alone is enough to try a region.
-        agent_voice_provider = str(agent.voice_provider) if agent.voice_provider else "elevenlabs"
-        voice_provider  = overrides.get("voice_provider") or agent_voice_provider
-        # agent.voice_id is only valid under the agent's OWN provider -- e.g. an
-        # ElevenLabs voice/clone ID crashes Sarvam's TTS if carried over under a
-        # different overridden voice_provider. Only reuse it when the effective
-        # provider still matches; agent.py already picks a sane per-provider
-        # default (SARVAM_VOICE_ID etc.) when voice_id is empty.
-        voice_id        = overrides.get("voice_id") or (
-            agent.voice_id if voice_provider == agent_voice_provider else ""
-        ) or ""
-        language        = overrides.get("language") or (str(agent.language) if agent.language else "hinglish")
-        llm_provider    = overrides.get("llm_provider") or "groq"
-        llm_model       = overrides.get("llm_model") or agent.llm_model or ""
-        llm_temperature = float(agent.llm_temperature or 0.7)
-        tts_model_id    = overrides.get("tts_model") or ""
-        stt_model       = overrides.get("stt_model") or ""
-        engine = await pipelines.resolve_call_engine(
-            session,
-            org_id=_UUID(org_id),
-            campaign_pipeline=overrides.get("pipeline"),
-            agent_pipeline=agent.pipeline,
-            language=language,
-            voice_id=voice_id,
-            voice_provider=voice_provider,
+        # Test calls use the agent's own default values for every placeholder.
+        welcome_msg, system_prompt, _ = agent_variables.render(
+            agent.welcome_message or "", agent.system_prompt or "", columns=None, defaults=agent.variables or {},
         )
-        voice_id, voice_provider = engine.voice_id, engine.voice_provider
-        call_row.pipeline, call_row.pipeline_fallback = engine.pipeline, engine.fallback
+        extra_meta = await pipelines.call_meta(
+            session, org_id=_UUID(org_id), language=str(agent.language), voice_id=agent.voice_id,
+        )
+        call_row.pipeline = pipelines.SARVAM
         await session.commit()
 
     log.info("test_call_start", call_id=call_id, phone=phone_number, room=room_name)
@@ -1470,15 +1312,9 @@ async def _run_test_call_body(
             agent_template_id=agent_id,
             system_prompt=system_prompt,
             welcome_message=welcome_msg,
-            voice_id=voice_id,
-            voice_provider=voice_provider,
-            language=language,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            llm_temperature=llm_temperature,
-            tts_model_id=tts_model_id,
-            stt_model=stt_model,
-            extra_meta=engine.meta,
+            llm_temperature=float(agent.llm_temperature or 0.7),
+            max_duration=agent.max_call_duration_seconds,
+            extra_meta=extra_meta,
         )
 
         log.info("test_call_placed", call_id=call_id, result=place_result)
@@ -1569,10 +1405,10 @@ async def _run_test_call_body(
 )
 def place_test_call(
     self, agent_id: str, phone_number: str, call_id: str, org_id: str,
-    trunk_id: str | None = None, user_id: str | None = None, overrides: dict | None = None,
+    trunk_id: str | None = None, user_id: str | None = None,
 ) -> None:
     """Place a single test call for an agent template (no campaign)."""
-    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id, overrides))
+    asyncio.run(_run_test_call_async(agent_id, phone_number, call_id, org_id, trunk_id, user_id))
 
 
 async def _run_demo_call_async(
@@ -1601,12 +1437,9 @@ async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> N
 
     from app.core.demo_call import (
         DEMO_LANGUAGE,
-        DEMO_LLM_MODEL,
         DEMO_LLM_TEMPERATURE,
         DEMO_SYSTEM_PROMPT,
-        DEMO_TTS_MODEL_ID,
         DEMO_VOICE_ID,
-        DEMO_VOICE_PROVIDER,
         DEMO_WELCOME_MESSAGE,
     )
 
@@ -1616,17 +1449,10 @@ async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> N
             log.error("demo_call_missing_call_row", call_id=call_id)
             return
         room_name = call_row.livekit_room_name
-        org = await session.get(Organization, _UUID(org_id))
-        engine = await pipelines.resolve_call_engine(
-            session,
-            org_id=_UUID(org_id),
-            campaign_pipeline=None,
-            agent_pipeline=org.default_pipeline if org else None,
-            language=DEMO_LANGUAGE,
-            voice_id=DEMO_VOICE_ID,
-            voice_provider=DEMO_VOICE_PROVIDER,
+        extra_meta = await pipelines.call_meta(
+            session, org_id=_UUID(org_id), language=DEMO_LANGUAGE, voice_id=DEMO_VOICE_ID,
         )
-        call_row.pipeline, call_row.pipeline_fallback = engine.pipeline, engine.fallback
+        call_row.pipeline = pipelines.SARVAM
         await session.commit()
 
     log.info("demo_call_start", call_id=call_id, phone=phone_number, room=room_name)
@@ -1645,13 +1471,8 @@ async def _run_demo_call_body(phone_number: str, call_id: str, org_id: str) -> N
             agent_template_id="",
             system_prompt=DEMO_SYSTEM_PROMPT,
             welcome_message=DEMO_WELCOME_MESSAGE,
-            voice_id=engine.voice_id,
-            voice_provider=engine.voice_provider,
-            language=DEMO_LANGUAGE,
-            llm_model=DEMO_LLM_MODEL,
             llm_temperature=DEMO_LLM_TEMPERATURE,
-            tts_model_id=DEMO_TTS_MODEL_ID,
-            extra_meta=engine.meta,
+            extra_meta=extra_meta,
         )
 
         log.info("demo_call_placed", call_id=call_id, result=place_result)
@@ -1710,51 +1531,6 @@ def place_demo_call(self, phone_number: str, call_id: str, org_id: str, user_id:
     asyncio.run(_run_demo_call_async(phone_number, call_id, org_id, user_id))
 
 
-@celery_app.task(
-    name="app.workers.tasks.campaign.fetch_recording_for_inbound_call",
-    bind=True,
-    max_retries=0,
-    acks_late=True,
-)
-def fetch_recording_for_inbound_call(self, call_id: str, trunk_id: str) -> None:
-    """
-    Inbound calls have no wrapping campaign/test-call task the way outbound
-    ones do (the whole call is handled standalone by the agent process), so
-    /agent-report (app/api/calls.py) enqueues this directly once an inbound
-    call ends, reusing the same _save_recording_async()/resolve_vobiz_credentials()
-    helpers outbound already uses.
-    """
-    asyncio.run(_fetch_recording_for_inbound_call_async(call_id, trunk_id))
-
-
-async def _fetch_recording_for_inbound_call_async(call_id: str, trunk_id: str) -> None:
-    from uuid import UUID as _UUID
-
-    async with AsyncSessionLocal() as session:
-        trunk = await session.get(SipTrunk, _UUID(trunk_id))
-        if not trunk:
-            log.error("inbound_recording_fetch_missing_trunk", call_id=call_id, trunk_id=trunk_id)
-            return
-        org_id = trunk.org_id
-        to_number = trunk.caller_id
-        vobiz_creds = await resolve_vobiz_credentials(session, org_id=org_id, trunk_id=trunk.id)
-
-    if not vobiz_creds:
-        log.warning("inbound_recording_fetch_no_creds", call_id=call_id, trunk_id=trunk_id)
-        return
-    vobiz_auth_id, vobiz_auth_token = vobiz_creds
-
-    await _save_recording_async(
-        call_id=_UUID(call_id),
-        # Vobiz's Recording API labels the DID that was DIALED as "to_number" --
-        # for an inbound call that's the org's own number, not the caller's.
-        to_number=to_number,
-        called_after=datetime.now(timezone.utc) - timedelta(minutes=30),
-        auth_id=vobiz_auth_id,
-        auth_token=vobiz_auth_token,
-    )
-
-
 @celery_app.task(name="app.workers.tasks.campaign.launch_scheduled_campaigns", bind=True)
 def launch_scheduled_campaigns(self) -> None:
     """Beat task (every 60 s): auto-launch SCHEDULED campaigns whose start_time has passed."""
@@ -1783,15 +1559,6 @@ async def _launch_scheduled_async() -> None:
                 campaign = await session.get(Campaign, uuid.UUID(cid))
                 if not campaign or campaign.status != CampaignStatus.SCHEDULED:
                     continue
-                if campaign.is_prime:
-                    from app.models.company_profile import OrgCompanyProfile
-                    profile = await session.scalar(
-                        select(OrgCompanyProfile).where(OrgCompanyProfile.org_id == campaign.org_id)
-                    )
-                    if profile is None or not profile.is_complete:
-                        campaign.status = CampaignStatus.PAUSED
-                        log.warning("scheduled_prime_campaign_paused_no_profile", campaign_id=cid)
-                        continue
                 campaign.status = CampaignStatus.RUNNING
                 campaign.started_at = now
         run_campaign.delay(cid)

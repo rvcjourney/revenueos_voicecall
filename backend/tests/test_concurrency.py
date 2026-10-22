@@ -225,8 +225,7 @@ def _run_one_call_kwargs(campaign, contact, call, *, org_max_concurrent: int) ->
         livekit_trunk_id="ST_test_trunk",
         sip_caller_id="+910000000000",
         max_duration=600,
-        system_prompt="", welcome_message="", voice_id="", voice_provider="elevenlabs",
-        language="hinglish", llm_model="", llm_temperature=0.7,
+        system_prompt="", welcome_message="", llm_temperature=0.7,
         org_max_concurrent=org_max_concurrent,
     )
 

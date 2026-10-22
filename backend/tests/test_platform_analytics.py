@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
 
-from app.core.elevenlabs_voice import ElevenLabsVoiceError
 from app.core.security import create_platform_token, hash_password
 from app.models.call import Call, CallDirection, CallStatus
 from app.models.platform_admin import PlatformAdmin
@@ -54,22 +52,7 @@ def _make_call(org_id, *, duration_seconds: int, status=CallStatus.COMPLETED) ->
 async def test_platform_health_returns_live_status(client, db):
     _admin, token = await _make_platform_admin(db)
 
-    with patch(
-        "app.api.platform.get_account_usage",
-        new=AsyncMock(return_value={
-            "tier": "creator",
-            "character_count": 12_000,
-            "character_limit": 100_000,
-            "next_reset_unix": 1_800_000_000,
-            "status": "active",
-        }),
-    ), patch(
-        # Never hit Groq's real API from a test -- see _check_groq_model's
-        # own docstring for why this check exists at all.
-        "app.api.platform._check_groq_model",
-        new=AsyncMock(return_value=(True, None)),
-    ):
-        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+    resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
 
@@ -83,57 +66,8 @@ async def test_platform_health_returns_live_status(client, db):
     assert isinstance(body["celery_workers_online"], int)
     assert isinstance(body["celery_worker_names"], list)
 
-    assert body["elevenlabs_ok"] is True
-    assert body["elevenlabs_tier"] == "creator"
-    assert body["elevenlabs_characters_used"] == 12_000
-    assert body["elevenlabs_characters_limit"] == 100_000
-
-    assert body["groq_ok"] is True
-    assert body["groq_error"] is None
     assert isinstance(body["stale_pending_calls_count"], int)
     assert isinstance(body["stale_initiated_calls_count"], int)
-
-
-async def test_platform_health_elevenlabs_failure_degrades_gracefully(client, db):
-    _admin, token = await _make_platform_admin(db)
-
-    with patch(
-        "app.api.platform.get_account_usage",
-        new=AsyncMock(side_effect=ElevenLabsVoiceError("Invalid ElevenLabs API key")),
-    ), patch(
-        "app.api.platform._check_groq_model",
-        new=AsyncMock(return_value=(True, None)),
-    ):
-        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["elevenlabs_ok"] is False
-    assert body["elevenlabs_characters_used"] is None
-
-
-async def test_platform_health_groq_model_deprecated_surfaces_warning(client, db):
-    """
-    The exact incident this check exists for: Groq deprecates the
-    classification model, every call's outcome silently lands on
-    "pending", and nobody notices until a customer asks why. The health
-    endpoint must surface this directly instead of staying green.
-    """
-    _admin, token = await _make_platform_admin(db)
-
-    with patch(
-        "app.api.platform.get_account_usage",
-        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
-    ), patch(
-        "app.api.platform._check_groq_model",
-        new=AsyncMock(return_value=(False, "Groq 404: model_not_found")),
-    ):
-        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["groq_ok"] is False
-    assert body["groq_error"] == "Groq 404: model_not_found"
 
 
 async def test_platform_health_counts_stale_pending_calls(client, db):
@@ -169,14 +103,7 @@ async def test_platform_health_counts_stale_pending_calls(client, db):
     ))
     await db.commit()
 
-    with patch(
-        "app.api.platform.get_account_usage",
-        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
-    ), patch(
-        "app.api.platform._check_groq_model",
-        new=AsyncMock(return_value=(True, None)),
-    ):
-        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+    resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
     assert resp.json()["stale_pending_calls_count"] == 1
@@ -214,14 +141,7 @@ async def test_platform_health_counts_stale_initiated_calls(client, db):
     ))
     await db.commit()
 
-    with patch(
-        "app.api.platform.get_account_usage",
-        new=AsyncMock(side_effect=ElevenLabsVoiceError("not configured")),
-    ), patch(
-        "app.api.platform._check_groq_model",
-        new=AsyncMock(return_value=(True, None)),
-    ):
-        resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
+    resp = await client.get("/api/platform/health", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
     assert resp.json()["stale_initiated_calls_count"] == 1

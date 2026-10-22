@@ -7,10 +7,8 @@ LiveKit room's metadata dict (confirmed by reading agent/agent.py directly,
 not guessed), so a hardcoded persona works exactly the same way a DB-backed
 one would, with no "system" org or fake template row needed.
 
-The org-level system-prompt guardrail wrapper (agent/agent.py's
-_build_prompt()) still applies on top of DEMO_SYSTEM_PROMPT automatically,
-same as every other agent's prompt — this only needs to hold the
-persona-specific content.
+Like every agent, it runs on Sarvam with no hidden rules added, so the
+persona below says itself when to end the call (the end_interaction tool).
 """
 from __future__ import annotations
 
@@ -69,16 +67,9 @@ restarting, never robotic or scripted-sounding.
 - Never invent pricing or contract details — say "woh detail aapke QuickHowl dashboard ya
   team se mil jayegi"
 - This is a demo, not a sales call — no urgency, no asks, no data collection
+- When they're done, say a warm goodbye and call end_interaction
 """
 
-DEMO_VOICE_ID = "XO3tSLyh5E7dEilRBQJG"  # curated platform voice (ElevenLabs default)
-DEMO_VOICE_PROVIDER = "elevenlabs"
+DEMO_VOICE_ID = "simran_enhi_customer"  # Sarvam Hinglish voice (app/core/pipelines.py)
 DEMO_LANGUAGE = "hinglish"
-DEMO_LLM_MODEL = "qwen/qwen3.6-27b"  # non-thinking mode via Groq — see agent.py's
-                                     # _REASONING_EFFORT_OVERRIDES / _NEEDS_SYNTHETIC_FIRST_TURN
-                                     # for the model-specific handling this already gets
 DEMO_LLM_TEMPERATURE = 0.7
-# Quality-optimized ElevenLabs model for Hindi/English code-switching, vs. the
-# eleven_turbo_v2_5 used everywhere else for latency — worth the extra time
-# here since this call is the first impression, not a high-volume campaign.
-DEMO_TTS_MODEL_ID = "eleven_multilingual_v2"

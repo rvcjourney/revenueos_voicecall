@@ -17,9 +17,17 @@ import pytest
 import agent
 
 
+import sarvam_pipeline as sp
+
+_HINDI = {"hindi": {"stt": "hi-IN", "tts": "hi-IN", "clone": "hi-IN", "tts_model": "bulbul:v4-flash", "display": "Hindi",
+                    "voices": [{"id": "ritu_hi_conversation", "gender": "female"}],
+                    "repeat_line": "repeat", "failure_line": "failure"}}
+
+
 def _make_agent(**overrides):
     kwargs = dict(
         instructions="test", welcome_message="hi",
+        sarvam_state=sp.SarvamCallState("hindi", "ritu_hi_conversation", False, _HINDI),
         call_id="call-123", backend_url="http://backend.test", webhook_secret="s3cr3t",
     )
     kwargs.update(overrides)

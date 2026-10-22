@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.core.razorpay_client import RazorpayError
 from app.core.security import create_access_token, create_platform_token, hash_password
-from app.models.agent import AgentTemplate, VoiceProvider
+from app.models.agent import AgentTemplate
 from app.models.campaign import Campaign
 from app.models.invoice import Invoice
 from app.models.plan import Plan
@@ -649,7 +649,7 @@ async def test_launch_campaign_rejected_when_org_inactive(client, db):
         hashed_password=hash_password("admin-pw-123"), full_name="Admin", role=UserRole.ADMIN, is_active=True,
     )
     db.add(user)
-    agent = AgentTemplate(org_id=org.id, created_by_id=user.id, name="Bot", voice_provider=VoiceProvider.SARVAM)
+    agent = AgentTemplate(org_id=org.id, created_by_id=user.id, name="Bot")
     db.add(agent)
     await db.flush()
     campaign = Campaign(org_id=org.id, agent_template_id=agent.id, name="Test Campaign")

@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
-
 from pydantic import BaseModel, field_validator
-
-# Platform-wide: Qwen is the only LLM choice, for every agent (outbound and
-# inbound alike) -- see also backend/app/schemas/inbound_agent.py.
-LLM_MODEL = Literal["qwen/qwen3.6-27b"]
-# Calling engine (app/core/pipelines.py). None on create = the org's default.
-PIPELINE = Literal["standard", "sarvam"]
 
 
 class AgentOut(BaseModel):
@@ -19,12 +11,10 @@ class AgentOut(BaseModel):
     language: str
     welcome_message: str
     system_prompt: str
+    variables: dict[str, str] = {}
     voice_id: str
-    voice_provider: str
-    llm_model: str
     llm_temperature: float
     max_call_duration_seconds: int
-    pipeline: str = "standard"
     created_at: datetime
     # access_status: "approved" (admin / access granted), "pending" (requested), "locked" (not requested)
     access_status: str = "approved"
@@ -75,12 +65,10 @@ class AgentCreate(BaseModel):
     language: str = "hinglish"
     welcome_message: str = ""
     system_prompt: str = ""
-    voice_id: str = "9BWtsMINqrJLrRacOk9x"
-    voice_provider: str = "elevenlabs"
-    llm_model: LLM_MODEL = "qwen/qwen3.6-27b"
+    variables: dict[str, str] = {}
+    voice_id: str = ""  # "" = the language's default voice
     llm_temperature: float = 0.7
     max_call_duration_seconds: int = 600
-    pipeline: PIPELINE | None = None
 
     @field_validator("language")
     @classmethod
@@ -94,9 +82,7 @@ class AgentUpdate(BaseModel):
     language: str | None = None
     welcome_message: str | None = None
     system_prompt: str | None = None
+    variables: dict[str, str] | None = None
     voice_id: str | None = None
-    voice_provider: str | None = None
-    llm_model: LLM_MODEL | None = None
     llm_temperature: float | None = None
     max_call_duration_seconds: int | None = None
-    pipeline: PIPELINE | None = None

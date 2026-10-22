@@ -8,10 +8,9 @@ from pydantic import BaseModel
 class ClonedVoiceOut(BaseModel):
     id: str
     name: str
-    elevenlabs_voice_id: str | None = None
+    voice_id: str | None = None  # set once ready: use as an agent's or campaign's voice_id
     status: str  # "ready" | "failed" | "pending" | "rejected"
     rejection_reason: str | None = None
-    engine: str = "standard"  # calling engine the voice works on ("standard" | "sarvam")
     language: str | None = None
     created_at: datetime
 

@@ -19,14 +19,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import PermissionDeniedError
-from app.models.agent import VoiceProvider
 from app.models.cloned_voice import ClonedVoice
 from app.models.plan import Plan
 from app.models.subscription import Subscription
-from app.models.user import Organization
 from app.models.voice_clone_request import VoiceCloneRequest
 
-# Flat platform-wide cap, not plan-based -- ElevenLabs cloned voices are a
+# Flat platform-wide cap, not plan-based -- cloned voices are a
 # limited/costly resource per org regardless of plan tier. An org that wants
 # a different voice once at the cap must delete an existing one first
 # (DELETE /api/voice-cloning/{id}) to free a slot before submitting a new one.
@@ -43,23 +41,6 @@ async def _active_plan(db: AsyncSession, org_id: UUID) -> Plan | None:
     if not sub:
         return None
     return await db.get(Plan, sub.plan_id)
-
-
-async def is_voice_provider_allowed(db: AsyncSession, org_id: UUID, voice_provider: str) -> bool:
-    """ElevenLabs additionally requires Organization.elevenlabs_enabled (a
-    platform-level kill switch independent of the plan — see app/models/user.py)."""
-    if voice_provider == VoiceProvider.ELEVENLABS:
-        org = await db.get(Organization, org_id)
-        if org is not None and not org.elevenlabs_enabled:
-            return False
-
-    plan = await _active_plan(db, org_id)
-    if plan is None:
-        return True
-    allowed = plan.features.get("allowed_voice_providers")
-    if allowed is None:
-        return True
-    return voice_provider in allowed
 
 
 async def is_voice_cloning_allowed(db: AsyncSession, org_id: UUID) -> bool:
@@ -79,14 +60,16 @@ async def count_org_voice_clone_slots_used(db: AsyncSession, org_id: UUID) -> in
     and have them all approved at once. Rejected requests never count (they
     never became, and never will become, a real voice).
     """
+    # Only Sarvam voices count: older ElevenLabs clones are unusable and hidden.
     active = await db.scalar(
         select(func.count(ClonedVoice.id)).where(
-            ClonedVoice.org_id == org_id, ClonedVoice.deleted_at.is_(None)
+            ClonedVoice.org_id == org_id, ClonedVoice.provider == "sarvam", ClonedVoice.deleted_at.is_(None)
         )
     )
     pending = await db.scalar(
         select(func.count(VoiceCloneRequest.id)).where(
-            VoiceCloneRequest.org_id == org_id, VoiceCloneRequest.status == "pending"
+            VoiceCloneRequest.org_id == org_id, VoiceCloneRequest.provider == "sarvam",
+            VoiceCloneRequest.status == "pending",
         )
     )
     return (active or 0) + (pending or 0)
@@ -96,58 +79,10 @@ async def has_voice_clone_capacity(db: AsyncSession, org_id: UUID) -> bool:
     return await count_org_voice_clone_slots_used(db, org_id) < MAX_CLONED_VOICES_PER_ORG
 
 
-async def check_agent_voice_settings(
-    db: AsyncSession, org_id: UUID, *, voice_provider: str, voice_id: str
-) -> None:
-    """
-    Raise PermissionDeniedError if this org's plan doesn't allow the given
-    voice_provider, or if voice_id references another org's cloned voice, or
-    if it references a cloned voice while the org's plan doesn't allow cloning.
-    Called from app/api/agents.py on agent template create/update.
-    """
-    if not await is_voice_provider_allowed(db, org_id, voice_provider):
-        raise PermissionDeniedError(
-            f"Your plan does not include the '{voice_provider}' voice provider. Upgrade to use it."
-        )
-
-    if voice_provider == VoiceProvider.ELEVENLABS and voice_id:
-        cloned = await db.scalar(
-            select(ClonedVoice).where(
-                ClonedVoice.elevenlabs_voice_id == voice_id,
-                ClonedVoice.deleted_at.is_(None),
-            )
-        )
-        if cloned is not None and cloned.org_id != org_id:
-            raise PermissionDeniedError("This cloned voice belongs to a different organization")
-        if cloned is not None and not await is_voice_cloning_allowed(db, org_id):
-            raise PermissionDeniedError(
-                "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
-            )
-
-
-async def resolve_new_pipeline(db: AsyncSession, org_id: UUID, requested: str | None) -> str:
-    """Pipeline for a newly created agent/campaign: the request, else the org's
-    default — and never "sarvam" for an org that isn't enabled for it."""
-    from app.core import pipelines
-    org = await db.get(Organization, org_id)
-    p = requested or (org.default_pipeline if org else pipelines.STANDARD)
-    if p == pipelines.SARVAM and requested is None and not (org and org.sarvam_pipeline_enabled):
-        return pipelines.STANDARD
-    return p
-
-
-async def check_pipeline_choice(
-    db: AsyncSession,
-    org_id: UUID,
-    *,
-    pipeline: str,
-    language: str,
-    voice_id: str | None,
-    voice_provider: str | None,
-) -> None:
-    """Pipeline-aware validation on top of check_agent_voice_settings (which is
-    unchanged for the standard pipeline). Runs the shared validation matrix in
-    app/core/pipelines.py; messages are customer-safe (no vendor/model names)."""
+async def check_voice_choice(db: AsyncSession, org_id: UUID, *, language: str, voice_id: str | None) -> None:
+    """Validate an agent's or campaign's language + voice: a cloned voice must be
+    this org's own (and the plan must allow cloning); a stock voice must exist in
+    that language. Messages are customer-safe (no vendor/model names)."""
     from app.core import pipelines
     from app.core.exceptions import ValidationError as AppValidationError
 
@@ -159,31 +94,17 @@ async def check_pipeline_choice(
                 ClonedVoice.deleted_at.is_(None),
             )
         )
-        # Provider-independent: a Sarvam cloned voice is as private as an ElevenLabs one.
         if cloned is not None and cloned.org_id != org_id:
             raise PermissionDeniedError("This cloned voice belongs to a different organization")
-
-    if pipeline == pipelines.STANDARD and (cloned is None or cloned.provider != pipelines.SARVAM):
-        return  # standard behaviour exactly as before
-
-    if pipeline == pipelines.SARVAM:
-        org = await db.get(Organization, org_id)
-        if not (org and org.sarvam_pipeline_enabled):
-            raise PermissionDeniedError(f"The {pipelines.PIPELINE_LABELS[pipelines.SARVAM]} engine isn't enabled for your account.")
         if cloned is not None and not await is_voice_cloning_allowed(db, org_id):
             raise PermissionDeniedError(
                 "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
             )
+        if cloned is not None and cloned.provider != pipelines.SARVAM:
+            raise AppValidationError("This cloned voice is no longer supported. Pick another voice.", errors=[])
 
     settings = await pipelines.get_owner_settings(db)
     try:
-        pipelines.validate(
-            pipeline,
-            language,
-            voice_id,
-            settings,
-            cloned_provider=cloned.provider if cloned is not None else None,
-            voice_provider=voice_provider,
-        )
+        pipelines.validate(language, voice_id, settings, cloned=cloned is not None)
     except pipelines.PipelineValidationError as exc:
         raise AppValidationError(str(exc), errors=[]) from exc

@@ -25,12 +25,9 @@ RUN chown agent:agent /app
 
 USER agent
 
-# Pre-download VAD + turn-detector models now, while this layer only depends on
-# requirements.txt above -- NOT on the app code copied in below. That keeps a
-# code-only change (the common case) from invalidating this layer and forcing
-# a multi-minute HuggingFace re-download on every deploy; it only re-runs when
-# dependencies actually change.
-RUN python -c "from livekit.plugins import silero; silero.VAD.load()"
+# Pre-download plugin model files (noise cancellation) now, while this layer only
+# depends on requirements.txt above -- NOT on the app code copied in below -- so
+# a code-only change doesn't force a re-download on every deploy.
 RUN python -m livekit.agents download-files
 
 COPY --chown=agent:agent . .

@@ -15,29 +15,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import agent
 
 
+import sarvam_pipeline as sp
+
+_HINDI = {"hindi": {"stt": "hi-IN", "tts": "hi-IN", "clone": "hi-IN", "tts_model": "bulbul:v4-flash", "display": "Hindi",
+                    "voices": [{"id": "ritu_hi_conversation", "gender": "female"}],
+                    "repeat_line": "repeat", "failure_line": "failure"}}
+
+
 def _make_agent(**overrides):
     kwargs = dict(
         instructions="test", welcome_message="hi",
+        sarvam_state=sp.SarvamCallState("hindi", "ritu_hi_conversation", False, _HINDI),
         call_id="call-123", backend_url="http://backend.test", webhook_secret="s3cr3t",
     )
     kwargs.update(overrides)
     return agent.VoiceAgent(MagicMock(), **kwargs)
 
 
-def _groq_response(outcome: str, summary: str = "s"):
-    """Shapes a fake Groq chat-completion response matching what
-    _send_report's LLM path reads: resp.choices[0].{finish_reason,message.content}
-    and resp.usage.completion_tokens."""
+def _chat(outcome: str, summary: str = "s"):
+    """Fake agent._sarvam_chat returning (content, finish_reason)."""
     import json
 
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].finish_reason = "stop"
-    resp.choices[0].message.content = json.dumps({
-        "outcome": outcome, "summary": summary, "extracted_data": {},
-    })
-    resp.usage = MagicMock(completion_tokens=10)
-    return resp
+    return AsyncMock(return_value=(json.dumps({"outcome": outcome, "summary": summary, "extracted_data": {}}), "stop"))
 
 
 # ── Deterministic word-count gate (customer said too little to classify) ────
@@ -93,10 +92,7 @@ async def test_llm_path_accepts_call_dropped_only_when_abrupt():
     va = _make_agent()
     va._user_messages = ["yeh ek lambi baat hai jo customer ne kahi thi call par"]  # 12 words
 
-    fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(return_value=_groq_response("call_dropped"))
-
-    with patch("groq.AsyncGroq", return_value=fake_client), \
+    with patch("agent._sarvam_chat", new=_chat("call_dropped")), \
          patch.object(va, "_post_agent_report", new=AsyncMock()) as mock_post:
         await va._send_report(abrupt_disconnect=True)
 
@@ -110,10 +106,7 @@ async def test_llm_path_rejects_call_dropped_when_not_abrupt():
     va = _make_agent()
     va._user_messages = ["yeh ek lambi baat hai jo customer ne kahi thi call par"]
 
-    fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(return_value=_groq_response("call_dropped"))
-
-    with patch("groq.AsyncGroq", return_value=fake_client), \
+    with patch("agent._sarvam_chat", new=_chat("call_dropped")), \
          patch.object(va, "_post_agent_report", new=AsyncMock()) as mock_post:
         await va._send_report(abrupt_disconnect=False)
 
@@ -124,19 +117,15 @@ async def test_llm_prompt_only_mentions_call_dropped_when_abrupt():
     va = _make_agent()
     va._user_messages = ["yeh ek lambi baat hai jo customer ne kahi thi call par"]
 
-    fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(return_value=_groq_response("not_interested"))
-
-    with patch("groq.AsyncGroq", return_value=fake_client), \
-         patch.object(va, "_post_agent_report", new=AsyncMock()):
+    chat = _chat("not_interested")
+    with patch("agent._sarvam_chat", new=chat), patch.object(va, "_post_agent_report", new=AsyncMock()):
         await va._send_report(abrupt_disconnect=False)
-    system_prompt_not_abrupt = fake_client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+    system_prompt_not_abrupt = chat.call_args.args[0][0]["content"]
 
-    fake_client.chat.completions.create = AsyncMock(return_value=_groq_response("not_interested"))
-    with patch("groq.AsyncGroq", return_value=fake_client), \
-         patch.object(va, "_post_agent_report", new=AsyncMock()):
+    chat = _chat("not_interested")
+    with patch("agent._sarvam_chat", new=chat), patch.object(va, "_post_agent_report", new=AsyncMock()):
         await va._send_report(abrupt_disconnect=True)
-    system_prompt_abrupt = fake_client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+    system_prompt_abrupt = chat.call_args.args[0][0]["content"]
 
     assert "call_dropped" not in system_prompt_not_abrupt
     assert "call_dropped" in system_prompt_abrupt

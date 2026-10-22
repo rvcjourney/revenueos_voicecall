@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import logging
 import uuid as _uuid_module
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-
-log = logging.getLogger(__name__)
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import NotFoundError, ConflictError, ValidationError as AppValidationError, PermissionDeniedError, QuotaExceededError
-from app.core.plan_features import check_agent_voice_settings, check_pipeline_choice, resolve_new_pipeline
+from app.core.plan_features import check_voice_choice
 from app.core.rate_limit import enforce_rate_limit
 from app.config import settings
 from app.database import get_db
@@ -23,42 +20,9 @@ from app.models.agent_access import AgentAccessRequest
 from app.models.agent_creation_request import AgentCreationRequest
 from app.models.call import Call, CallDirection, CallStatus, CallOutcome
 from app.models.user import Organization
-from app.schemas.agent import PIPELINE, AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
+from app.schemas.agent import AgentCreate, AgentCreationRequestOut, AgentListResponse, AgentOut, AgentUpdate
 
 router = APIRouter()
-
-
-# ── Prompt optimizer ──────────────────────────────────────────────────────────
-
-class PromptOptimizeRequest(BaseModel):
-    raw_input: str   # raw company knowledge + sales goal from the sales team
-
-
-class PromptOptimizeResponse(BaseModel):
-    optimized_prompt: str
-
-
-@router.post("/optimize-prompt", response_model=PromptOptimizeResponse)
-async def optimize_prompt(
-    body: PromptOptimizeRequest,
-    token: TokenPayload = Depends(get_current_user),
-):
-    """
-    Use Groq LLM to transform raw company knowledge into a
-    structured, optimized voice agent system prompt.
-    """
-    if not body.raw_input or len(body.raw_input.strip()) < 20:
-        raise HTTPException(status_code=422, detail="raw_input is too short — provide meaningful company knowledge")
-
-    try:
-        from app.services.prompt_optimizer import optimize_prompt as _optimize
-        result = await _optimize(body.raw_input)
-        return PromptOptimizeResponse(optimized_prompt=result)
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Prompt optimizer service unavailable — try again later")
-    except Exception:
-        log.exception("optimize_prompt_error")
-        raise HTTPException(status_code=500, detail="Prompt generation failed — please try again")
 
 
 def _to_out(a: AgentTemplate) -> AgentOut:
@@ -69,12 +33,10 @@ def _to_out(a: AgentTemplate) -> AgentOut:
         language=a.language,
         welcome_message=a.welcome_message,
         system_prompt=a.system_prompt,
+        variables=a.variables or {},
         voice_id=a.voice_id,
-        voice_provider=a.voice_provider,
-        llm_model=a.llm_model,
         llm_temperature=a.llm_temperature,
         max_call_duration_seconds=a.max_call_duration_seconds,
-        pipeline=a.pipeline,
         created_at=a.created_at,
     )
 
@@ -242,26 +204,48 @@ async def create_agent(
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    await check_agent_voice_settings(
-        db, token.org_id, voice_provider=body.voice_provider, voice_id=body.voice_id
-    )
+    await check_voice_choice(db, token.org_id, language=body.language, voice_id=body.voice_id)
 
-    pipeline = await resolve_new_pipeline(db, token.org_id, body.pipeline)
-    await check_pipeline_choice(
-        db, token.org_id, pipeline=pipeline, language=body.language,
-        voice_id=body.voice_id, voice_provider=body.voice_provider,
-    )
-
-    agent = AgentTemplate(
-        org_id=token.org_id,
-        created_by_id=token.user_id,
-        **body.model_dump(exclude={"pipeline"}),
-        pipeline=pipeline,
-    )
+    agent = AgentTemplate(org_id=token.org_id, created_by_id=token.user_id, **body.model_dump())
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
     return _to_out(agent)
+
+
+class CustomizeRequest(BaseModel):
+    greeting: str = ""
+    instructions: str = ""
+    request: str
+
+
+class CustomizeResponse(BaseModel):
+    summary: str
+    greeting: str
+    instructions: str
+
+
+@router.post("/customize", response_model=CustomizeResponse)
+async def customize_agent(
+    body: CustomizeRequest,
+    token: TokenPayload = Depends(get_current_user),
+):
+    """Rewrite a Greeting + Instructions from a plain-language request (Sarvam LLM).
+    Nothing is saved: the editor shows the result and the user saves it."""
+    from app.services.agent_builder import AgentBuilderError, customize
+
+    if len(body.request.strip()) < 3:
+        raise AppValidationError("Describe the change you want", errors=[])
+    if len(body.greeting) + len(body.instructions) > 40_000:
+        raise AppValidationError("The script is too long to customise in one go", errors=[])
+    await enforce_rate_limit("agent-customize", str(token.org_id), limit=60, window_seconds=3600)
+    try:
+        summary, greeting, instructions = await customize(
+            greeting=body.greeting, instructions=body.instructions, request=body.request.strip(),
+        )
+    except AgentBuilderError as exc:
+        raise AppValidationError(str(exc), errors=[]) from exc
+    return CustomizeResponse(summary=summary, greeting=greeting, instructions=instructions)
 
 
 @router.get("/{agent_id}", response_model=AgentOut)
@@ -300,22 +284,12 @@ async def update_agent(
         if not access:
             raise PermissionDeniedError("You do not have edit permission for this agent")
 
-    if body.voice_provider is not None or body.voice_id is not None:
-        await check_agent_voice_settings(
+    if body.voice_id is not None or body.language is not None:
+        await check_voice_choice(
             db,
             token.org_id,
-            voice_provider=body.voice_provider or agent.voice_provider,
+            language=(body.language or agent.language).lower(),
             voice_id=body.voice_id if body.voice_id is not None else agent.voice_id,
-        )
-
-    if body.pipeline is not None or body.voice_id is not None or body.voice_provider is not None or body.language is not None:
-        await check_pipeline_choice(
-            db,
-            token.org_id,
-            pipeline=body.pipeline or agent.pipeline,
-            language=body.language or agent.language,
-            voice_id=body.voice_id if body.voice_id is not None else agent.voice_id,
-            voice_provider=body.voice_provider or agent.voice_provider,
         )
 
     for field, value in body.model_dump(exclude_none=True).items():
@@ -348,42 +322,11 @@ async def delete_agent(
 class TestCallRequest(BaseModel):
     phone_number: str
     trunk_id: str | None = None
-    language: str | None = None  # override the agent's own language, for trying regional languages
-    # Everything below overrides the agent's own setup for this one test call only --
-    # for trying different STT/LLM/TTS combinations from the Testing section.
-    voice_provider: str | None = None
-    voice_id: str | None = None
-    stt_model: str | None = None
-    llm_provider: str | None = None
-    llm_model: str | None = None
-    tts_model: str | None = None
-    # Calling engine for this one call ("standard" | "sarvam"); None = the agent's own.
-    pipeline: PIPELINE | None = None
 
 
 class TestCallResponse(BaseModel):
     call_id: str
     status: str
-
-
-# The real, working model names for each Sarvam offering -- see agent/agent.py
-# for where each is used. The LLM list is confirmed against a live error from
-# the deployed agent container's own ValueError (its livekit-plugins-sarvam
-# build is newer than the local dev venv's and dropped sarvam-m/sarvam-30b in
-# favor of these -- Sarvam's own model lineup changed upstream, not a typo
-# here). If this drifts again, deploy a test call and read the agent's error.
-_TTS_PROVIDERS = ("elevenlabs", "sarvam", "cartesia", "chatterbox")
-_SARVAM_TTS_MODELS = ("bulbul:v3-beta", "bulbul:v3", "bulbul:v4-flash")  # bulbul:v2 is deprecated on Sarvam's side (confirmed: 422/400, not a local bug)
-# saarika:v2.5/saaras:v2.5 are sunset (Sarvam's own API warns on them now) --
-# saaras:v3/v4 are the two actually current and recommended.
-_SARVAM_STT_MODELS = ("saaras:v3", "saaras:v4")
-_LLM_PROVIDERS = ("groq", "sarvam")
-_SARVAM_LLM_MODELS = ("gemma4", "sarvam-105b", "sarvam-105b-conversations")  # glm5.2 deprecated by Sarvam (404) days after we added it
-
-
-def _check_allowed(value: str | None, allowed: tuple[str, ...], label: str) -> None:
-    if value and value not in allowed:
-        raise AppValidationError(f"'{value}' is not a supported {label}. Choose one of: {', '.join(allowed)}.", errors=[])
 
 
 # Test calls are an evaluation/testing allowance for orgs that haven't paid
@@ -426,35 +369,6 @@ async def test_call(
     phone = body.phone_number.strip().replace(" ", "").replace("-", "")
     if not phone.startswith("+"):
         phone = "+91" + phone.lstrip("0")
-
-    if body.language:
-        from app.models.agent import AgentLanguage
-        allowed = [l.value for l in AgentLanguage]
-        if body.language not in allowed:
-            raise AppValidationError(
-                f"'{body.language}' is not a supported language. Choose one of: {', '.join(allowed)}.",
-                errors=[],
-            )
-
-    _check_allowed(body.voice_provider, _TTS_PROVIDERS, "voice provider")
-    _check_allowed(body.llm_provider, _LLM_PROVIDERS, "LLM provider")
-    _check_allowed(body.stt_model, _SARVAM_STT_MODELS, "STT model")
-    if body.tts_model:
-        _check_allowed(body.tts_model, _SARVAM_TTS_MODELS, "TTS model")  # only Sarvam's TTS model is switchable
-    if (body.llm_provider or "groq") == "sarvam":
-        _check_allowed(body.llm_model, _SARVAM_LLM_MODELS, "Sarvam LLM model")
-    effective_pipeline = body.pipeline or agent.pipeline
-    if effective_pipeline == "sarvam":
-        # Free-form provider/model overrides belong to the standard engine;
-        # the Indic Native engine runs as one fixed, validated combination.
-        if body.llm_provider or body.llm_model or body.stt_model or body.tts_model or body.voice_provider:
-            raise AppValidationError("Indic Native runs as one fixed combination — only language and voice can be changed.", errors=[])
-        await check_pipeline_choice(
-            db, token.org_id, pipeline="sarvam",
-            language=body.language or str(agent.language),
-            voice_id=body.voice_id or (agent.voice_id if agent.pipeline == "sarvam" else None),
-            voice_provider=None if body.voice_id else (str(agent.voice_provider) if agent.pipeline == "sarvam" else None),
-        )
 
     # Test calls bypass campaign dialing entirely, so — same as try-now above —
     # they must independently check the DNC lists the dispatcher checks.
@@ -538,21 +452,9 @@ async def test_call(
 
         # Dispatch to Celery worker (calls queue) — the worker releases this
         # user's slot once the call actually ends (see _run_test_call_async).
-        # overrides: anything set here wins over the agent template's own setup,
-        # for this one call only (Testing section trying different combinations).
-        overrides = {
-            "pipeline": body.pipeline,
-            "language": body.language,
-            "voice_provider": body.voice_provider,
-            "voice_id": body.voice_id,
-            "stt_model": body.stt_model,
-            "llm_provider": body.llm_provider,
-            "llm_model": body.llm_model,
-            "tts_model": body.tts_model,
-        }
         from app.workers.tasks.campaign import place_test_call
         place_test_call.apply_async(
-            args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id, str(token.user_id), overrides],
+            args=[str(agent_id), phone, str(call.id), str(token.org_id), trunk_id, str(token.user_id)],
             queue="calls",
         )
     except Exception:
@@ -572,7 +474,7 @@ class TryNowRequest(BaseModel):
     phone_number: str
 
 
-# Free calls cost real money (Vobiz/LiveKit/Groq/ElevenLabs usage) and place a
+# Free calls cost real money (Vobiz/LiveKit/Sarvam usage) and place a
 # real call to a real person with no paying-customer relationship behind it —
 # unlike campaign dialing, nothing here is rate-limited by credits at all, so
 # this is the only thing standing between "free demo feature" and "unlimited

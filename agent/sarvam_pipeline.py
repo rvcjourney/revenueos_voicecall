@@ -1,11 +1,10 @@
 """
-sarvam_pipeline.py — the "sarvam" calling engine ("Indic Native" to customers):
-Sarvam realtime STT + sarvam-105b-conversations + Bulbul, for one call.
+sarvam_pipeline.py — the calling engine: Sarvam realtime STT +
+sarvam-105b-conversations + Bulbul, for one call.
 
-Only provider construction, turn-handling values, the spoken-style prompt
-block and the mid-call language switch live here. Everything else about a
-call (hang-up logic, silence/voicemail/IVR handling, report, billing, Prime
-scripts) is shared with the standard engine in agent.py and untouched.
+Provider construction, turn-handling values, cloned voices and the mid-call
+language switch live here; call logic (tools, hang-up, silence/voicemail/IVR
+handling, report) lives in agent.py.
 
 The backend resolves everything per call and sends it as meta["sarvam"]
 (see backend/app/core/pipelines.py sarvam_call_config): the call's language,
@@ -37,7 +36,7 @@ from config import (
 
 logger = logging.getLogger("voice-agent")
 
-PIPELINE = "sarvam"
+PIPELINE = "sarvam"  # reported per call; the backend tracks calls by engine
 
 # ── STT (realtime, server-side VAD) — telephony starting points ──────────────
 STT_STREAM_TYPE = "fast"          # 500 ms chunks; "balanced" adds up to 1 s per turn
@@ -89,8 +88,7 @@ def turn_handling() -> TurnHandlingOptions:
     )
 
 
-# AgentSession kwargs specific to this engine: Sarvam's server-side VAD replaces
-# LiveKit's Silero VAD; no echo-cancel warmup on a phone line; our own silence
+# AgentSession kwargs: Sarvam's server-side VAD replaces a local VAD; no echo-cancel warmup on a phone line; our own silence
 # watchdog (agent.py) handles away/idle callers.
 SESSION_KWARGS = {"vad": None, "aec_warmup_duration": None, "user_away_timeout": None}
 
@@ -293,56 +291,6 @@ def switch_language(state: SarvamCallState, target_key: str, tts, stt_engine) ->
     state.language = target_key
     logger.info("Language switched mid-call → %s (engine=sarvam voice=%s)", target_key, state.voice_id)
     return True
-
-
-def prompt_adapter(system_prompt: str, state: SarvamCallState) -> str:
-    """Spoken-style block for this engine, appended AFTER the shared prompt
-    (including any Prime Calling script and its fixed closing) — never edits it."""
-    display = state.lang["display"]
-    if state.language in ("hinglish", "hindi"):
-        script = ("Write Hindi words in Devanagari script and English words in Latin letters, the way "
-                  "bilingual Indians text — e.g. \"आपका order कब तक चाहिए?\". Never write Hindi in Roman letters.")
-    elif state.language == "english":
-        script = "Write plain Indian English."
-    else:
-        script = (f"Write {display} in its own native script, keeping English words (names, business terms) "
-                  "in Latin letters. Never write it in Roman letters.")
-    no_ji = [v["display"] for v in state.languages.values() if v.get("honorific", "ji") == ""]
-    no_ji_rule = (
-        f"- In {', '.join(no_ji)} never use the Hindi word 'ji' — including after switching into one of "
-        "them mid-call; use the customer's name or address them plainly.\n"
-    ) if no_ji else ""
-    return (
-        system_prompt
-        + "\n\n[SPOKEN STYLE — your words are read aloud by a voice engine]\n"
-        "- One or two short sentences per reply. No markdown, bullet points, lists or emoji.\n"
-        f"- {script} If the call switches language, apply the same rule to the new language.\n"
-        "- Write amounts and dates as they are spoken. Phone numbers and OTPs: digit by digit as rule 14 says.\n"
-        "- Never address the customer as Sir or Ma'am.\n"
-        + no_ji_rule
-    )
-
-
-_JI = re.compile(r"\s*(?<![\wऀ-෿])(?:ji|Ji|जी)(?![\wऀ-෿])")
-
-
-def no_ji_transform(state: SarvamCallState):
-    """TTS text transform: drop the Hindi honorific 'ji' while the call's CURRENT
-    language must avoid it (honorific == ""). Prompt rules alone let it leak
-    after a mid-call switch (seen live: "சரி ji," after Hinglish -> Tamil).
-    Holds back the trailing partial word so 'ji' split across chunks is caught."""
-    async def _filter(text_stream):
-        buf = ""
-        async for chunk in text_stream:
-            buf += chunk
-            cut = max(buf.rfind(" "), buf.rfind(","), buf.rfind("।"))
-            if cut <= 0:
-                continue
-            out, buf = buf[:cut], buf[cut:]
-            yield _JI.sub("", out) if state.lang.get("honorific", "ji") == "" else out
-        if buf:
-            yield _JI.sub("", buf) if state.lang.get("honorific", "ji") == "" else buf
-    return _filter
 
 
 _LATIN_WORD = re.compile(r"[A-Za-z]{2,}")

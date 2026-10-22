@@ -35,8 +35,7 @@ class Plan(Base, TimestampMixin):
     credit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
 
     # Feature gates, keyed by convention (see app/core/plan_features.py):
-    #   allowed_voice_providers: list[str] — subset of app.models.agent.VoiceProvider values
-    #   voice_cloning: bool — can this plan's orgs create ElevenLabs cloned voices
+    #   voice_cloning: bool — can this plan's orgs create cloned voices
     features: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 

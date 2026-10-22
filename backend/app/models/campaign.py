@@ -91,9 +91,8 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         default=CampaignGoal.LEAD_GENERATION,
         server_default=CampaignGoal.LEAD_GENERATION,
     )
-    # Nullable because a Prime campaign can run entirely off pitch_structure
-    # below instead of a saved AI Agent -- classic (non-prime) campaigns still
-    # require one, enforced in the API (app/api/campaigns.py), not here.
+    # Required by the API (app/api/campaigns.py); nullable for older campaigns
+    # that ran without one.
     agent_template_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("agent_templates.id", ondelete="RESTRICT"),
@@ -114,31 +113,14 @@ class Campaign(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         nullable=True,
         index=True,
     )
-    # Prime Calling: each contact gets an LLM-personalised prompt + welcome
-    # message generated just before their call (see _prepare_prime_prompt in
-    # app/workers/tasks/campaign.py). False = classic campaign, one agent prompt for all.
-    is_prime: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Spoken language for this campaign's calls; NULL = use the agent template's
     # own language. Lets one agent run in Tamil for one campaign and Hindi for
     # another (values: AgentLanguage in app/models/agent.py).
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Cloned-voice override for this campaign's calls; NULL = use the agent
-    # template's own voice. Stores the org's ClonedVoice.elevenlabs_voice_id
-    # directly (same convention as AgentTemplate.voice_id) -- always spoken via
-    # ElevenLabs, since cloned voices only exist there (see app/models/cloned_voice.py).
+    # Voice override for this campaign's calls (a Sarvam stock voice id or one of
+    # the org's cloned voices); NULL = use the agent template's own voice.
     voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    # Prime Calling: free text describing THIS campaign's pitch -- what to say,
-    # what angle to take, what order -- for whichever specific business/client
-    # it's calling on behalf of (e.g. "Aditya Cement" vs "Rahul Steel
-    # Industries" want different call flows). Used as the LLM's input in place
-    # of an agent template's system_prompt (see _get_kit in
-    # app/services/prime_prompt.py) when set; NULL = fall back to the agent
-    # template's own system_prompt, same override pattern as language/voice_id.
-    pitch_structure: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Calling engine override; NULL = the agent template's own pipeline.
-    pipeline: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    # Why the platform paused this campaign (e.g. its Sarvam cloned voice became
-    # unavailable when the owner switched the sarvam pipeline off). NULL = user pause.
+    # Why the platform paused this campaign. NULL = user pause.
     pause_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[CampaignStatus] = mapped_column(
         SAEnum(CampaignStatus, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
@@ -251,14 +233,6 @@ class CampaignContact(Base, TimestampMixin):
     last_attempted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
-    # ── Prime Calling (only set on contacts of is_prime campaigns) ──────────────
-    # Generated once on first dial attempt and reused on retries.
-    generated_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    generated_welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Last generation failure (call still went out on the fallback prompt)
-    prompt_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     campaign: Mapped["Campaign"] = relationship("Campaign", back_populates="contacts")

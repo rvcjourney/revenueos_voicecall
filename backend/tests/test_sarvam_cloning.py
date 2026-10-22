@@ -1,5 +1,5 @@
 """
-tests/test_sarvam_cloning.py — Indic Native (Sarvam) voice cloning: customer
+tests/test_sarvam_cloning.py — Sarvam voice cloning: customer
 request -> owner approval -> Sarvam voice, and deletion. Sarvam is always faked.
 """
 from __future__ import annotations
@@ -20,10 +20,7 @@ FILES = {
 
 
 async def _sarvam_org(db, *, cloning: bool = True):
-    org, user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES)
-    org.sarvam_pipeline_enabled = True
-    org.sarvam_cloning_allowed = cloning
-    await db.commit()
+    org, user, token = await _make_org_and_admin(db, plan_features=PREMIUM_FEATURES, cloning_allowed=cloning)
     return org, {"Authorization": f"Bearer {token}"}
 
 
@@ -32,22 +29,22 @@ async def _submit(client, h, **data):
         return await client.post("/api/voice-cloning", data={"name": "Priya", **data}, files=FILES, headers=h)
 
 
-async def test_indic_native_request_needs_owner_permission_and_a_language(client, db):
+async def test_request_needs_owner_permission_and_a_language(client, db):
     _, h = await _sarvam_org(db, cloning=False)
-    r = await _submit(client, h, engine="sarvam", language="hindi")
+    r = await _submit(client, h, language="hindi")
     assert r.status_code == 403 and "sarvam" not in r.text.lower()
 
     _, h = await _sarvam_org(db)
-    assert (await _submit(client, h, engine="sarvam")).status_code == 422
-    r = await _submit(client, h, engine="sarvam", language="tamil")
-    assert r.status_code == 201 and r.json()["engine"] == "sarvam" and r.json()["status"] == "pending"
+    assert (await _submit(client, h)).status_code == 422
+    r = await _submit(client, h, language="tamil")
+    assert r.status_code == 201 and r.json()["status"] == "pending"
 
 
 async def test_nothing_is_created_on_sarvam_before_approval_and_flag_off_blocks_it(client, db):
     _, h = await _sarvam_org(db)
     fake_create = AsyncMock(return_value=("svc-1", "ref"))
     with patch("app.core.sarvam_voice.create_voice", new=fake_create):
-        req_id = (await _submit(client, h, engine="sarvam", language="hindi")).json()["id"]
+        req_id = (await _submit(client, h, language="hindi")).json()["id"]
     fake_create.assert_not_awaited()
 
     _, ptoken = await _make_platform_admin(db)
@@ -60,7 +57,7 @@ async def test_nothing_is_created_on_sarvam_before_approval_and_flag_off_blocks_
 
 async def test_approval_creates_sarvam_voice_usable_only_by_its_org(client, db):
     org, h = await _sarvam_org(db)
-    req_id = (await _submit(client, h, engine="sarvam", language="marathi")).json()["id"]
+    req_id = (await _submit(client, h, language="marathi")).json()["id"]
     _, ptoken = await _make_platform_admin(db)
     fake_create = AsyncMock(return_value=("svc-abc", "नमस्कार"))
     with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
@@ -73,12 +70,12 @@ async def test_approval_creates_sarvam_voice_usable_only_by_its_org(client, db):
     voice = await db.scalar(select(ClonedVoice).where(ClonedVoice.org_id == org.id))
     assert (voice.provider, voice.provider_voice_id, voice.language, voice.reference_text) == ("sarvam", "svc-abc", "marathi", "नमस्कार")
     listed = (await client.get("/api/voice-cloning", headers=h)).json()["items"]
-    assert [v["engine"] for v in listed] == ["sarvam"]
+    assert [v["voice_id"] for v in listed] == ["svc-abc"]
 
 
 async def test_unusable_sample_goes_back_to_customer(client, db):
     _, h = await _sarvam_org(db)
-    req_id = (await _submit(client, h, engine="sarvam", language="hindi")).json()["id"]
+    req_id = (await _submit(client, h, language="hindi")).json()["id"]
     _, ptoken = await _make_platform_admin(db)
     bad = AsyncMock(side_effect=sarvam_voice.SarvamVoiceError("audio too short", status=400, request_id="r-1"))
     with patch("app.api.platform.get_storage", return_value=_fake_storage()), \
@@ -106,14 +103,6 @@ async def test_delete_removes_voice_from_sarvam_and_reference_audio(client, db):
     fake_delete.assert_awaited_once_with("svc-del")
     deleted_keys = [c.args[1] for c in storage.delete.await_args_list]
     assert deleted_keys == ["audio/x/sample.wav"]  # consent video kept as proof
-
-
-async def test_cap_of_two_is_shared_across_engines(client, db):
-    org, h = await _sarvam_org(db)
-    db.add(ClonedVoice(org_id=org.id, name="EL", elevenlabs_voice_id="el-1", provider="elevenlabs"))
-    await db.commit()
-    assert (await _submit(client, h, engine="sarvam", language="hindi")).status_code == 201
-    assert (await _submit(client, h, engine="sarvam", language="hindi")).status_code == 409
 
 
 async def test_client_retries_429_and_5xx_but_not_other_4xx(monkeypatch):

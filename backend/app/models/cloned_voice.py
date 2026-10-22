@@ -1,12 +1,11 @@
 """
 app/models/cloned_voice.py — ClonedVoice model.
 
-A Premium-plan feature: an org member submits a voice sample, which is sent to
-the ElevenLabs Voice Cloning API (app/core/elevenlabs_voice.py) to create a
-custom voice model. The returned ElevenLabs voice_id is stored here and can
-then be used as AgentTemplate.voice_id (with voice_provider="elevenlabs") on
-any agent template for that org — see app/core/plan_features.py for the
-plan-gating check enforced at agent-template create/update time.
+A Premium-plan feature: an org's voice sample is cloned on Sarvam once the
+owner approves the request (app/api/platform.py). The returned voice id is
+stored here and can be used as AgentTemplate.voice_id or Campaign.voice_id —
+see app/core/plan_features.py check_voice_choice. Rows with provider
+"elevenlabs" predate the Sarvam-only change and are no longer usable.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ class ClonedVoiceStatus(StrEnum):
 
 
 class ClonedVoice(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
-    """A custom ElevenLabs voice model cloned from a user-submitted sample."""
+    """A custom voice cloned from a user-submitted sample."""
     __tablename__ = "cloned_voices"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
@@ -45,7 +44,7 @@ class ClonedVoice(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # Column keeps its historical name; `provider_voice_id` is the neutral alias.
     elevenlabs_voice_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     provider_voice_id = synonym("elevenlabs_voice_id")
-    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default="elevenlabs", default="elevenlabs")
+    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default="elevenlabs", default="sarvam")
     # Reference language the clone was recorded in; Sarvam's auto-transcript of it.
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reference_text: Mapped[str | None] = mapped_column(Text, nullable=True)

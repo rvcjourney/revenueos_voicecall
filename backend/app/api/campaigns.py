@@ -62,11 +62,8 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
         completed_at=c.completed_at,
         created_at=c.created_at,
         created_by_name=created_by_name,
-        is_prime=c.is_prime,
         language=c.language,
         voice_id=c.voice_id,
-        pitch_structure=c.pitch_structure,
-        pipeline=c.pipeline,
         pause_reason=c.pause_reason,
     )
 
@@ -75,7 +72,6 @@ def _to_out(c: Campaign, created_by_name: str | None = None) -> CampaignOut:
 async def list_campaigns(
     status: str | None = Query(None),
     folder_id: str | None = Query(None),
-    is_prime: bool | None = Query(None),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -88,8 +84,6 @@ async def list_campaigns(
         q = q.where(Campaign.created_by_id == token.user_id)
     if status:
         q = q.where(Campaign.status == status)
-    if is_prime is not None:
-        q = q.where(Campaign.is_prime.is_(is_prime))
     if folder_id == "none":
         q = q.where(Campaign.folder_id.is_(None))
     elif folder_id:
@@ -117,21 +111,8 @@ async def create_campaign(
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Classic campaigns always need an AI Agent (its system prompt IS the one
-    # script every contact hears). Prime campaigns can run off pitch_structure
-    # alone instead -- a fresh, campaign-specific brief the LLM writes each
-    # contact's script from, in place of a saved agent's system prompt -- so
-    # only require ONE of the two there, not both.
-    if not body.is_prime and not body.agent_template_id:
-        raise AppValidationError("An AI agent is required for this campaign", errors=[])
-    if body.is_prime and not body.agent_template_id and not body.pitch_structure:
-        raise AppValidationError(
-            "Describe this campaign's pitch, or choose an AI Agent, before creating it.",
-            errors=[],
-        )
-
     # Members must have approved access to the selected AI Agent
-    if body.agent_template_id and token.role != "admin":
+    if token.role != "admin":
         from app.models.agent_access import AgentAccessRequest
         access = await db.scalar(
             select(AgentAccessRequest).where(
@@ -173,38 +154,18 @@ async def create_campaign(
                 errors=[],
             )
 
-    from app.core import pipelines as _pl
-    from app.models.agent import AgentTemplate as _Tmpl
-    _tmpl = await db.get(_Tmpl, body.agent_template_id) if body.agent_template_id else None
-    _engine = body.pipeline or (_tmpl.pipeline if _tmpl else _pl.STANDARD)
-    # On the Indic Native engine a campaign may also pick a stock voice for its
-    # language (checked by the validation matrix below); on standard it's
-    # cloned voices only, exactly as before.
-    _stock_ok = _engine == _pl.SARVAM and body.voice_id in _pl.all_sarvam_stock_voice_ids()
-    if body.voice_id and not _stock_ok:
-        # Unlike AgentTemplate.voice_id (which may be a stock ElevenLabs voice,
-        # never checked against ClonedVoice), this field exists specifically to
-        # pick one of the org's OWN cloned voices directly -- so require it to
-        # actually be one, ready, and owned by this org, rather than silently
-        # accepting any string that would only fail later at call time.
-        from app.core.plan_features import is_voice_cloning_allowed
-        from app.models.cloned_voice import ClonedVoice, ClonedVoiceStatus
-        cloned = await db.scalar(
-            select(ClonedVoice).where(
-                ClonedVoice.elevenlabs_voice_id == body.voice_id,
-                ClonedVoice.org_id == token.org_id,
-                ClonedVoice.deleted_at.is_(None),
-            )
+    from app.core.plan_features import check_voice_choice
+    from app.models.agent import AgentTemplate
+    tmpl = await db.get(AgentTemplate, body.agent_template_id)
+    if not tmpl or tmpl.org_id != token.org_id or tmpl.deleted_at:
+        raise AppValidationError("Selected AI agent not found", errors=[])
+    if body.voice_id or body.language:
+        await check_voice_choice(
+            db, token.org_id,
+            language=body.language or str(tmpl.language),
+            # A campaign language without its own voice uses that language's default voice
+            voice_id=body.voice_id or (tmpl.voice_id if not body.language else None),
         )
-        if cloned is None or cloned.status != ClonedVoiceStatus.READY:
-            raise AppValidationError("Selected cloned voice not found or not ready", errors=[])
-        if not await is_voice_cloning_allowed(db, token.org_id):
-            raise PermissionDeniedError(
-                "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
-            )
-
-    if body.pipeline or body.voice_id:
-        await _check_campaign_pipeline(db, token.org_id, body.pipeline, body.agent_template_id, body.language, body.voice_id)
 
     campaign = Campaign(
         org_id=token.org_id,
@@ -218,26 +179,6 @@ async def create_campaign(
     await db.commit()
     await db.refresh(campaign)
     return _to_out(campaign)
-
-
-async def _check_campaign_pipeline(db, org_id, pipeline, agent_template_id, language, voice_id) -> None:
-    """Validate the voice/language the campaign's calls will actually use on its
-    calling engine. The agent's own voice only carries over when the agent is on
-    the same engine (dial time mirrors this, see workers/tasks/campaign.py)."""
-    from app.core import pipelines
-    from app.core.plan_features import check_pipeline_choice
-    from app.models.agent import AgentTemplate
-    tmpl = await db.get(AgentTemplate, agent_template_id) if agent_template_id else None
-    effective = pipeline or (tmpl.pipeline if tmpl else pipelines.STANDARD)
-    same_engine = tmpl is not None and tmpl.pipeline == effective
-    await check_pipeline_choice(
-        db,
-        org_id,
-        pipeline=effective,
-        language=language or (str(tmpl.language) if tmpl else pipelines.DEFAULT_LANGUAGE),
-        voice_id=voice_id or (tmpl.voice_id if same_engine else None),
-        voice_provider=None if voice_id else (str(tmpl.voice_provider) if same_engine else None),
-    )
 
 
 def _check_campaign_access(campaign: Campaign, token: TokenPayload) -> None:
@@ -325,10 +266,6 @@ async def list_contacts(
                 "attempt_count": c.attempt_count,
                 "last_attempted_at": c.last_attempted_at.isoformat() if c.last_attempted_at else None,
                 "custom_fields": c.custom_fields or {},
-                "generated_system_prompt": c.generated_system_prompt,
-                "generated_welcome_message": c.generated_welcome_message,
-                "prompt_generated_at": c.prompt_generated_at.isoformat() if c.prompt_generated_at else None,
-                "prompt_error": c.prompt_error,
             }
             for c in rows
         ],
@@ -394,7 +331,9 @@ async def upload_contacts(
     email_col = next((c for c in df.columns if "email" in c), None)
     company_col = next((c for c in df.columns if "company" in c), None)
 
-    skip_cols = {phone_col, name_col or "", email_col or "", company_col or ""}
+    # Every column but phone stays in custom_fields: agent placeholders like
+    # {userName} / {companyName} are filled from these by column name.
+    skip_cols = {phone_col}
 
     contacts = []
     for _, row in df.iterrows():
@@ -495,16 +434,6 @@ async def launch_campaign(
 
     if campaign.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
         raise CampaignStateError(f"Campaign is '{campaign.status}', cannot be launched")
-
-    if campaign.is_prime:
-        from app.api.company_profile import get_org_profile
-        profile = await get_org_profile(db, token.org_id)
-        if not profile or not profile.is_complete:
-            raise AppValidationError(
-                "Prime Calling needs your Company Profile first — add at least your company name "
-                "and what you offer under Prime Calling → Company Profile.",
-                errors=[],
-            )
 
     contact_count = await db.scalar(
         select(func.count()).where(
@@ -840,11 +769,8 @@ async def duplicate_campaign(
         calls_per_minute=original.calls_per_minute,
         max_retries=original.max_retries,
         retry_after_minutes=original.retry_after_minutes,
-        is_prime=original.is_prime,
         language=original.language,
         voice_id=original.voice_id,
-        pitch_structure=original.pitch_structure,
-        pipeline=original.pipeline,
         status=CampaignStatus.DRAFT,
     )
     db.add(new_campaign)
@@ -894,65 +820,50 @@ async def pause_campaign(
     return _to_out(campaign)
 
 
-@router.post("/{campaign_id}/prime-preview")
-async def prime_preview(
+@router.get("/{campaign_id}/preview")
+async def preview_campaign(
     campaign_id: UUID,
-    contact_id: UUID | None = Query(None),
+    limit: int = Query(3, ge=1, le=10),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Generate (without saving or dialing) the personalised prompt one contact
-    would get, so the user can sanity-check a Prime campaign before launch.
-    Defaults to the first uploaded contact.
-    """
-    from app.api.company_profile import get_org_profile
-    from app.core.rate_limit import enforce_rate_limit
+    """The first few contacts' Greeting and Instructions with every {placeholder}
+    filled exactly as the dialler will fill them, plus the placeholders that
+    have no value for some contact (no CSV column and no agent default)."""
+    from app.core import agent_variables
     from app.models.agent import AgentTemplate
-    from app.services.prime_prompt import ContactInfo, generate_contact_prompt
 
     campaign = await db.get(Campaign, campaign_id)
     _check_campaign_access(campaign, token)
-    if not campaign.is_prime:
-        raise AppValidationError("Preview is only available for Prime Calling campaigns", errors=[])
-
-    profile = await get_org_profile(db, token.org_id)
-    if not profile or not profile.is_complete:
-        raise AppValidationError(
-            "Fill in your Company Profile (company name and what you offer) before previewing.",
-            errors=[],
-        )
-
-    q = select(CampaignContact).where(CampaignContact.campaign_id == campaign_id)
-    if contact_id:
-        q = q.where(CampaignContact.id == contact_id)
-    contact = await db.scalar(q.order_by(CampaignContact.created_at).limit(1))
-    if not contact:
-        raise AppValidationError("Upload contacts before previewing", errors=[])
-
-    await enforce_rate_limit("prime-preview", str(token.org_id), limit=30, window_seconds=3600)
-
     tmpl = await db.get(AgentTemplate, campaign.agent_template_id) if campaign.agent_template_id else None
-    try:
-        result = await generate_contact_prompt(
-            profile=profile,
-            # Campaign's own pitch structure wins over the agent template's
-            # system prompt, same override pattern as language/voice_id below.
-            base_prompt=campaign.pitch_structure or ((tmpl.system_prompt or "") if tmpl else ""),
-            language=campaign.language or (str(tmpl.language) if tmpl else "hinglish"),
-            contact=ContactInfo(
-                name=contact.name, phone=contact.phone, email=contact.email,
-                company=contact.company, custom_fields=contact.custom_fields or {},
-            ),
-        )
-    except Exception:
-        raise AppValidationError("Could not generate a preview right now — please try again", errors=[])
+    greeting = (tmpl.welcome_message or "") if tmpl else ""
+    instructions = (tmpl.system_prompt or "") if tmpl else ""
+    defaults = (tmpl.variables or {}) if tmpl else {}
 
+    contacts = (await db.execute(
+        select(CampaignContact).where(CampaignContact.campaign_id == campaign_id)
+        .order_by(CampaignContact.created_at)
+    )).scalars().all()
+    names = agent_variables.find(greeting, instructions)
+    missing: set[str] = set()
+    for c in contacts:
+        missing.update(agent_variables.resolve(
+            names, columns=agent_variables.contact_columns(c), defaults=defaults,
+            system=agent_variables.system_values(campaign.timezone),
+        )[1])
+
+    items = []
+    for c in contacts[:limit]:
+        welcome, prompt, gaps = agent_variables.render(
+            greeting, instructions, columns=agent_variables.contact_columns(c),
+            defaults=defaults, tz_name=campaign.timezone,
+        )
+        items.append({"contact_id": str(c.id), "name": c.name, "phone": c.phone,
+                      "welcome_message": welcome, "system_prompt": prompt, "missing": gaps})
     return {
-        "contact_id": str(contact.id),
-        "contact_name": contact.name,
-        "system_prompt": result.system_prompt,
-        "welcome_message": result.welcome_message,
-        "website_used": result.website_used,
-        "web_searched": result.web_searched,
+        "total_contacts": len(contacts),
+        "variables": names,
+        # Ordered as they appear in the agent's text
+        "missing": [n for n in names if n in missing],
+        "items": items,
     }

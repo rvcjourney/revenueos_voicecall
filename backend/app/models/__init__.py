@@ -3,7 +3,6 @@
 from app.models.user import Organization, User  # noqa: F401
 from app.models.sip import SipTrunk  # noqa: F401
 from app.models.agent import AgentTemplate  # noqa: F401
-from app.models.inbound_agent import InboundAgentTemplate  # noqa: F401
 from app.models.campaign import Campaign, CampaignContact  # noqa: F401
 from app.models.call import Call, CallTranscript, CallEvent  # noqa: F401
 from app.models.dnc import DoNotCallEntry, SystemDncEntry  # noqa: F401
@@ -15,6 +14,4 @@ from app.models.platform_cost_settings import PlatformCostSettings  # noqa: F401
 from app.models.subscription import Subscription  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.cloned_voice import ClonedVoice  # noqa: F401
-from app.models.prompt_library import PromptLibraryEntry, PromptLibraryVersion  # noqa: F401
 from app.models.invoice import Invoice, InvoiceCounter  # noqa: F401
-from app.models.company_profile import OrgCompanyProfile  # noqa: F401

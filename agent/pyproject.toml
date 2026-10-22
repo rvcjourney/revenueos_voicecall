@@ -6,8 +6,6 @@ env = [
     "LIVEKIT_API_KEY=test_key",
     "LIVEKIT_API_SECRET=test_secret",
     "SARVAM_API_KEY=test_sarvam_key",
-    "GROQ_API_KEY=test_groq_key",
-    "ELEVENLABS_API_KEY=test_elevenlabs_key",
     "AGENT_WEBHOOK_SECRET=test-webhook-secret-also-at-least-32-chars",
     "ENVIRONMENT=development",
 ]

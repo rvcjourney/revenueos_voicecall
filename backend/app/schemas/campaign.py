@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, time
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, field_validator
@@ -50,11 +49,8 @@ class CampaignOut(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     created_by_name: str | None = None
-    is_prime: bool = False
     language: str | None = None
     voice_id: str | None = None
-    pitch_structure: str | None = None
-    pipeline: str | None = None
     pause_reason: str | None = None
 
 
@@ -69,9 +65,7 @@ class CampaignCreate(BaseModel):
     notes: str | None = None
     goal: str = "lead_generation"
     folder_id: UUID | None = None
-    # Required for classic campaigns; a Prime campaign may omit it if
-    # pitch_structure is given instead (checked in the create endpoint).
-    agent_template_id: UUID | None = None
+    agent_template_id: UUID
     sip_trunk_id: UUID | None = None
     calling_window_start: time = time(9, 0, 0)
     calling_window_end: time = time(19, 0, 0)
@@ -82,23 +76,8 @@ class CampaignCreate(BaseModel):
     retry_after_minutes: int = 60
     start_time: datetime | None = None
     end_time: datetime | None = None
-    is_prime: bool = False
     language: str | None = None
     voice_id: str | None = None
-    pitch_structure: str | None = None
-    # None = the agent template's own pipeline.
-    pipeline: Literal["standard", "sarvam"] | None = None
-
-    @field_validator("pitch_structure", mode="before")
-    @classmethod
-    def _normalise_pitch_structure(cls, v: object) -> object:
-        """None/"" = fall back to the agent template's own system prompt
-        (or, if no agent template either, Company Profile + contact/website
-        data alone). Required-ness for Prime campaigns is checked in the
-        create endpoint, not here, since it depends on agent_template_id too."""
-        if v is None or (isinstance(v, str) and not v.strip()):
-            return None
-        return str(v).strip()
 
     @field_validator("language", mode="before")
     @classmethod
@@ -113,7 +92,7 @@ class CampaignCreate(BaseModel):
     @classmethod
     def _normalise_voice_id(cls, v: object) -> object:
         """None/"" = inherit the agent template's voice. Ownership/plan checks
-        happen in the create endpoint (check_agent_voice_settings), same as
+        happen in the create endpoint (check_voice_choice), same as
         language's own value check, to return a readable message instead of a
         raw Pydantic error."""
         if v is None or (isinstance(v, str) and not v.strip()):

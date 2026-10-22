@@ -18,72 +18,20 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 # round-robin dispatches across them unpredictably.
 LIVEKIT_AGENT_NAME = os.getenv("LIVEKIT_AGENT_NAME", "voice-call-agent")
 
-# ── ElevenLabs TTS ────────────────────────────────────────────────────────────
-ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "6h2Hja4LgQR8wIIv3XXW")
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
-# Switched to only when a call changes language mid-conversation: the default model
-# above covers Hindi/Tamil, this one covers every language we offer.
-ELEVENLABS_MULTILINGUAL_MODEL = os.getenv("ELEVENLABS_MULTILINGUAL_MODEL", "eleven_v4_turbo")
-
-# ── Cartesia TTS ───────────────────────────────────────────────────────────────
-CARTESIA_API_KEY   = os.getenv("CARTESIA_API_KEY", "")
-CARTESIA_VOICE_ID  = os.getenv("CARTESIA_VOICE_ID", "910fb75e-1d20-4840-ac63-ac6b26a71bdc")
-CARTESIA_MODEL_ID  = os.getenv("CARTESIA_MODEL_ID", "sonic-3")
-
-# ── Chatterbox TTS (self-hosted, e.g. on a RunPod GPU) ──────────────────────────
-CHATTERBOX_BASE_URL   = os.getenv("CHATTERBOX_BASE_URL", "")   # e.g. https://xxxxx-8004.proxy.runpod.net
-CHATTERBOX_VOICE_ID   = os.getenv("CHATTERBOX_VOICE_ID", "Emily.wav")
-CHATTERBOX_LANGUAGE   = os.getenv("CHATTERBOX_LANGUAGE", "hi")
-CHATTERBOX_SAMPLE_RATE = int(os.getenv("CHATTERBOX_SAMPLE_RATE", "24000"))
-# "predefined" = CHATTERBOX_VOICE_ID is a filename in the server's ./voices (built-in demo voices, all Western accents)
-# "clone"      = CHATTERBOX_VOICE_ID is a filename in the server's ./reference_audio (your own uploaded sample)
-CHATTERBOX_VOICE_MODE = os.getenv("CHATTERBOX_VOICE_MODE", "predefined")
-
-# ── Sarvam AI TTS (Bulbul v3 — hosted API, native Indian-language voices) ───────
-SARVAM_API_KEY      = os.getenv("SARVAM_API_KEY", "")
-SARVAM_MODEL        = os.getenv("SARVAM_MODEL", "bulbul:v3")
-SARVAM_VOICE_ID     = os.getenv("SARVAM_VOICE_ID", "shubh")  # male default; see agent.py voices list for options
-SARVAM_SAMPLE_RATE  = int(os.getenv("SARVAM_SAMPLE_RATE", "24000"))
-
-# ── Sarvam AI STT (Saaras v3 — WebSocket streaming, replaces Deepgram) ──────────
-# "codemix" mode is built for exactly the Hindi/English code-switching seen in
-# real call transcripts (e.g. "Spice के लिए use करता हूं basically हम") —
-# plain "transcribe" mode isn't tuned for that.
-SARVAM_STT_MODEL    = os.getenv("SARVAM_STT_MODEL", "saaras:v3")
-SARVAM_STT_MODE     = os.getenv("SARVAM_STT_MODE", "codemix")
-SARVAM_STT_LANGUAGE = os.getenv("SARVAM_STT_LANGUAGE", "hi-IN")  # default only; per-agent language wins
-# Voice used when a regional-language agent (Tamil, Telugu, ...) is configured for
-# ElevenLabs: those voices are Hindi/Indian-English only, so Bulbul speaks instead.
-SARVAM_REGIONAL_SPEAKER = os.getenv("SARVAM_REGIONAL_SPEAKER", "ritu")  # female, matches the usual persona
-
-# ── Groq LLM ──────────────────────────────────────────────────────────────────
-GROQ_API_KEY         = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL           = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
-GROQ_LLM_TEMPERATURE = float(os.getenv("GROQ_LLM_TEMPERATURE", "0.7"))
-# Sarvam's own conversational LLM -- an alternative to Groq, selectable from the
-# Testing section only (production campaigns/agents always use Groq above).
-SARVAM_LLM_MODEL     = os.getenv("SARVAM_LLM_MODEL", "sarvam-105b")
-
-# ── "sarvam" calling engine (sarvam_pipeline.py) ──────────────────────────────
+# ── Sarvam (STT, LLM, TTS — the only AI provider) ──────────────────────────────
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_PIPELINE_LLM_MODEL      = os.getenv("SARVAM_PIPELINE_LLM_MODEL", "sarvam-105b-conversations")
 SARVAM_PIPELINE_LLM_MAX_TOKENS = int(os.getenv("SARVAM_PIPELINE_LLM_MAX_TOKENS", "200"))
 # 16 kHz linear16 to start; Sarvam's telephony example uses 8000 + "mulaw" — benchmark on a real call.
 SARVAM_PIPELINE_TTS_SAMPLE_RATE = int(os.getenv("SARVAM_PIPELINE_TTS_SAMPLE_RATE", "16000"))
 SARVAM_PIPELINE_TTS_CODEC       = os.getenv("SARVAM_PIPELINE_TTS_CODEC", "linear16")
-# Post-call outcome classification/summarization model (agent.py's _send_report).
-# Separate from GROQ_MODEL (the live conversation model) -- was a hardcoded
-# literal until Groq deprecated it out from under us with no warning (Aug 2026,
-# see agent.py's classify_llm/groq_classify_error logs). Now an env var so it
-# can be swapped without a code change, AND so the backend's SuperAdmin health
-# check (app/api/platform.py, settings.GROQ_SUMMARY_MODEL) can verify the exact
-# model actually in use -- keep these two values in sync when either changes.
-GROQ_CLASSIFY_MODEL  = os.getenv("GROQ_CLASSIFY_MODEL", "openai/gpt-oss-120b")
+# Post-call outcome classification/summary (agent.py _classify), off the live
+# conversation path. sarvam-105b with low reasoning answers in ~2-3 s.
+SARVAM_CLASSIFY_MODEL = os.getenv("SARVAM_CLASSIFY_MODEL", "sarvam-105b")
+SARVAM_CHAT_URL       = os.getenv("SARVAM_CHAT_URL", "https://api.sarvam.ai/v2/chat/completions")
 
 # ── Agent behaviour ───────────────────────────────────────────────────────────
-# Default fallback — system prompt and welcome message are set via the UI (agent template).
-# These defaults are only used if no value is provided by the campaign/agent config.
-AGENT_WELCOME_MESSAGE = os.getenv("AGENT_WELCOME_MESSAGE", "Hello! How can I help you today?")
+# Fallback only — the real instructions come from the agent template in each call's metadata.
 AGENT_SYSTEM_PROMPT   = os.getenv("AGENT_SYSTEM_PROMPT",   "You are a helpful voice assistant.")
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -109,9 +57,7 @@ _REQUIRED = {
     "LIVEKIT_URL":        LIVEKIT_URL,
     "LIVEKIT_API_KEY":    LIVEKIT_API_KEY,
     "LIVEKIT_API_SECRET": LIVEKIT_API_SECRET,
-    "SARVAM_API_KEY":     SARVAM_API_KEY,  # now used for STT on every call, not just Sarvam-TTS agents
-    "GROQ_API_KEY":       GROQ_API_KEY,
-    "ELEVENLABS_API_KEY": ELEVENLABS_API_KEY,
+    "SARVAM_API_KEY":     SARVAM_API_KEY,
 }
 
 def validate_config() -> None:

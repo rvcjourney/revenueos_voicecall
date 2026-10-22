@@ -4,7 +4,7 @@ app/models/voice_clone_request.py — VoiceCloneRequest model.
 A consent/approval gate in front of ClonedVoice creation: an org admin submits
 a voice sample + a consent video (proof of authorization to clone that voice),
 which sits here as "pending" until a platform superadmin reviews it. Only on
-approval does the real ElevenLabs clone_voice() call happen and a ClonedVoice
+approval does the real Sarvam clone call happen and a ClonedVoice
 row get created (see app/api/platform.py) — a not-yet-approved request never
 has a usable voice_id anywhere in the system.
 
@@ -39,11 +39,11 @@ class VoiceCloneRequest(Base, OrgScopedMixin, TimestampMixin):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Which provider to clone on once approved: "elevenlabs" | "sarvam".
-    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default="elevenlabs", default="elevenlabs")
+    # Always "sarvam" now; older rows may say "elevenlabs".
+    provider: Mapped[str] = mapped_column(String(16), nullable=False, server_default="elevenlabs", default="sarvam")
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    # Persisted sample — needed at approval time to actually call ElevenLabs
+    # Persisted sample — needed at approval time to actually call the clone API
     # (today's flow discards the sample bytes right after the inline clone
     # call; here cloning is deferred, so the bytes must survive until then).
     audio_sample_key: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -68,7 +68,7 @@ class VoiceCloneRequest(Base, OrgScopedMixin, TimestampMixin):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Set once approved and the real ClonedVoice row + ElevenLabs voice exist
+    # Set once approved and the real ClonedVoice row + Sarvam voice exist
     cloned_voice_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("cloned_voices.id", ondelete="SET NULL"),

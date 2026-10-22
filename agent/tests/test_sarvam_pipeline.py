@@ -1,5 +1,5 @@
-"""tests/test_sarvam_pipeline.py — the "sarvam" calling engine (sarvam_pipeline.py)
-and the agent.py hooks that only exist for it. No network: fakes only."""
+"""tests/test_sarvam_pipeline.py — the calling engine (sarvam_pipeline.py) and
+agent.py's VoiceAgent hooks and tools. No network: fakes only."""
 from __future__ import annotations
 
 import asyncio
@@ -88,14 +88,6 @@ def test_build_components_construct_without_network():
     sp.build_stt(_state(), prompt="x" * 500)  # long prompt is cut, not rejected
 
 
-def test_prompt_adapter_appends_and_never_edits_script():
-    script = "PRIME SCRIPT\n7. Close with: Take care, namaste! [end_call]"
-    out = sp.prompt_adapter(script, _state("hinglish", "simran_enhi_customer"))
-    assert out.startswith(script)
-    assert "Devanagari" in out and "Never address the customer as Sir" in out
-    assert "native script" in sp.prompt_adapter(script, _state("tamil", "ritu"))
-
-
 def test_romanised_check():
     assert sp.looks_romanised("Sir humare yahan naya steel aaya hai", "hindi")
     assert not sp.looks_romanised("आपका order कब तक चाहिए?", "hindi")
@@ -156,7 +148,7 @@ def test_switch_to_disabled_language_is_ignored():
 
 # ── agent.py hooks ────────────────────────────────────────────────────────────
 def _agent(turns=1):
-    va = agent_mod.SarvamVoiceAgent(SimpleNamespace(), instructions="x", welcome_message="w", sarvam_state=_state())
+    va = agent_mod.VoiceAgent(SimpleNamespace(), instructions="x", welcome_message="w", sarvam_state=_state())
     va._turn_count = turns
     return va
 
@@ -203,7 +195,7 @@ async def _drain():
 
 async def test_unrecoverable_llm_error_apologises_then_hangs_up():
     va = _FakeSarvamAgent()
-    agent_mod.handle_sarvam_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=object()))
+    agent_mod.handle_session_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=object()))
     await _drain()
     assert va._ending and va.calls == [True]
 
@@ -212,37 +204,18 @@ async def test_unrecoverable_tts_error_hangs_up_without_speaking():
     va = _FakeSarvamAgent()
     real_tts = sp.build_tts(_state("tamil", "ritu"))  # constructs offline
     assert isinstance(real_tts, lk_tts.TTS)
-    agent_mod.handle_sarvam_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=real_tts))
+    agent_mod.handle_session_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=real_tts))
     await _drain()
     assert va.calls == [False]
 
 
 async def test_recoverable_error_or_ending_call_is_ignored():
     va = _FakeSarvamAgent()
-    agent_mod.handle_sarvam_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=True), source=object()))
+    agent_mod.handle_session_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=True), source=object()))
     done = _FakeSarvamAgent(ending=True)
-    agent_mod.handle_sarvam_error(done, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=object()))
+    agent_mod.handle_session_error(done, SimpleNamespace(error=SimpleNamespace(recoverable=False), source=object()))
     await _drain()
     assert va.calls == [] and done.calls == []
-
-
-async def _run_transform(transform, chunks):
-    async def gen():
-        for c in chunks:
-            yield c
-    return "".join([c async for c in transform(gen())])
-
-
-async def test_no_ji_filter_follows_current_language():
-    langs = {k: dict(v) for k, v in LANGS.items()}
-    langs["tamil"]["honorific"] = ""
-    langs["hinglish"]["honorific"] = "ji"
-    state = sp.SarvamCallState("tamil", "ritu", False, langs)
-    t = sp.no_ji_transform(state)
-    assert await _run_transform(t, ["சரி j", "i, நான் Ji இப்போ"]) == "சரி, நான் இப்போ"
-    state.language = "hinglish"
-    assert await _run_transform(sp.no_ji_transform(state), ["हाँ ji, बोलिए"]) == "हाँ ji, बोलिए"
-    assert await _run_transform(sp.no_ji_transform(sp.SarvamCallState("tamil", "ritu", False, langs)), ["Rajiv sir"]) == "Rajiv sir"
 
 
 async def test_sustained_recoverable_errors_alert_once(monkeypatch):
@@ -250,7 +223,7 @@ async def test_sustained_recoverable_errors_alert_once(monkeypatch):
     monkeypatch.setattr(agent_mod, "_sentry_message", lambda msg, level: sent.append((msg, level)))
     va = _FakeSarvamAgent()
     for _ in range(5):
-        agent_mod.handle_sarvam_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=True, status_code=1008), source=object()))
+        agent_mod.handle_session_error(va, SimpleNamespace(error=SimpleNamespace(recoverable=True, status_code=1008), source=object()))
     assert va.calls == [] and va._recoverable_errors == 5
     assert len(sent) == 1 and "status=1008" in sent[0][0]
 
@@ -264,12 +237,101 @@ def test_latency_report_summarises_turn_metrics_without_text():
     ]
     va._session = None
     monkey_history = SimpleNamespace(messages=lambda: msgs)
-    agent_mod.SarvamVoiceAgent.session = property(lambda self: SimpleNamespace(history=monkey_history))
+    agent_mod.VoiceAgent.session = property(lambda self: SimpleNamespace(history=monkey_history))
     try:
         report = va._latency_report()
     finally:
-        del agent_mod.SarvamVoiceAgent.session
+        del agent_mod.VoiceAgent.session
     assert report["samples"]["e2e_latency"] == [0.9, 1.1]
     assert report["samples"]["transcription_delay"] == [0.4]
     assert report["counts"]["turns"] == 3 and report["counts"]["empty_replies"] == 0
     assert "secret" not in str(report)
+
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+async def test_tool_call_reply_is_not_treated_as_empty(monkeypatch):
+    va = _agent(turns=2)
+    chunk = lk_llm.ChatChunk(id="1", delta=lk_llm.ChoiceDelta(role="assistant", tool_calls=[
+        lk_llm.FunctionToolCall(name="end_interaction", arguments="{}", call_id="c1")]))
+    assert await _collect(va, [chunk], monkeypatch) == [chunk]
+    assert va._sarvam.empty_replies == 0
+
+
+def test_agent_exposes_its_three_tools():
+    names = {t.info.name for t in _agent().tools}
+    assert names == {"end_interaction", "book_next_step", "switch_language"}
+
+
+async def test_switch_language_tool_retargets_engines():
+    va = _agent()
+    tts, stt = _Fake(), _Fake()
+    va.attach_engines(tts, stt)
+    tool = next(t for t in va.tools if t.info.name == "switch_language")
+    out = await tool(SimpleNamespace(), language="tamil")
+    assert va._sarvam.language == "tamil" and "Tamil" in out
+    assert stt.calls[-1]["language"] == "ta-IN"
+
+
+async def test_book_next_step_returns_a_reference_and_is_reported():
+    va = _agent()
+    out = await va.book_next_step(SimpleNamespace(), prospect_name="Ravi", company="Acme",
+                                  next_step_type="demo", date_time="Tuesday 11am")
+    assert out["status"] == "confirmed" and out["reference"].startswith("NS-")
+    assert va._booking["reference"] == out["reference"]
+
+
+class _Handle:
+    def __init__(self):
+        self.callbacks = []
+
+    def add_done_callback(self, cb):
+        self.callbacks.append(cb)
+
+
+def _ending_agent(monkeypatch):
+    va = _agent()
+    order = []
+
+    async def report(**kw):
+        order.append("report")
+
+    async def disconnect():
+        order.append("disconnect")
+
+    monkeypatch.setattr(va, "_post_call_report", report)
+    monkeypatch.setattr(va, "_disconnect", disconnect)
+    monkeypatch.setattr(agent_mod.asyncio, "sleep", _no_sleep)
+    return va, order
+
+
+async def test_end_interaction_hangs_up_only_after_the_turn_finishes(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    va._last_reply_text = "Thank you, have a good day!"
+    handle = _Handle()
+    assert await va.end_interaction(SimpleNamespace(speech_handle=handle)) is None  # goodbye already spoken
+    await _REAL_SLEEP(0)
+    assert va._ending and order == []  # still speaking
+    handle.callbacks[0](handle)
+    for _ in range(5):
+        await _REAL_SLEEP(0)
+    assert order == ["report", "disconnect"]
+    assert await va.end_interaction(SimpleNamespace(speech_handle=_Handle())) is None  # idempotent
+
+
+async def test_end_interaction_without_words_asks_for_a_goodbye(monkeypatch):
+    va, _ = _ending_agent(monkeypatch)
+    va._last_reply_text = ""
+    out = await va.end_interaction(SimpleNamespace(speech_handle=_Handle()))
+    assert "goodbye" in out
+
+
+_REAL_SLEEP = asyncio.sleep
+
+
+async def _no_sleep(_s):
+    await _REAL_SLEEP(0)
+
+
+def test_instructions_get_only_the_call_language_added():
+    out = agent_mod.build_instructions("## Persona" + chr(10) + "Ananya", _state("tamil", "ritu"))
+    assert out.endswith("Ananya" + chr(10) * 2 + "# Call language" + chr(10) + "This call is in Tamil.")

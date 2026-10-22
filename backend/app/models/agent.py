@@ -1,8 +1,8 @@
 """
-app/models/agent.py — AgentTemplate (saved system prompt + voice configuration).
-Templates are org-scoped, soft-deleted, and referenced by campaigns.
-The agent worker fetches the active template via GET /api/agents/{id}/runtime
-using the agent_template_id injected into LiveKit room metadata at dispatch time.
+app/models/agent.py — AgentTemplate: an agent's Greeting, Instructions, the
+default values of their {placeholders}, language and voice. Org-scoped,
+soft-deleted, referenced by campaigns. The dialler copies the filled-in text
+into each call's job metadata (app/workers/tasks/campaign.py).
 """
 from __future__ import annotations
 
@@ -10,20 +10,12 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import Enum as SAEnum, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from app.database import Base
 from app.models.base import OrgScopedMixin, SoftDeleteMixin, TimestampMixin
-
-
-class VoiceProvider(StrEnum):
-    ELEVENLABS = "elevenlabs"
-    CARTESIA   = "cartesia"
-    DEEPGRAM   = "deepgram"
-    CHATTERBOX = "chatterbox"
-    SARVAM     = "sarvam"
 
 
 class AgentLanguage(StrEnum):
@@ -41,8 +33,8 @@ class AgentLanguage(StrEnum):
 
 class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     """
-    Saved system prompt + voice configuration for an agent persona.
-    Campaigns reference a template; the agent worker loads it at call time.
+    An agent persona: Greeting + Instructions (with {placeholders}) + voice.
+    Campaigns reference a template; the dialler fills it in for each call.
     Soft-deleted: active campaigns referencing a deleted template continue to work
     (the FK uses RESTRICT — you cannot delete a template used by a running campaign).
     """
@@ -64,35 +56,17 @@ class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
         default=AgentLanguage.HINGLISH,
         server_default=AgentLanguage.HINGLISH,
     )
-    # Spoken at the start of every call before the LLM takes over
+    # The Greeting: spoken word-for-word at the start of every call
     welcome_message: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    # Full system prompt sent to the LLM. May include persona, knowledge base, guardrails.
+    # The Instructions sent to the LLM (markdown, with {placeholders})
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    # Default value per placeholder, {"partnerName": "Acme"}; a contact's CSV column wins
+    variables: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}", default=dict)
 
-    # ── Voice configuration ────────────────────────────────────────────────────
-    # ElevenLabs voice_id or Deepgram model identifier
-    voice_id: Mapped[str] = mapped_column(
-        String(100), nullable=False, server_default="C8R8ahkE5XosZ8qPpSPy", default="9BWtsMINqrJLrRacOk9x"
-    )
-    voice_provider: Mapped[VoiceProvider] = mapped_column(
-        SAEnum(VoiceProvider, native_enum=False, values_callable=lambda x: [e.value for e in x], length=32),
-        nullable=False,
-        default=VoiceProvider.ELEVENLABS,
-        server_default=VoiceProvider.ELEVENLABS,
-    )
-
-    # ── LLM configuration ─────────────────────────────────────────────────────
-    # Platform-wide: "qwen/qwen3.6-27b" is the only allowed value (enforced by
-    # AgentCreate/AgentUpdate's Literal type in app/schemas/agent.py) -- still a
-    # plain string column since a DB CHECK constraint on this would need its own
-    # migration to change if the platform's model choice ever changes again.
-    llm_model: Mapped[str] = mapped_column(
-        String(100), nullable=False, server_default="qwen/qwen3.6-27b"
-    )
-    # Stored as float; Groq/OpenAI APIs accept float. Range: 0.0–2.0.
+    # Sarvam stock voice id, or the id of one of the org's Sarvam cloned voices
+    voice_id: Mapped[str] = mapped_column(String(100), nullable=False, server_default="", default="")
+    # "Creativity" (0.0–2.0), mapped into the LLM's safe band at call time
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")
-    # Calling engine: "standard" | "sarvam" (see app/core/pipelines.py).
-    pipeline: Mapped[str] = mapped_column(String(16), nullable=False, server_default="standard", default="standard")
     # Hard limit; agent auto-hangs up after this many seconds regardless of conversation state
     max_call_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="600"
