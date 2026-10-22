@@ -1,5 +1,7 @@
 import axios from "axios";
 import type {
+  EnginesOverview,
+  EnginesUpdate,
   PlatformCostSettings,
   PlatformHealth,
   PlatformListResponse,
@@ -118,8 +120,14 @@ export const platformHealthApi = {
 // ── Cost settings (for estimated gross margin) ─────────────────────────────
 export const platformCostSettingsApi = {
   get: () => platformApi.get<PlatformCostSettings>("/api/platform/settings/cost"),
-  update: (data: { cost_per_minute_minor: number }) =>
+  update: (data: { cost_per_minute_minor: number; sarvam_cost_per_minute_minor?: number | null }) =>
     platformApi.patch<PlatformCostSettings>("/api/platform/settings/cost", data),
+};
+
+// ── Calling engines (owner switches) ──────────────────────────────────────
+export const platformEnginesApi = {
+  get: () => platformApi.get<EnginesOverview>("/api/platform/engines"),
+  update: (data: EnginesUpdate) => platformApi.patch<EnginesOverview>("/api/platform/engines", data),
 };
 
 // ── Voice clone requests ─────────────────────────────────────────────────

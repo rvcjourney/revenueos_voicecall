@@ -139,7 +139,8 @@ function RequestCard({ request }: { request: PlatformVoiceCloneRequest }) {
           <div>
             <p className="font-heading text-lg font-semibold">{request.name}</p>
             <p className="text-sm text-muted-foreground">
-              {request.org_name} &middot; {request.user_name ?? "Unknown user"}
+              {request.org_name} &middot; {request.user_name ?? "Unknown user"} &middot;{" "}
+              {request.provider === "sarvam" ? `Sarvam (Indic Native)${request.language ? `, sample in ${request.language}` : ""}` : "ElevenLabs (Standard)"}
               {request.user_email ? ` (${request.user_email})` : ""}
             </p>
             <p className="text-xs text-muted-foreground">Submitted {formatDate(request.created_at)}</p>
@@ -194,7 +195,7 @@ function RequestCard({ request }: { request: PlatformVoiceCloneRequest }) {
         open={approveConfirmOpen}
         onOpenChange={setApproveConfirmOpen}
         title="Approve this voice clone?"
-        description={`This calls ElevenLabs to create the real voice for ${request.org_name} right now, and it becomes selectable on their agents immediately.`}
+        description={`This calls ${request.provider === "sarvam" ? "Sarvam" : "ElevenLabs"} to create the real voice for ${request.org_name} right now, and it becomes selectable on their agents immediately. Listen to the sample above first.`}
         confirmLabel="Approve"
         loading={approve.isPending}
         onConfirm={handleApprove}

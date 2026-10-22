@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   platformAnalyticsApi,
   platformCostSettingsApi,
+  platformEnginesApi,
   platformHealthApi,
   platformMetricsApi,
   platformOrgsApi,
@@ -9,7 +10,7 @@ import {
   platformVoiceCloneRequestsApi,
   unwrapPlatformList,
 } from "./platformApi";
-import type { PlatformOrgUpdate, PlatformPlanCreate } from "./platformTypes";
+import type { EnginesUpdate, PlatformOrgUpdate, PlatformPlanCreate } from "./platformTypes";
 
 // ── Metrics ──────────────────────────────────────────────────────────────
 export function usePlatformMetrics() {
@@ -139,11 +140,28 @@ export function usePlatformCostSettings() {
 export function useUpdatePlatformCostSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { cost_per_minute_minor: number }) => platformCostSettingsApi.update(data),
+    mutationFn: (data: { cost_per_minute_minor: number; sarvam_cost_per_minute_minor?: number | null }) =>
+      platformCostSettingsApi.update(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["platform-cost-settings"] });
       qc.invalidateQueries({ queryKey: ["platform-usage-analytics"] });
     },
+  });
+}
+
+// ── Calling engines ───────────────────────────────────────────────────────
+export function usePlatformEngines() {
+  return useQuery({
+    queryKey: ["platform-engines"],
+    queryFn: () => platformEnginesApi.get().then((r) => r.data),
+  });
+}
+
+export function useUpdatePlatformEngines() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: EnginesUpdate) => platformEnginesApi.update(data).then((r) => r.data),
+    onSuccess: (data) => qc.setQueryData(["platform-engines"], data),
   });
 }
 

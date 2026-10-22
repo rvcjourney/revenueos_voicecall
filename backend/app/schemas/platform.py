@@ -3,6 +3,8 @@ app/schemas/platform.py — Pydantic schemas for the SuperAdmin (platform) API.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr
 
 
@@ -99,10 +101,50 @@ class BillingCurrentOut(BaseModel):
 class CostSettingsOut(BaseModel):
     cost_per_minute_minor: int
     currency: str
+    # Indic Native (sarvam) engine's own rate; None = same as cost_per_minute_minor.
+    sarvam_cost_per_minute_minor: int | None = None
 
 
 class CostSettingsUpdateRequest(BaseModel):
     cost_per_minute_minor: int
+    sarvam_cost_per_minute_minor: int | None = None
+
+
+class EngineLanguageCellOut(BaseModel):
+    enabled: bool
+    default_enabled: bool
+    effective: str            # "on" | "off: global switch" | "off: language"
+    tts_model: str | None = None          # sarvam only
+    default_tts_model: str | None = None
+    voices: list[dict] = []               # sarvam only: every valid voice for the model
+    shortlist: list[str] = []
+
+
+class EngineLanguageOut(BaseModel):
+    key: str
+    display: str
+    standard: EngineLanguageCellOut
+    sarvam: EngineLanguageCellOut
+
+
+class PausedCampaignOut(BaseModel):
+    id: str
+    name: str
+    org_id: str
+    org_name: str
+
+
+class EnginesOverviewOut(BaseModel):
+    global_enabled: bool
+    languages: list[EngineLanguageOut]
+    paused_campaigns: list[PausedCampaignOut]
+    orgs_enabled: int
+
+
+class EnginesUpdateRequest(BaseModel):
+    global_enabled: bool | None = None
+    # {language: {"standard"|"sarvam": {"enabled"?: bool, "tts_model"?: str, "voices"?: [ids]}}}
+    languages: dict[str, dict[str, dict]] | None = None
 
 
 class OrgListItemOut(BaseModel):
@@ -128,6 +170,11 @@ class OrgDetailOut(OrgListItemOut):
     subscription_status: str | None
     subscription_current_period_end: str | None
     elevenlabs_enabled: bool
+    sarvam_pipeline_enabled: bool = False
+    default_pipeline: str = "standard"
+    sarvam_cloning_allowed: bool = False
+    # What a new call asking for the sarvam engine actually gets for this org.
+    sarvam_effective: str = "off: organisation"
     # Plan pricing snapshot (from the org's currently-assigned Plan, not
     # frozen at signup) -- lets SuperAdmin see what each client is actually
     # being billed without cross-referencing the Plans screen separately.
@@ -141,6 +188,9 @@ class OrgPatchRequest(BaseModel):
     plan_id: str | None = None
     monthly_call_quota: int | None = None
     elevenlabs_enabled: bool | None = None
+    sarvam_pipeline_enabled: bool | None = None
+    default_pipeline: Literal["standard", "sarvam"] | None = None
+    sarvam_cloning_allowed: bool | None = None
 
 
 class CreditAdjustRequest(BaseModel):
@@ -214,6 +264,8 @@ class UsageAnalyticsOut(BaseModel):
     estimated_cogs_minor_30d: int
     estimated_gross_margin_minor: int
     estimated_margin_percent: float
+    minutes_by_pipeline: dict[str, int] = {}
+    sarvam_cost_per_minute_minor: int | None = None
 
 
 class PlatformHealthOut(BaseModel):

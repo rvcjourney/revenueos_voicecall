@@ -134,9 +134,12 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
   const costSettings = usePlatformCostSettings();
   const updateCostSettings = useUpdatePlatformCostSettings();
   const [rate, setRate] = useState("");
+  const [sarvamRate, setSarvamRate] = useState("");
 
   useEffect(() => {
-    if (costSettings.data) setRate(String(costSettings.data.cost_per_minute_minor));
+    if (!costSettings.data) return;
+    setRate(String(costSettings.data.cost_per_minute_minor));
+    setSarvamRate(costSettings.data.sarvam_cost_per_minute_minor == null ? "" : String(costSettings.data.sarvam_cost_per_minute_minor));
   }, [costSettings.data]);
 
   async function save() {
@@ -145,8 +148,13 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
       toast.error("Enter a valid, non-negative cost per minute");
       return;
     }
+    const sarvamValue = sarvamRate.trim() === "" ? null : Number(sarvamRate);
+    if (sarvamValue !== null && (!Number.isFinite(sarvamValue) || sarvamValue < 0)) {
+      toast.error("Enter a valid, non-negative Indic Native cost per minute (or leave it blank)");
+      return;
+    }
     try {
-      await updateCostSettings.mutateAsync({ cost_per_minute_minor: value });
+      await updateCostSettings.mutateAsync({ cost_per_minute_minor: value, sarvam_cost_per_minute_minor: sarvamValue });
       toast.success("Cost rate updated");
     } catch (err) {
       toast.error(platformApiErrorMessage(err, "Couldn't update cost rate"));
@@ -168,6 +176,16 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
             className="max-w-40"
             value={rate}
             onChange={(e) => setRate(e.target.value)}
+            disabled={costSettings.isLoading}
+          />
+          <Label className="pt-2 block">Indic Native engine cost per call-minute (blank = same as above)</Label>
+          <p className="text-xs text-muted-foreground">Sarvam STT + LLM + Bulbul + Vobiz + LiveKit, for calls on the Indic Native engine.</p>
+          <Input
+            type="number"
+            min={0}
+            className="max-w-40"
+            value={sarvamRate}
+            onChange={(e) => setSarvamRate(e.target.value)}
             disabled={costSettings.isLoading}
           />
         </div>

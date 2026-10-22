@@ -41,6 +41,11 @@ export interface PlatformOrgDetail extends PlatformOrg {
   subscription_status: string;
   subscription_current_period_end: string | null;
   elevenlabs_enabled: boolean;
+  sarvam_pipeline_enabled: boolean;
+  default_pipeline: "standard" | "sarvam";
+  sarvam_cloning_allowed: boolean;
+  /** "on" | "off: global switch" | "off: organisation" */
+  sarvam_effective: string;
   plan_price_minor: number | null;
   plan_discount_price_minor: number | null;
   plan_currency: string | null;
@@ -60,6 +65,9 @@ export interface PlatformOrgUpdate {
   plan_id?: string;
   monthly_call_quota?: number;
   elevenlabs_enabled?: boolean;
+  sarvam_pipeline_enabled?: boolean;
+  default_pipeline?: "standard" | "sarvam";
+  sarvam_cloning_allowed?: boolean;
 }
 
 export interface PlatformPlan {
@@ -98,6 +106,37 @@ export interface PlatformPlanCreate {
 export interface PlatformCostSettings {
   cost_per_minute_minor: number;
   currency: string;
+  sarvam_cost_per_minute_minor: number | null;
+}
+
+export interface EngineLanguageCell {
+  enabled: boolean;
+  default_enabled: boolean;
+  /** "on" | "off: global switch" | "off: language" */
+  effective: string;
+  tts_model: string | null;
+  default_tts_model: string | null;
+  voices: { id: string; name: string; gender: string }[];
+  shortlist: string[];
+}
+
+export interface EngineLanguage {
+  key: string;
+  display: string;
+  standard: EngineLanguageCell;
+  sarvam: EngineLanguageCell;
+}
+
+export interface EnginesOverview {
+  global_enabled: boolean;
+  languages: EngineLanguage[];
+  paused_campaigns: { id: string; name: string; org_id: string; org_name: string }[];
+  orgs_enabled: number;
+}
+
+export interface EnginesUpdate {
+  global_enabled?: boolean;
+  languages?: Record<string, Partial<Record<"standard" | "sarvam", { enabled?: boolean; tts_model?: string; voices?: string[] }>>>;
 }
 
 export interface PlatformListResponse<T> {
@@ -120,6 +159,8 @@ export interface PlatformUsageAnalytics {
   estimated_cogs_minor_30d: number;
   estimated_gross_margin_minor: number;
   estimated_margin_percent: number;
+  minutes_by_pipeline?: Record<string, number>;
+  sarvam_cost_per_minute_minor?: number | null;
 }
 
 export interface PlatformHealth {
@@ -153,6 +194,8 @@ export interface PlatformVoiceCloneRequest {
   name: string;
   audio_url: string;
   video_url: string;
+  provider: "elevenlabs" | "sarvam";
+  language: string | null;
   status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
   reviewed_at: string | null;

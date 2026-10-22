@@ -64,6 +64,11 @@ from app.schemas.platform import (
     PlanUpdateRequest,
     CostSettingsOut,
     CostSettingsUpdateRequest,
+    EngineLanguageCellOut,
+    EngineLanguageOut,
+    EnginesOverviewOut,
+    EnginesUpdateRequest,
+    PausedCampaignOut,
     PlatformAdminOut,
     PlatformHealthOut,
     PlatformLoginRequest,
@@ -175,6 +180,10 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
         credits_used_this_period=org.credits_used_this_period,
         credits_per_month=credits_per_month,
         elevenlabs_enabled=org.elevenlabs_enabled,
+        sarvam_pipeline_enabled=org.sarvam_pipeline_enabled,
+        default_pipeline=org.default_pipeline,
+        sarvam_cloning_allowed=org.sarvam_cloning_allowed,
+        sarvam_effective=await _org_sarvam_effective(db, org),
         plan_price_minor=plan_price_minor,
         plan_discount_price_minor=plan_discount_price_minor,
         plan_currency=plan_currency,
@@ -341,6 +350,12 @@ async def update_org(
             "to": body.elevenlabs_enabled,
         }
         org.elevenlabs_enabled = body.elevenlabs_enabled
+
+    for field in ("sarvam_pipeline_enabled", "default_pipeline", "sarvam_cloning_allowed"):
+        value = getattr(body, field)
+        if value is not None and value != getattr(org, field):
+            changes[field] = {"from": getattr(org, field), "to": value}
+            setattr(org, field, value)
 
     if body.plan_id is not None:
         try:
@@ -641,7 +656,7 @@ async def get_cost_settings(
 ):
     settings_row = await _get_or_create_cost_settings(db)
     await db.commit()
-    return CostSettingsOut(cost_per_minute_minor=settings_row.cost_per_minute_minor, currency=settings_row.currency)
+    return _cost_out(settings_row)
 
 
 @router.patch("/settings/cost", response_model=CostSettingsOut)
@@ -651,7 +666,10 @@ async def update_cost_settings(
     db: AsyncSession = Depends(get_db),
 ):
     settings_row = await _get_or_create_cost_settings(db)
+    old = {"cost_per_minute_minor": settings_row.cost_per_minute_minor,
+           "sarvam_cost_per_minute_minor": settings_row.sarvam_cost_per_minute_minor}
     settings_row.cost_per_minute_minor = body.cost_per_minute_minor
+    settings_row.sarvam_cost_per_minute_minor = body.sarvam_cost_per_minute_minor
 
     db.add(AuditLog(
         actor_type="platform_admin",
@@ -660,11 +678,128 @@ async def update_cost_settings(
         action="cost_settings.update",
         target_type="platform_cost_settings",
         target_id=None,
+        audit_metadata={"from": old, "to": {"cost_per_minute_minor": body.cost_per_minute_minor,
+                                            "sarvam_cost_per_minute_minor": body.sarvam_cost_per_minute_minor}},
     ))
 
     await db.commit()
     await db.refresh(settings_row)
-    return CostSettingsOut(cost_per_minute_minor=settings_row.cost_per_minute_minor, currency=settings_row.currency)
+    return _cost_out(settings_row)
+
+
+def _cost_out(row: PlatformCostSettings) -> CostSettingsOut:
+    return CostSettingsOut(cost_per_minute_minor=row.cost_per_minute_minor, currency=row.currency,
+                           sarvam_cost_per_minute_minor=row.sarvam_cost_per_minute_minor)
+
+
+# ── Calling engines (owner switches) ─────────────────────────────────────────
+# Take effect on the next call (api/worker read them through a <=60 s cache);
+# never touch a call in progress. Every change is audit-logged old -> new.
+
+async def _org_sarvam_effective(db: AsyncSession, org: Organization) -> str:
+    settings = await pipelines.get_owner_settings(db)
+    if not settings.global_enabled:
+        return "off: global switch"
+    return "on" if org.sarvam_pipeline_enabled else "off: organisation"
+
+
+def _engine_cell(key: str, pipeline: str, settings: "pipelines.OwnerSettings") -> EngineLanguageCellOut:
+    lang = pipelines.LANGUAGES[key]
+    enabled = pipelines.language_enabled(key, pipeline, settings)
+    if pipeline == pipelines.SARVAM and not settings.global_enabled:
+        effective = "off: global switch"
+    else:
+        effective = "on" if enabled else "off: language"
+    cell = EngineLanguageCellOut(enabled=enabled, default_enabled=lang.enabled.get(pipeline, False), effective=effective)
+    if pipeline == pipelines.SARVAM:
+        model = pipelines.sarvam_tts_model(key, settings)
+        all_voices = pipelines.sarvam_voices(key, pipelines.OwnerSettings(language_overrides={key: {pipelines.SARVAM: {"tts_model": model}}}))
+        cell.tts_model, cell.default_tts_model = model, lang.sarvam_tts_model
+        cell.voices = [{"id": v.id, "name": v.name, "gender": v.gender} for v in all_voices]
+        cell.shortlist = list(((settings.language_overrides.get(key) or {}).get(pipelines.SARVAM) or {}).get("voices") or [])
+    return cell
+
+
+async def _engines_overview(db: AsyncSession) -> EnginesOverviewOut:
+    settings = await pipelines.get_owner_settings(db)
+    paused = (await db.execute(
+        select(Campaign, Organization.name)
+        .join(Organization, Organization.id == Campaign.org_id)
+        .where(Campaign.pause_reason == pipelines.PAUSE_REASON_ENGINE_OFF,
+               Campaign.status == CampaignStatus.PAUSED, Campaign.deleted_at.is_(None))
+    )).all()
+    orgs_enabled = await db.scalar(select(func.count(Organization.id)).where(
+        Organization.sarvam_pipeline_enabled.is_(True), Organization.deleted_at.is_(None)))
+    return EnginesOverviewOut(
+        global_enabled=settings.global_enabled,
+        languages=[
+            EngineLanguageOut(key=k, display=l.display,
+                              standard=_engine_cell(k, pipelines.STANDARD, settings),
+                              sarvam=_engine_cell(k, pipelines.SARVAM, settings))
+            for k, l in pipelines.LANGUAGES.items()
+        ],
+        paused_campaigns=[PausedCampaignOut(id=str(c.id), name=c.name, org_id=str(c.org_id), org_name=n) for c, n in paused],
+        orgs_enabled=orgs_enabled or 0,
+    )
+
+
+@router.get("/engines", response_model=EnginesOverviewOut)
+async def get_engines(
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    pipelines.invalidate_owner_settings()  # the owner's own view is always fresh
+    return await _engines_overview(db)
+
+
+@router.patch("/engines", response_model=EnginesOverviewOut)
+async def update_engines(
+    body: EnginesUpdateRequest,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _get_or_create_cost_settings(db)
+    changes: dict = {}
+    if body.global_enabled is not None and body.global_enabled != row.sarvam_pipeline_global_enabled:
+        changes["global_enabled"] = {"from": row.sarvam_pipeline_global_enabled, "to": body.global_enabled}
+        row.sarvam_pipeline_global_enabled = body.global_enabled
+    if body.languages:
+        overrides = {k: {p: dict(v) for p, v in (d or {}).items()} for k, d in (row.language_overrides or {}).items()}
+        for lang, per_pipeline in body.languages.items():
+            if lang not in pipelines.LANGUAGES:
+                raise AppValidationError(f"Unknown language '{lang}'", errors=[])
+            for pipe, patch in per_pipeline.items():
+                if pipe not in pipelines.PIPELINES:
+                    raise AppValidationError(f"Unknown engine '{pipe}'", errors=[])
+                cell = overrides.setdefault(lang, {}).setdefault(pipe, {})
+                before = dict(cell)
+                if "enabled" in patch:
+                    cell["enabled"] = bool(patch["enabled"])
+                if "tts_model" in patch:
+                    if pipe != pipelines.SARVAM or patch["tts_model"] not in pipelines.SARVAM_TTS_MODELS:
+                        raise AppValidationError("tts_model must be bulbul:v4-flash or bulbul:v3 on the sarvam engine", errors=[])
+                    cell["tts_model"] = patch["tts_model"]
+                    cell.pop("voices", None)  # a shortlist from the other model can't be valid
+                if "voices" in patch:
+                    model = cell.get("tts_model") or pipelines.LANGUAGES[lang].sarvam_tts_model
+                    valid = {v.id for v in pipelines.sarvam_voices(lang, pipelines.OwnerSettings(
+                        language_overrides={lang: {pipelines.SARVAM: {"tts_model": model}}}))}
+                    bad = [v for v in patch["voices"] if v not in valid]
+                    if bad:
+                        raise AppValidationError(f"Not valid for {lang} on {model}: {', '.join(bad)}", errors=[])
+                    cell["voices"] = list(patch["voices"])
+                if cell != before:
+                    changes[f"{lang}.{pipe}"] = {"from": before, "to": dict(cell)}
+        row.language_overrides = overrides
+    if changes:
+        db.add(AuditLog(
+            actor_type="platform_admin", actor_id=admin.id, org_id=None,
+            action="engines.update", target_type="platform_cost_settings", target_id=None,
+            audit_metadata=changes,
+        ))
+    await db.commit()
+    pipelines.invalidate_owner_settings()
+    return await _engines_overview(db)
 
 
 @router.get("/metrics", response_model=PlatformMetricsOut)
@@ -780,6 +915,11 @@ async def _usage_analytics_out(db: AsyncSession, *, org_id: UUID | None) -> Usag
 
     total_minutes = sum(point["credits"] for point in series)
     cogs = total_minutes * cost_settings.cost_per_minute_minor
+    minutes_by_pipeline = await _minutes_by_pipeline_30d(db, org_id=org_id)
+    if cost_settings.sarvam_cost_per_minute_minor is not None:
+        # Indic Native minutes are costed at their own rate (standard rate already counted above).
+        cogs += minutes_by_pipeline.get(pipelines.SARVAM, 0) * (
+            cost_settings.sarvam_cost_per_minute_minor - cost_settings.cost_per_minute_minor)
     margin = mrr - cogs
     margin_pct = (margin / mrr * 100) if mrr else 0.0
 
@@ -791,7 +931,20 @@ async def _usage_analytics_out(db: AsyncSession, *, org_id: UUID | None) -> Usag
         estimated_cogs_minor_30d=cogs,
         estimated_gross_margin_minor=margin,
         estimated_margin_percent=round(margin_pct, 2),
+        minutes_by_pipeline=minutes_by_pipeline,
+        sarvam_cost_per_minute_minor=cost_settings.sarvam_cost_per_minute_minor,
     )
+
+
+async def _minutes_by_pipeline_30d(db: AsyncSession, *, org_id: UUID | None) -> dict[str, int]:
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    engine = func.coalesce(Call.pipeline, pipelines.STANDARD)
+    q = (select(engine, func.sum(func.ceil(Call.duration_seconds / 60.0)))
+         .where(Call.status == CallStatus.COMPLETED, Call.created_at >= since)
+         .group_by(engine))
+    if org_id is not None:
+        q = q.where(Call.org_id == org_id)
+    return {e: int(m or 0) for e, m in (await db.execute(q)).all()}
 
 
 @router.get("/analytics/usage", response_model=UsageAnalyticsOut)
