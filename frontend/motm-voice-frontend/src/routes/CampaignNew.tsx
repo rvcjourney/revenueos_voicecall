@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { LANGUAGES, languageLabel, usesSarvamVoice } from "@/lib/languages";
-import { voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import { languageLabel, usesSarvamVoice } from "@/lib/languages";
+import { engineLabel, voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import { EngineSelect, IndicNativeVoiceSelect, useEngineLanguages } from "@/components/shared/EngineFields";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAccessBadge } from "@/components/shared/StatusBadge";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -18,6 +19,7 @@ import {
   useAgents,
   useCampaignContacts,
   useClonedVoices,
+  useEngines,
   useCompanyProfile,
   useCreateCampaign,
   useFolders,
@@ -29,7 +31,7 @@ import {
 } from "@/lib/hooks";
 import { apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { CampaignGoal } from "@/lib/types";
+import type { CampaignGoal, Pipeline } from "@/lib/types";
 
 const STEPS = ["Campaign & Agent", "Contacts", "Schedule", "Review & Launch"];
 // Prime Calling adds a Preview step: see one contact's AI-personalised prompt before launch
@@ -61,6 +63,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
     pitch_structure: "",   // Prime only: replaces the agent template's system prompt
     language: "",          // "" = use the agent's own language
     voice_id: "",           // "" = use the agent's own voice
+    pipeline: null as Pipeline | null,  // null = the agent's own calling engine
     sip_trunk_id: "",
     calling_window_start: "10:00",
     calling_window_end: "18:00",
@@ -74,7 +77,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
   const folders = useFolders();
   const agents = useAgents();
   const clonedVoices = useClonedVoices();
-  const readyClonedVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready");
+  const readyClonedVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.engine !== "sarvam");
   const trunks = useMyTrunks();
   const createCampaign = useCreateCampaign();
   const updateCampaign = useUpdateCampaign();
@@ -86,6 +89,18 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  const engines = useEngines();
+  const agentForEngine = (agents.data ?? []).find((a) => a.id === form.agent_template_id);
+  const effectivePipeline: Pipeline =
+    form.pipeline ?? (prime ? engines.data?.default_pipeline : agentForEngine?.pipeline) ?? "standard";
+  const engineLanguages = useEngineLanguages(effectivePipeline);
+
+  function changeEngine(next: Pipeline | null) {
+    // A voice picked for one engine never works on the other — reset it.
+    setForm((f) => ({ ...f, pipeline: next, voice_id: "" }));
+    toast.info(`Calling engine: ${engineLabel(next ?? agentForEngine?.pipeline)} — voice reset.`);
   }
 
   async function handleStep1Submit() {
@@ -121,6 +136,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
         sip_trunk_id: form.sip_trunk_id || undefined,
         language: form.language || undefined,
         voice_id: form.voice_id || undefined,
+        pipeline: form.pipeline ?? (prime ? effectivePipeline : undefined),
         is_prime: prime,
       });
       setCampaignId(res.data.id);
@@ -313,6 +329,19 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                 </div>
               )}
 
+              <EngineSelect value={prime ? effectivePipeline : form.pipeline} onChange={changeEngine} allowInherit={!prime} />
+
+              {effectivePipeline === "sarvam" ? (
+                <div className="space-y-1.5">
+                  <Label>Voice for this campaign</Label>
+                  <IndicNativeVoiceSelect
+                    language={form.language || agentForEngine?.language || "hinglish"}
+                    value={form.voice_id}
+                    onChange={(v) => update("voice_id", v)}
+                    placeholder="Default voice for this language"
+                  />
+                </div>
+              ) : (
               <div className="space-y-1.5">
                 <Label>Voice for this campaign</Label>
                 <Select value={form.voice_id || "agent"} onValueChange={(v) => update("voice_id", v === "agent" ? "" : v)}>
@@ -338,10 +367,17 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                   )}
                 </p>
               </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label>Language for this campaign</Label>
-                <Select value={form.language || "agent"} onValueChange={(v) => update("language", v === "agent" ? "" : v)}>
+                <Select
+                  value={form.language || "agent"}
+                  onValueChange={(v) => {
+                    update("language", v === "agent" ? "" : v);
+                    if (effectivePipeline === "sarvam") update("voice_id", "");  // voices are per language here
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder={prime ? "Use the default language (Hinglish)" : "Use the agent's own language"} />
                   </SelectTrigger>
@@ -351,7 +387,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                         ? `Use the agent's own language (${languageLabel(selectedAgent.language)})`
                         : prime ? "Use the default language (Hinglish)" : "Use the agent's own language"}
                     </SelectItem>
-                    {LANGUAGES.map((l) => (
+                    {engineLanguages.map((l) => (
                       <SelectItem key={l.value} value={l.value}>
                         {l.label} · {l.native}
                       </SelectItem>
@@ -359,7 +395,7 @@ export default function CampaignNew({ prime = false }: { prime?: boolean }) {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {usesSarvamVoice(form.language)
+                  {effectivePipeline === "standard" && usesSarvamVoice(form.language)
                     ? `The call is spoken in ${languageLabel(form.language)} using an Indian-language voice, since ${selectedAgent ? voiceProviderLabel(selectedAgent.voice_provider) : "the default"}'s voices only cover Hindi and Indian English.`
                     : "The agent speaks this language for the whole call. If the customer asks it to switch to another language on this list, it switches mid-call."}
                 </p>

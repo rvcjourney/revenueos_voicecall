@@ -173,7 +173,15 @@ async def create_campaign(
                 errors=[],
             )
 
-    if body.voice_id:
+    from app.core import pipelines as _pl
+    from app.models.agent import AgentTemplate as _Tmpl
+    _tmpl = await db.get(_Tmpl, body.agent_template_id) if body.agent_template_id else None
+    _engine = body.pipeline or (_tmpl.pipeline if _tmpl else _pl.STANDARD)
+    # On the Indic Native engine a campaign may also pick a stock voice for its
+    # language (checked by the validation matrix below); on standard it's
+    # cloned voices only, exactly as before.
+    _stock_ok = _engine == _pl.SARVAM and body.voice_id in _pl.all_sarvam_stock_voice_ids()
+    if body.voice_id and not _stock_ok:
         # Unlike AgentTemplate.voice_id (which may be a stock ElevenLabs voice,
         # never checked against ClonedVoice), this field exists specifically to
         # pick one of the org's OWN cloned voices directly -- so require it to
@@ -534,6 +542,7 @@ async def launch_campaign(
         )
 
     campaign.status = CampaignStatus.RUNNING
+    campaign.pause_reason = None  # the dispatcher re-pauses it if the engine is still off
     campaign.started_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(campaign)

@@ -17,6 +17,9 @@ import type {
   CampaignFolder,
   CheckoutResponse,
   ClonedVoice,
+  EnginesResponse,
+  LanguageOption,
+  Pipeline,
   CompanyProfile,
   CompanyProfileInput,
   ConcurrencyUsage,
@@ -209,6 +212,7 @@ export const agentsApi = {
       llm_provider?: string;
       llm_model?: string;
       tts_model?: string;
+      pipeline?: Pipeline;
     }
   ) => api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, ...overrides }),
   tryNow: (phone_number: string) =>
@@ -315,6 +319,10 @@ export const callsApi = {
 // ── Analytics & usage ────────────────────────────────────────────────────
 export const analyticsApi = {
   dashboard: () => api.get<DashboardStats>("/api/analytics/dashboard"),
+  engines: () =>
+    api.get<{ items: { engine: Pipeline; label: string; calls: number; answer_rate: number; interested_rate: number; avg_duration_seconds: number }[] }>(
+      "/api/analytics/engines"
+    ),
 };
 
 export const usageApi = {
@@ -344,9 +352,11 @@ export const billingApi = {
 // ── Voice cloning ────────────────────────────────────────────────────────
 export const voiceCloningApi = {
   list: () => api.get<ListResponse<ClonedVoice> | ClonedVoice[]>("/api/voice-cloning"),
-  create: (data: { name: string; file: File; consentVideo: File }) => {
+  create: (data: { name: string; file: File; consentVideo: File; engine?: Pipeline; language?: string }) => {
     const form = new FormData();
     form.append("name", data.name);
+    if (data.engine) form.append("engine", data.engine);
+    if (data.language) form.append("language", data.language);
     form.append("file", data.file);
     form.append("consent_video", data.consentVideo);
     return api.post<ClonedVoice>("/api/voice-cloning", form, {
@@ -354,6 +364,13 @@ export const voiceCloningApi = {
     });
   },
   remove: (id: string) => api.delete(`/api/voice-cloning/${id}`),
+};
+
+// ── Calling engines + the languages/voices valid on each (server registry) ──
+export const languagesApi = {
+  engines: () => api.get<EnginesResponse>("/api/languages/engines"),
+  list: (pipeline: Pipeline) =>
+    api.get<{ pipeline: Pipeline; languages: LanguageOption[] }>("/api/languages", { params: { pipeline } }),
 };
 
 // ── SIP trunks / phone numbers ───────────────────────────────────────────

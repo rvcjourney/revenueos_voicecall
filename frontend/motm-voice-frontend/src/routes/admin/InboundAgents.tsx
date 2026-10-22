@@ -15,6 +15,7 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useClonedVoices,
+  useEngines,
   useCreateInboundAgent,
   useDeleteInboundAgent,
   useInboundAgents,
@@ -22,8 +23,9 @@ import {
 } from "@/lib/hooks";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
-import type { InboundAgent, InboundAgentCreate } from "@/lib/types";
-import { voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import type { InboundAgent, InboundAgentCreate, Pipeline } from "@/lib/types";
+import { engineLabel, voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import { EngineSelect, IndicNativeVoiceSelect, engineSwitchPatch, useEngineLanguages } from "@/components/shared/EngineFields";
 
 const VOICE_PROVIDERS = ["elevenlabs", "cartesia", "sarvam", "chatterbox"];
 const LLM_MODELS = ["qwen/qwen3.6-27b"];
@@ -159,6 +161,18 @@ function InboundAgentEditorDialog({
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  const engines = useEngines();
+  const pipeline: Pipeline = form.pipeline ?? engines.data?.default_pipeline ?? "standard";
+  const sarvamLanguages = useEngineLanguages("sarvam");
+
+  function changeEngine(next: Pipeline | null) {
+    const p = next ?? "standard";
+    if (p === pipeline) return;
+    // A voice from one engine never works on the other — reset it.
+    setForm((f) => ({ ...f, ...engineSwitchPatch(p) }));
+    toast.info(`Switched to ${engineLabel(p)} — pick a voice for it.`);
+  }
+
   async function handleOptimize() {
     if (!form.system_prompt?.trim()) {
       toast.error("Write a rough prompt first, then optimize it");
@@ -182,11 +196,15 @@ function InboundAgentEditorDialog({
       return;
     }
     try {
+      if (pipeline === "sarvam" && !form.voice_id) {
+        toast.error("Choose a voice");
+        return;
+      }
       if (agent) {
-        await updateAgent.mutateAsync({ id: agent.id, data: form });
+        await updateAgent.mutateAsync({ id: agent.id, data: { ...form, pipeline } });
         toast.success("Inbound agent updated");
       } else {
-        await createAgent.mutateAsync(form);
+        await createAgent.mutateAsync({ ...form, pipeline });
         toast.success("Inbound agent created");
       }
       onOpenChange(false);
@@ -211,9 +229,21 @@ function InboundAgentEditorDialog({
             </div>
             <div className="space-y-1.5">
               <Label>Language</Label>
-              <Input value={form.language} onChange={(e) => update("language", e.target.value)} placeholder="hinglish" />
+              {pipeline === "sarvam" ? (
+                <Select value={form.language} onValueChange={(v) => { update("language", v); update("voice_id", ""); }}>
+                  <SelectTrigger><SelectValue placeholder="Choose a language" /></SelectTrigger>
+                  <SelectContent>
+                    {sarvamLanguages.map((l) => (
+                      <SelectItem key={l.value} value={l.value}>{l.label} · {l.native}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={form.language} onChange={(e) => update("language", e.target.value)} placeholder="hinglish" />
+              )}
             </div>
           </div>
+          <EngineSelect value={pipeline} onChange={changeEngine} />
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Input value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What is this inbound agent for?" />
@@ -232,6 +262,17 @@ function InboundAgentEditorDialog({
             </div>
             <Textarea value={form.system_prompt} onChange={(e) => update("system_prompt", e.target.value)} rows={6} placeholder="Describe how the agent should handle inbound calls..." />
           </div>
+          {pipeline === "sarvam" ? (
+            <div className="space-y-1.5">
+              <Label>Voice</Label>
+              <IndicNativeVoiceSelect
+                language={form.language ?? "hinglish"}
+                value={form.voice_id ?? ""}
+                onChange={(v) => update("voice_id", v)}
+              />
+            </div>
+          ) : (
+          <>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Voice provider</Label>
@@ -253,7 +294,10 @@ function InboundAgentEditorDialog({
             voiceProvider={form.voice_provider}
             onSelectVoice={(voiceId) => update("voice_id", voiceId)}
           />
+          </>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
+            {pipeline === "standard" && (
             <div className="space-y-1.5">
               <Label>LLM model</Label>
               <Select value={form.llm_model} onValueChange={(v) => update("llm_model", v)}>
@@ -265,6 +309,7 @@ function InboundAgentEditorDialog({
                 </SelectContent>
               </Select>
             </div>
+            )}
             <div className="space-y-1.5">
               <Label>Max call duration (seconds)</Label>
               <Input type="number" value={form.max_call_duration_seconds} onChange={(e) => update("max_call_duration_seconds", Number(e.target.value))} />
@@ -303,7 +348,7 @@ function ClonedVoicesSection({
   onSelectVoice: (voiceId: string) => void;
 }) {
   const clonedVoices = useClonedVoices();
-  const readyVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready");
+  const readyVoices = (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.engine !== "sarvam");
 
   if (voiceProvider !== "elevenlabs") return null;
 
@@ -346,5 +391,6 @@ function toFormValues(agent: InboundAgent): InboundAgentCreate {
     llm_model: agent.llm_model,
     llm_temperature: agent.llm_temperature,
     max_call_duration_seconds: agent.max_call_duration_seconds,
+    pipeline: agent.pipeline,
   };
 }

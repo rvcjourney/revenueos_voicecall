@@ -23,6 +23,16 @@ export function voiceProviderLabel(value?: string | null): string {
   return VOICE_PROVIDER_LABELS[value] ?? value;
 }
 
+// Calling engines: the API says "standard" | "sarvam"; customers see these.
+const ENGINE_LABELS: Record<string, string> = {
+  standard: "Standard",
+  sarvam: "Indic Native",
+};
+
+export function engineLabel(value?: string | null): string {
+  return ENGINE_LABELS[value || "standard"] ?? "Standard";
+}
+
 export function llmModelLabel(value?: string | null): string {
   if (!value) return "";
   return LLM_MODEL_LABELS[value] ?? value;

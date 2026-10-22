@@ -199,6 +199,10 @@ def sarvam_voices(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
     return voices
 
 
+def all_sarvam_stock_voice_ids() -> set[str]:
+    return {i for i, _ in V3_VOICES} | {v.id for lang in LANGUAGES.values() for v in lang.v4_voices}
+
+
 def default_sarvam_voice(language: str, settings: OwnerSettings, gender: str | None = None) -> str:
     voices = sarvam_voices(language, settings)
     for v in voices:

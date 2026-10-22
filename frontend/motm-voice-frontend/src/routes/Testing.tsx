@@ -9,9 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
-import { LANGUAGES } from "@/lib/languages";
 import { SARVAM_VOICES, ELEVENLABS_VOICES, BULBUL_V4_FLASH_VOICES } from "@/lib/voiceCatalog";
-import { useAgents, useMyTrunks } from "@/lib/hooks";
+import { useAgents, useEngines, useMyTrunks } from "@/lib/hooks";
+import { engineLabel } from "@/lib/providerLabels";
+import { IndicNativeVoiceSelect, useEngineLanguages } from "@/components/shared/EngineFields";
+import type { Pipeline } from "@/lib/types";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 
 // Real, working model names confirmed against the installed livekit-plugins-sarvam
@@ -40,6 +42,13 @@ export default function Testing() {
   const [llmProvider, setLlmProvider] = useState(""); // "" = groq (the agent's own)
   const [llmModel, setLlmModel] = useState("");
 
+  // Presets set the whole combination: "standard" keeps the free-form mix below;
+  // "sarvam" (Indic Native) runs as one fixed engine — only language + voice change.
+  const engines = useEngines();
+  const hasIndicNative = (engines.data?.engines.length ?? 0) > 1;
+  const [preset, setPreset] = useState<Pipeline>("standard");
+  const presetLanguages = useEngineLanguages(preset);
+
   const [loading, setLoading] = useState(false);
   const [lastCallId, setLastCallId] = useState<string | null>(null);
 
@@ -67,7 +76,13 @@ export default function Testing() {
     setLoading(true);
     setLastCallId(null);
     try {
-      const res = await agentsApi.testCall(agentId, phone, {
+      const res = await agentsApi.testCall(agentId, phone, preset === "sarvam" ? {
+        trunk_id: selectedTrunk?.id,
+        pipeline: "sarvam",
+        language: language || undefined,
+        voice_id: voiceId || undefined,
+      } : {
+        pipeline: hasIndicNative ? "standard" : undefined,
         trunk_id: selectedTrunk?.id,
         language: language || undefined,
         voice_provider: ttsProvider || undefined,
@@ -110,19 +125,49 @@ export default function Testing() {
             )}
           </div>
 
+          {hasIndicNative && (
+            <div className="space-y-1.5">
+              <Label>Preset</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {(["standard", "sarvam"] as Pipeline[]).map((p) => (
+                  <Button
+                    key={p}
+                    type="button"
+                    variant={preset === p ? "default" : "outline"}
+                    onClick={() => { setPreset(p); setLanguage(""); setVoiceId(""); setTtsProvider(""); setTtsModel(""); setSttModel(""); setLlmProvider(""); setLlmModel(""); }}
+                  >
+                    {engineLabel(p)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label>Language</Label>
             <Select value={language || "agent"} onValueChange={(v) => { setLanguage(v === "agent" ? "" : v); setVoiceId(""); }}>
               <SelectTrigger><SelectValue placeholder="Use the agent's own language" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="agent">Use the agent's own language</SelectItem>
-                {LANGUAGES.map((l) => (
+                {presetLanguages.map((l) => (
                   <SelectItem key={l.value} value={l.value}>{l.label} · {l.native}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
+          {preset === "sarvam" ? (
+            <div className="space-y-1.5">
+              <Label>Voice</Label>
+              <IndicNativeVoiceSelect
+                language={language || usableAgents.find((a) => a.id === agentId)?.language || "hinglish"}
+                value={voiceId}
+                onChange={setVoiceId}
+                placeholder="Default voice for this language"
+              />
+            </div>
+          ) : (
+          <>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>TTS provider</Label>
@@ -217,6 +262,9 @@ export default function Testing() {
               )}
             </div>
           </div>
+
+          </>
+          )}
 
           <div className="space-y-1.5">
             <Label>From</Label>

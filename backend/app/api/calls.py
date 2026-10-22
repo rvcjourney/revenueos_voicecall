@@ -63,6 +63,8 @@ def _to_out(c: Call) -> CallOut:
         cost_inr=float(c.cost_inr) if c.cost_inr else None,
         summary=c.summary,
         recording_url=c.recording_url,
+        pipeline=c.pipeline or "standard",
+        pipeline_fallback=bool(c.pipeline_fallback),
         created_at=c.created_at,
     )
 

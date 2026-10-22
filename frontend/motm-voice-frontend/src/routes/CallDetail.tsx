@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { CallOutcomeBadge, CallStatusBadge, SentimentBadge } from "@/components/shared/StatusBadge";
 import { useCall, useFetchRecording } from "@/lib/hooks";
 import { api, apiErrorMessage } from "@/lib/api";
+import { engineLabel } from "@/lib/providerLabels";
 import { callDurationSeconds, cn, formatDateTime, formatDuration, titleCase } from "@/lib/utils";
 
 export default function CallDetail() {
@@ -110,6 +111,8 @@ export default function CallDetail() {
           <p className="text-sm text-muted-foreground">
             {formatDateTime(c.started_at)} · {formatDuration(callDurationSeconds(c))}
             {c.cost_inr != null && ` · ₹${c.cost_inr.toFixed(2)}`}
+            {c.pipeline === "sarvam" && ` · ${engineLabel(c.pipeline)}`}
+            {c.pipeline_fallback && " · ran on Standard (Indic Native was unavailable)"}
           </p>
         </div>
       </div>

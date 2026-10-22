@@ -74,6 +74,35 @@ export interface LoginResponse {
   user: User;
 }
 
+// Calling engine ("Standard" / "Indic Native" to customers — see engineLabel()).
+export type Pipeline = "standard" | "sarvam";
+
+export interface EngineOption {
+  value: Pipeline;
+  label: string;
+}
+
+export interface EnginesResponse {
+  engines: EngineOption[];
+  default_pipeline: Pipeline;
+  cloning_allowed: boolean;
+}
+
+export interface EngineVoice {
+  id: string;
+  name: string;
+  gender: "male" | "female";
+}
+
+// One entry of GET /api/languages?pipeline=… (voices only for the "sarvam" engine).
+export interface LanguageOption {
+  value: string;
+  label: string;
+  native: string;
+  cloned_voices: boolean;
+  voices?: EngineVoice[];
+}
+
 export interface AgentTemplate {
   id: string;
   name: string;
@@ -86,6 +115,7 @@ export interface AgentTemplate {
   llm_model: string;
   llm_temperature: number;
   max_call_duration_seconds: number;
+  pipeline: Pipeline;
   created_at: string;
   access_status: AgentAccessStatus;
   access_request_id: string | null;
@@ -103,6 +133,7 @@ export interface AgentCreate {
   llm_model?: string;
   llm_temperature?: number;
   max_call_duration_seconds?: number;
+  pipeline?: Pipeline;
 }
 
 // ── Inbound agents (answer calls arriving on a number, kept separate from
@@ -119,6 +150,7 @@ export interface InboundAgent {
   llm_model: string;
   llm_temperature: number;
   max_call_duration_seconds: number;
+  pipeline: Pipeline;
   created_at: string;
 }
 
@@ -133,6 +165,7 @@ export interface InboundAgentCreate {
   llm_model?: string;
   llm_temperature?: number;
   max_call_duration_seconds?: number;
+  pipeline?: Pipeline;
 }
 
 export interface CampaignFolder {
@@ -173,6 +206,8 @@ export interface Campaign {
   language?: string | null;
   voice_id?: string | null;
   pitch_structure?: string | null;
+  pipeline?: Pipeline | null;
+  pause_reason?: string | null;
 }
 
 export interface CampaignCreate {
@@ -200,6 +235,8 @@ export interface CampaignCreate {
   voice_id?: string;
   /** Prime only: this campaign's own pitch structure, used instead of an agent template's system prompt. */
   pitch_structure?: string;
+  /** Calling engine for this campaign. Omit to use the agent's own. */
+  pipeline?: Pipeline;
 }
 
 export interface CampaignContact {
@@ -268,6 +305,8 @@ export interface Call {
   cost_inr: number | null;
   summary: string | null;
   recording_url: string | null;
+  pipeline?: Pipeline | null;
+  pipeline_fallback?: boolean;
   created_at: string;
 }
 
@@ -360,6 +399,8 @@ export interface ClonedVoice {
   elevenlabs_voice_id: string | null;
   status: "ready" | "failed" | "pending" | "rejected";
   rejection_reason?: string | null;
+  engine?: Pipeline;
+  language?: string | null;
   created_at: string;
 }
 

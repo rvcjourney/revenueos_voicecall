@@ -10,6 +10,7 @@ import {
   companyProfileApi,
   foldersApi,
   inboundAgentsApi,
+  languagesApi,
   plansApi,
   promptLibraryApi,
   sipTrunksApi,
@@ -17,7 +18,7 @@ import {
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, BillingAddress, CampaignCreate, CompanyProfileInput, InboundAgentCreate, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
+import type { AgentCreate, BillingAddress, CampaignCreate, CompanyProfileInput, InboundAgentCreate, Pipeline, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -417,6 +418,29 @@ export function useDeleteInboundAgent() {
 }
 
 // ── Voice cloning ────────────────────────────────────────────────────────
+export function useEngineComparison() {
+  return useQuery({
+    queryKey: ["analytics", "engines"],
+    queryFn: () => analyticsApi.engines().then((r) => r.data.items),
+  });
+}
+
+export function useEngines() {
+  return useQuery({
+    queryKey: ["engines"],
+    queryFn: () => languagesApi.engines().then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+export function useLanguages(pipeline: Pipeline) {
+  return useQuery({
+    queryKey: ["languages", pipeline],
+    queryFn: () => languagesApi.list(pipeline).then((r) => r.data.languages),
+    staleTime: 60_000,
+  });
+}
+
 export function useClonedVoices() {
   return useQuery({
     queryKey: ["cloned-voices"],
@@ -427,7 +451,8 @@ export function useClonedVoices() {
 export function useCreateClonedVoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; file: File; consentVideo: File }) => voiceCloningApi.create(data),
+    mutationFn: (data: { name: string; file: File; consentVideo: File; engine?: Pipeline; language?: string }) =>
+      voiceCloningApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cloned-voices"] }),
   });
 }

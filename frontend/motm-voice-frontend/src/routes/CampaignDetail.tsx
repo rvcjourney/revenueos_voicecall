@@ -151,6 +151,13 @@ export default function CampaignDetail() {
         <ArrowLeft className="h-4 w-4" /> Back to campaigns
       </Button>
 
+      {c.status === "paused" && c.pause_reason === "indic_native_unavailable" && (
+        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+          Indic Native is temporarily unavailable, so this campaign is paused. Its cloned voice only works on
+          Indic Native — resume it once Indic Native is back.
+        </div>
+      )}
+
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div className="space-y-2">
           <div className="flex items-center gap-3">

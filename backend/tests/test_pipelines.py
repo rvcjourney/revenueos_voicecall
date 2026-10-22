@@ -236,3 +236,34 @@ async def test_test_call_on_indic_native_rejects_free_form_overrides(client, db)
                           json={"phone_number": "+919876543210", "llm_provider": "groq"}, headers=h)
     assert r.status_code == 422
     assert "groq" not in r.text.lower() and "sarvam" not in r.text.lower()
+
+
+async def test_engine_comparison_and_call_engine_label(client, db):
+    from datetime import datetime, timezone
+    from app.models.call import Call, CallDirection, CallStatus
+    org, h = await _org_admin(db, sarvam=True)
+    now = datetime.now(timezone.utc)
+    for i, (pipe, answered, outcome) in enumerate([(None, True, "interested"), ("standard", False, "no_answer"),
+                                                   ("sarvam", True, "interested"), ("sarvam", True, "not_interested")]):
+        db.add(Call(org_id=org.id, livekit_room_name=f"r-{uuid.uuid4().hex}", phone_number="+919999999999",
+                    direction=CallDirection.OUTBOUND, status=CallStatus.COMPLETED, outcome=outcome,
+                    pipeline=pipe, answered_at=now if answered else None, duration_seconds=60))
+    await db.commit()
+    items = (await client.get("/api/analytics/engines", headers=h)).json()["items"]
+    assert [(i["label"], i["calls"], i["answer_rate"], i["interested_rate"]) for i in items] == [
+        ("Standard", 2, 0.5, 1.0), ("Indic Native", 2, 1.0, 0.5)]
+    calls = (await client.get("/api/calls", headers=h)).json()["items"]
+    assert {c["pipeline"] for c in calls} == {"standard", "sarvam"}
+
+
+async def test_campaign_stock_voice_only_on_indic_native(client, db):
+    org, h = await _org_admin(db, sarvam=True)
+    tmpl = AgentTemplate(org_id=org.id, name="T", language="hindi")  # standard agent
+    db.add(tmpl)
+    await db.commit()
+    ok = await client.post("/api/campaigns", json={"name": "C", "agent_template_id": str(tmpl.id), "pipeline": "sarvam",
+                                                   "language": "hindi", "voice_id": "ritu_hi_conversation"}, headers=h)
+    assert ok.status_code == 201, ok.text
+    bad = await client.post("/api/campaigns", json={"name": "D", "agent_template_id": str(tmpl.id),
+                                                    "voice_id": "ritu_hi_conversation"}, headers=h)
+    assert bad.status_code == 422

@@ -27,6 +27,8 @@ class CallOut(BaseModel):
     cost_inr: float | None
     summary: str | None
     recording_url: str | None
+    pipeline: str | None = None  # calling engine (NULL = before engines existed = standard)
+    pipeline_fallback: bool = False
     created_at: datetime
 
 

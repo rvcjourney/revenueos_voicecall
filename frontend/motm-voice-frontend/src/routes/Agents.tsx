@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LANGUAGES, usesSarvamVoice } from "@/lib/languages";
+import { usesSarvamVoice } from "@/lib/languages";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +44,7 @@ import { useAuth } from "@/lib/auth";
 import {
   useAgents,
   useClonedVoices,
+  useEngines,
   useCreateAgent,
   useDeleteAgent,
   useRequestAgentAccess,
@@ -52,8 +53,9 @@ import {
 } from "@/lib/hooks";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
-import type { AgentCreate, AgentTemplate } from "@/lib/types";
-import { voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import type { AgentCreate, AgentTemplate, Pipeline } from "@/lib/types";
+import { engineLabel, voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
+import { EngineSelect, IndicNativeVoiceSelect, engineSwitchPatch, useEngineLanguages } from "@/components/shared/EngineFields";
 import { SARVAM_VOICES, ELEVENLABS_VOICES } from "@/lib/voiceCatalog";
 
 const VOICE_PROVIDERS = ["elevenlabs", "sarvam"];
@@ -283,7 +285,7 @@ function AgentEditorDialog({
   // ever one place that can set voice_id, never two controls disagreeing
   // about what's actually selected.
   const readyClonedVoices = isAdmin
-    ? (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.elevenlabs_voice_id)
+    ? (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.elevenlabs_voice_id && v.engine !== "sarvam")
     : [];
 
   // Whether the Voice field shows the cloned-voice picker or the regular
@@ -316,6 +318,20 @@ function AgentEditorDialog({
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  const engines = useEngines();
+  const pipeline: Pipeline = form.pipeline ?? engines.data?.default_pipeline ?? "standard";
+  const engineLanguages = useEngineLanguages(pipeline);
+
+  function changeEngine(next: Pipeline | null) {
+    const p = next ?? "standard";
+    if (p === pipeline) return;
+    // A voice from one engine never works on the other — reset it (and the
+    // language, if the new engine doesn't offer it) rather than fail on save.
+    setForm((f) => ({ ...f, ...engineSwitchPatch(p) }));
+    setUseClonedVoice(false);
+    toast.info(`Switched to ${engineLabel(p)} — pick a voice for it.`);
+  }
+
   async function handleOptimize() {
     if (!form.system_prompt?.trim()) {
       toast.error("Write a rough prompt first, then optimize it");
@@ -339,11 +355,15 @@ function AgentEditorDialog({
       return;
     }
     try {
+      if (pipeline === "sarvam" && !form.voice_id) {
+        toast.error("Choose a voice");
+        return;
+      }
       if (agent) {
-        await updateAgent.mutateAsync({ id: agent.id, data: form });
+        await updateAgent.mutateAsync({ id: agent.id, data: { ...form, pipeline } });
         toast.success("Agent updated");
       } else {
-        await createAgent.mutateAsync(form);
+        await createAgent.mutateAsync({ ...form, pipeline });
         toast.success("Agent created");
       }
       onOpenChange(false);
@@ -378,15 +398,21 @@ function AgentEditorDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>Language</Label>
-                <Select value={form.language} onValueChange={(v) => update("language", v)}>
+                <Select
+                  value={form.language}
+                  onValueChange={(v) => {
+                    update("language", v);
+                    if (pipeline === "sarvam") update("voice_id", "");  // voices are per language here
+                  }}
+                >
                   <SelectTrigger><SelectValue placeholder="Choose a language" /></SelectTrigger>
                   <SelectContent>
-                    {LANGUAGES.map((l) => (
+                    {engineLanguages.map((l) => (
                       <SelectItem key={l.value} value={l.value}>{l.label} · {l.native}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {usesSarvamVoice(form.language) && (
+                {pipeline === "standard" && usesSarvamVoice(form.language) && (
                   <p className="text-xs text-muted-foreground">
                     Spoken by an Indian-language voice — the voice chosen below only applies to Hindi,
                     Hinglish and English agents.
@@ -395,6 +421,7 @@ function AgentEditorDialog({
               </div>
             </div>
           )}
+          <EngineSelect value={pipeline} onChange={changeEngine} />
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Input value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What is this agent for?" />
@@ -413,6 +440,17 @@ function AgentEditorDialog({
             </div>
             <Textarea value={form.system_prompt} onChange={(e) => update("system_prompt", e.target.value)} rows={6} placeholder="Describe how the agent should behave, what to pitch, objection handling..." />
           </div>
+          {pipeline === "sarvam" ? (
+            <div className="space-y-1.5">
+              <Label>Voice</Label>
+              <IndicNativeVoiceSelect
+                language={form.language ?? "hinglish"}
+                value={form.voice_id ?? ""}
+                onChange={(v) => update("voice_id", v)}
+                includeCloned={isAdmin}
+              />
+            </div>
+          ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Voice provider</Label>
@@ -523,7 +561,9 @@ function AgentEditorDialog({
               )}
             </div>
           </div>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
+            {pipeline === "standard" && (
             <div className="space-y-1.5">
               <Label>LLM model</Label>
               <Select value={form.llm_model} onValueChange={(v) => update("llm_model", v)}>
@@ -535,6 +575,7 @@ function AgentEditorDialog({
                 </SelectContent>
               </Select>
             </div>
+            )}
             <div className="space-y-1.5">
               <Label>Max call duration (seconds)</Label>
               <Input type="number" value={form.max_call_duration_seconds} onChange={(e) => update("max_call_duration_seconds", Number(e.target.value))} />
@@ -577,6 +618,7 @@ function toFormValues(agent: AgentTemplate): AgentCreate {
     llm_model: agent.llm_model,
     llm_temperature: agent.llm_temperature,
     max_call_duration_seconds: agent.max_call_duration_seconds,
+    pipeline: agent.pipeline,
   };
 }
 
