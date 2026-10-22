@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.config import settings
+from app.core import pipelines, sarvam_voice
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.elevenlabs_voice import MAX_SAMPLE_BYTES, delete_voice
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
@@ -36,6 +37,7 @@ from app.core.plan_features import (
 from app.database import get_db
 from app.models.agent import VoiceProvider
 from app.models.cloned_voice import ClonedVoice
+from app.models.user import Organization
 from app.models.voice_clone_request import VoiceCloneRequest
 from app.schemas.voice_cloning import ClonedVoiceListResponse, ClonedVoiceOut
 from app.storage.backend import get_storage
@@ -55,6 +57,8 @@ def _voice_out(v: ClonedVoice) -> ClonedVoiceOut:
         name=v.name,
         elevenlabs_voice_id=v.elevenlabs_voice_id,
         status=v.status,
+        engine=v.provider if v.provider == pipelines.SARVAM else pipelines.STANDARD,
+        language=v.language,
         created_at=v.created_at,
     )
 
@@ -66,6 +70,8 @@ def _request_out(r: VoiceCloneRequest) -> ClonedVoiceOut:
         elevenlabs_voice_id=None,
         status=r.status,
         rejection_reason=r.rejection_reason,
+        engine=r.provider if r.provider == pipelines.SARVAM else pipelines.STANDARD,
+        language=r.language,
         created_at=r.created_at,
     )
 
@@ -102,14 +108,27 @@ async def create_voice_clone_request(
     name: str = Form(...),
     file: UploadFile = File(...),
     consent_video: UploadFile = File(...),
+    # Which calling engine the voice is for: "standard" (default) or "sarvam"
+    # ("Indic Native" to customers); language = the language spoken in the sample.
+    engine: str = Form(pipelines.STANDARD),
+    language: str | None = Form(None),
     token: TokenPayload = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Submit a voice sample + consent video for superadmin review. Does not
-    call ElevenLabs — that only happens once the request is approved."""
+    call any voice provider — that only happens once the request is approved."""
     if not await is_voice_cloning_allowed(db, token.org_id):
         raise PermissionDeniedError("Your plan does not include voice cloning. Upgrade to Premium to use this feature.")
-    if not await is_voice_provider_allowed(db, token.org_id, VoiceProvider.ELEVENLABS):
+    if engine == pipelines.SARVAM:
+        org = await db.get(Organization, token.org_id)
+        if not (org and org.sarvam_pipeline_enabled and org.sarvam_cloning_allowed):
+            raise PermissionDeniedError(f"{pipelines.PIPELINE_LABELS[pipelines.SARVAM]} voice cloning isn't enabled for your account.")
+        lang = pipelines.LANGUAGES.get(language or "")
+        if lang is None or not lang.clone_supported:
+            raise HTTPException(status_code=422, detail="Choose the language spoken in the voice sample.")
+    elif engine != pipelines.STANDARD:
+        raise HTTPException(status_code=422, detail="Unknown calling engine.")
+    elif not await is_voice_provider_allowed(db, token.org_id, VoiceProvider.ELEVENLABS):
         raise PermissionDeniedError("Voice cloning is currently disabled for your organization.")
     if not await has_voice_clone_capacity(db, token.org_id):
         raise ConflictError(
@@ -156,6 +175,8 @@ async def create_voice_clone_request(
         org_id=token.org_id,
         created_by_id=token.user_id,
         name=name,
+        provider=pipelines.SARVAM if engine == pipelines.SARVAM else "elevenlabs",
+        language=language if engine == pipelines.SARVAM else None,
         audio_sample_key=audio_key,
         audio_sample_file_name=file.filename or "",
         audio_sample_content_type=file.content_type or "audio/mpeg",
@@ -180,6 +201,9 @@ async def delete_cloned_voice(
         cloned.deleted_at = datetime.now(timezone.utc)
         await db.commit()
 
+        if cloned.provider == pipelines.SARVAM:
+            await _delete_sarvam_voice(db, cloned)
+            return
         async with aiohttp.ClientSession() as http:
             await delete_voice(http, api_key=settings.ELEVENLABS_API_KEY, voice_id=cloned.elevenlabs_voice_id)
         return
@@ -195,3 +219,20 @@ async def delete_cloned_voice(
     await storage.delete(settings.BUCKET_VOICE_CONSENT, req.consent_video_key)
     await db.delete(req)
     await db.commit()
+
+
+async def _delete_sarvam_voice(db: AsyncSession, cloned: ClonedVoice) -> None:
+    """Remove the voice from Sarvam and its stored reference audio. The consent
+    video is kept as proof of authorization. A Sarvam failure is logged (the
+    voice is already unusable here) rather than failing the customer's delete."""
+    try:
+        await sarvam_voice.delete_voice(cloned.elevenlabs_voice_id)
+    except sarvam_voice.SarvamVoiceError as exc:
+        log.error("sarvam_voice_delete_failed", cloned_voice_id=str(cloned.id),
+                  status=exc.status, request_id=exc.request_id, error=str(exc))
+    req = await db.scalar(select(VoiceCloneRequest).where(VoiceCloneRequest.cloned_voice_id == cloned.id))
+    if req is not None:
+        try:
+            await get_storage().delete(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
+        except Exception:
+            log.exception("sarvam_reference_audio_delete_failed", cloned_voice_id=str(cloned.id))

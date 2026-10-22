@@ -11,6 +11,8 @@ class ClonedVoiceOut(BaseModel):
     elevenlabs_voice_id: str | None = None
     status: str  # "ready" | "failed" | "pending" | "rejected"
     rejection_reason: str | None = None
+    engine: str = "standard"  # calling engine the voice works on ("standard" | "sarvam")
+    language: str | None = None
     created_at: datetime
 
 

@@ -172,6 +172,8 @@ class VoiceCloneRequestOut(BaseModel):
     name: str
     audio_url: str
     video_url: str
+    provider: str = "elevenlabs"  # owner panel only: real provider name is fine here
+    language: str | None = None
     status: str  # "pending" | "approved" | "rejected"
     rejection_reason: str | None
     reviewed_at: str | None

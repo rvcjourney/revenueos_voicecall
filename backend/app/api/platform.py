@@ -27,6 +27,7 @@ from app.config import settings
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
+from app.core import pipelines, sarvam_voice
 from app.core.elevenlabs_voice import ElevenLabsVoiceError, clone_voice, get_account_usage
 from app.core.exceptions import (
     AuthenticationError,
@@ -1005,6 +1006,8 @@ async def _to_voice_clone_request_out(db: AsyncSession, req: VoiceCloneRequest) 
         name=req.name,
         audio_url=audio_url,
         video_url=video_url,
+        provider=req.provider,
+        language=req.language,
         status=req.status,
         rejection_reason=req.rejection_reason,
         reviewed_at=req.reviewed_at.isoformat() if req.reviewed_at else None,
@@ -1076,6 +1079,8 @@ async def approve_voice_clone_request(
     # kill-switch may have changed since submission (could be days earlier).
     if not await is_voice_cloning_allowed(db, req.org_id):
         raise ConflictError("This org's plan no longer allows voice cloning")
+    if req.provider == pipelines.SARVAM:
+        return await _approve_sarvam_clone(db, req, admin)
     if not await is_voice_provider_allowed(db, req.org_id, VoiceProvider.ELEVENLABS):
         raise ConflictError("Voice cloning has since been disabled for this org")
 
@@ -1119,6 +1124,77 @@ async def approve_voice_clone_request(
         audit_metadata={"cloned_voice_id": str(cloned.id), "elevenlabs_voice_id": elevenlabs_voice_id},
     ))
 
+    await db.commit()
+    await db.refresh(req)
+    return await _to_voice_clone_request_out(db, req)
+
+
+_SARVAM_RETAKE_REASON = (
+    "We couldn't create this voice from the sample. Please upload a separate 10–15 second "
+    "recording of calm, clear speech from one person, with no background noise or music."
+)
+
+
+async def _approve_sarvam_clone(db: AsyncSession, req: VoiceCloneRequest, admin: PlatformAdmin) -> VoiceCloneRequestOut:
+    """Create the Sarvam voice — only ever here, after the owner has watched the
+    consent video and listened to the sample (GET .../audio). A sample Sarvam
+    rejects as unusable goes back to the customer asking for a calm 10–15 s clip."""
+    org = await db.get(Organization, req.org_id)
+    if not (org and org.sarvam_pipeline_enabled and org.sarvam_cloning_allowed):
+        raise ConflictError("Indic Native cloning has since been disabled for this org")
+    lang = pipelines.LANGUAGES.get(req.language or "")
+    if lang is None or not lang.clone_supported:
+        raise ConflictError("Request has no supported reference language")
+
+    sample_bytes = await get_storage().download(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
+    try:
+        voice_id, reference_text = await sarvam_voice.create_voice(
+            name=req.name,
+            language=lang.clone_code,
+            sample_bytes=sample_bytes,
+            filename=req.audio_sample_file_name or "sample.wav",
+            content_type=req.audio_sample_content_type,
+        )
+    except sarvam_voice.SarvamCloningDisabled as exc:
+        raise ConflictError(str(exc))
+    except sarvam_voice.SarvamVoiceError as exc:
+        if exc.status is not None and 400 <= exc.status < 500 and exc.status not in (401, 403, 429):
+            req.status = "rejected"
+            req.rejection_reason = _SARVAM_RETAKE_REASON
+            req.reviewed_by_admin_id = admin.id
+            req.reviewed_at = datetime.now(timezone.utc)
+            db.add(AuditLog(
+                actor_type="platform_admin", actor_id=admin.id, org_id=req.org_id,
+                action="voice_clone_request.sample_rejected_by_provider",
+                target_type="voice_clone_request", target_id=req.id,
+                audit_metadata={"provider": "sarvam", "status": exc.status, "request_id": exc.request_id},
+            ))
+            await db.commit()
+            await db.refresh(req)
+            return await _to_voice_clone_request_out(db, req)
+        raise HTTPException(status_code=502, detail=f"Voice service error (request {exc.request_id or '-'}): {exc}")
+
+    cloned = ClonedVoice(
+        org_id=req.org_id,
+        created_by_id=req.created_by_id,
+        name=req.name,
+        elevenlabs_voice_id=voice_id,
+        provider=pipelines.SARVAM,
+        language=req.language,
+        reference_text=reference_text,
+        sample_file_name=req.audio_sample_file_name,
+    )
+    db.add(cloned)
+    await db.flush()
+    req.status = "approved"
+    req.reviewed_by_admin_id = admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+    req.cloned_voice_id = cloned.id
+    db.add(AuditLog(
+        actor_type="platform_admin", actor_id=admin.id, org_id=req.org_id,
+        action="voice_clone_request.approve", target_type="voice_clone_request", target_id=req.id,
+        audit_metadata={"cloned_voice_id": str(cloned.id), "provider": "sarvam", "provider_voice_id": voice_id},
+    ))
     await db.commit()
     await db.refresh(req)
     return await _to_voice_clone_request_out(db, req)

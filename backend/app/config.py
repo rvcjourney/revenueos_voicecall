@@ -22,7 +22,7 @@ _SECRET_FIELDS = frozenset({
     "VOBIZ_AUTH_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "GROQ_API_KEY",
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
-    "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64",
+    "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
 })
 
 
@@ -130,6 +130,12 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: str = Field(...)
     ELEVENLABS_VOICE_ID: str = "9BWtsMINqrJLrRacOk9x"
     ELEVENLABS_MODEL_ID: str = "eleven_turbo_v2_5"
+
+    # ── Sarvam (Instant Voice Cloning for the "sarvam" calling engine) ─────────
+    # Same key as agent/.env's SARVAM_API_KEY; needs the text_to_speech_voice_cloning
+    # capability. Cloning calls stay off until SARVAM_VOICE_CLONING_ENABLED=true.
+    SARVAM_API_KEY: str = ""
+    SARVAM_VOICE_CLONING_ENABLED: bool = False
 
     # ── Groq LLM ──────────────────────────────────────────────────────────────
     GROQ_API_KEY: str = Field(...)
