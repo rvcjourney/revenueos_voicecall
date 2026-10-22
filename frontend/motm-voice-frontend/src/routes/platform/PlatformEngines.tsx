@@ -1,9 +1,7 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
-import { ConfirmDialog } from "@/components/platform/ConfirmDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,12 +12,12 @@ import { platformApiErrorMessage } from "@/lib/platformApi";
 import { usePlatformEngines, usePlatformEnginesLatency, useUpdatePlatformEngines } from "@/lib/platformHooks";
 import type { EngineLanguage, EnginesUpdate } from "@/lib/platformTypes";
 
-/** Owner switches for the two calling engines. Every change applies from the
- * next call (<= 60 s), never to a call in progress, and is audit-logged. */
+/** Owner settings for the calling engine (Sarvam STT + sarvam-105b-conversations
+ * + Bulbul): which languages are on, each one's voice model and voice shortlist.
+ * Every change applies from the next call (<= 60 s) and is audit-logged. */
 export default function PlatformEngines() {
   const engines = usePlatformEngines();
   const update = useUpdatePlatformEngines();
-  const [confirmOff, setConfirmOff] = useState(false);
   const [voicesFor, setVoicesFor] = useState<string | null>(null);
 
   async function save(data: EnginesUpdate, label: string) {
@@ -27,7 +25,7 @@ export default function PlatformEngines() {
       await update.mutateAsync(data);
       toast.success(label);
     } catch (err) {
-      toast.error(platformApiErrorMessage(err, "Couldn't update calling engines"));
+      toast.error(platformApiErrorMessage(err, "Couldn't update languages"));
     }
   }
 
@@ -37,38 +35,16 @@ export default function PlatformEngines() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Calling engines"
-        description="Standard (Sarvam STT + Groq Qwen + ElevenLabs/Bulbul) and Indic Native (Sarvam STT + sarvam-105b-conversations + Bulbul). Changes apply to the next call; calls in progress finish unchanged."
+        title="Languages & voices"
+        description="Every call runs on Sarvam: realtime STT, sarvam-105b-conversations and Bulbul. Changes apply to the next call; calls in progress finish unchanged."
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Indic Native — global switch</CardTitle>
-          <CardDescription>
-            Incident kill-switch (Sarvam outage, a retired model, a bad release). Off: no new call anywhere starts on
-            Indic Native — stock-voice campaigns run on Standard, campaigns using a Sarvam cloned voice pause.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex items-center justify-between pt-0">
-          {d ? (
-            <p className="text-sm">
-              {d.global_enabled ? "On" : "Off"} · enabled for {d.orgs_enabled} organisation{d.orgs_enabled === 1 ? "" : "s"}
-            </p>
-          ) : <Skeleton className="h-5 w-48" />}
-          <Switch
-            checked={!!d?.global_enabled}
-            disabled={!d || update.isPending}
-            onCheckedChange={(v) => (v ? save({ global_enabled: true }, "Indic Native switched on") : setConfirmOff(true))}
-          />
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Languages</CardTitle>
           <CardDescription>
-            Enable each language per engine, and pick Indic Native's voice model per language. Malayalam and Odia stay
-            off until they pass an ear-check on real calls.
+            Turn each language on or off and pick its voice model. Malayalam and Odia stay off until they pass an
+            ear-check on real calls.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
@@ -77,8 +53,7 @@ export default function PlatformEngines() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Language</TableHead>
-                  <TableHead>Standard</TableHead>
-                  <TableHead>Indic Native</TableHead>
+                  <TableHead>Enabled</TableHead>
                   <TableHead>Voice model</TableHead>
                   <TableHead>Voices</TableHead>
                 </TableRow>
@@ -101,40 +76,6 @@ export default function PlatformEngines() {
       </Card>
 
       <LatencyCard />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Campaigns paused by an engine switch</CardTitle>
-          <CardDescription>These use a Sarvam cloned voice, so they can't fall back to Standard. Resume them once Indic Native is back on.</CardDescription>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {!d ? <Skeleton className="h-10 w-full" /> : d.paused_campaigns.length === 0 ? (
-            <p className="text-sm text-muted-foreground">None.</p>
-          ) : (
-            <ul className="space-y-1 text-sm">
-              {d.paused_campaigns.map((c) => (
-                <li key={c.id}>
-                  {c.name} · <Link to={`/ops/organizations/${c.org_id}`} className="text-primary hover:underline">{c.org_name}</Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      <ConfirmDialog
-        open={confirmOff}
-        onOpenChange={setConfirmOff}
-        title="Switch Indic Native off everywhere?"
-        description="New calls stop using it within a minute. Calls already in progress finish normally. Campaigns using a Sarvam cloned voice will pause."
-        confirmLabel="Switch off"
-        variant="destructive"
-        loading={update.isPending}
-        onConfirm={async () => {
-          await save({ global_enabled: false }, "Indic Native switched off");
-          setConfirmOff(false);
-        }}
-      />
     </div>
   );
 }
@@ -149,10 +90,10 @@ function LatencyCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Latency by engine — last 7 days</CardTitle>
+        <CardTitle>Latency — last 7 days</CardTitle>
         <CardDescription>
           From each call's per-turn LiveKit metrics. Sarvam's guidance for this stack: reply latency p50 under 900 ms is
-          good, under 1.4 s acceptable; p95 under 1.8 s good.
+          good, under 1.4 s acceptable; p95 under 1.8 s good. "Old engine" rows are calls from before the Sarvam-only change.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-0">
@@ -176,7 +117,7 @@ function LatencyCard() {
             <TableBody>
               {rows.map((r) => (
                 <TableRow key={r.engine}>
-                  <TableCell className="font-medium">{r.engine === "sarvam" ? "Indic Native" : "Standard"}</TableCell>
+                  <TableCell className="font-medium">{r.engine === "sarvam" ? "Sarvam" : "Old engine"}</TableCell>
                   <TableCell>{r.calls}</TableCell>
                   <TableCell>{ms(r.metrics.e2e_latency?.p50)} / {ms(r.metrics.e2e_latency?.p95)}</TableCell>
                   <TableCell>{ms(r.metrics.transcription_delay?.p95)}</TableCell>
@@ -195,10 +136,6 @@ function LatencyCard() {
   );
 }
 
-function Effective({ value }: { value: string }) {
-  return <span className={cn("text-xs", value === "on" ? "text-success" : "text-muted-foreground")}>{value}</span>;
-}
-
 function LanguageRow({
   lang,
   disabled,
@@ -212,29 +149,18 @@ function LanguageRow({
   onEditVoices: () => void;
   editing: boolean;
 }) {
-  const s = lang.sarvam;
-  const shortlist = new Set(s.shortlist);
+  const shortlist = new Set(lang.shortlist);
   return (
     <>
       <TableRow>
         <TableCell className="font-medium">{lang.display}</TableCell>
         <TableCell>
-          <div className="flex items-center gap-2">
-            <Switch checked={lang.standard.enabled} disabled={disabled}
-              onCheckedChange={(v) => onChange({ standard: { enabled: v } }, `${lang.display} ${v ? "enabled" : "disabled"} on Standard`)} />
-            <Effective value={lang.standard.effective} />
-          </div>
+          <Switch checked={lang.enabled} disabled={disabled}
+            onCheckedChange={(v) => onChange({ enabled: v }, `${lang.display} ${v ? "enabled" : "disabled"}`)} />
         </TableCell>
         <TableCell>
-          <div className="flex items-center gap-2">
-            <Switch checked={s.enabled} disabled={disabled}
-              onCheckedChange={(v) => onChange({ sarvam: { enabled: v } }, `${lang.display} ${v ? "enabled" : "disabled"} on Indic Native`)} />
-            <Effective value={s.effective} />
-          </div>
-        </TableCell>
-        <TableCell>
-          <Select value={s.tts_model ?? ""} disabled={disabled}
-            onValueChange={(v) => onChange({ sarvam: { tts_model: v } }, `${lang.display} voice model: ${v}`)}>
+          <Select value={lang.tts_model} disabled={disabled}
+            onValueChange={(v) => onChange({ tts_model: v }, `${lang.display} voice model: ${v}`)}>
             <SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="bulbul:v4-flash">bulbul:v4-flash</SelectItem>
@@ -244,18 +170,18 @@ function LanguageRow({
         </TableCell>
         <TableCell>
           <button type="button" className="text-xs text-primary hover:underline" onClick={onEditVoices}>
-            {s.shortlist.length ? `${s.shortlist.length} of ${s.voices.length}` : `all ${s.voices.length}`}
+            {lang.shortlist.length ? `${lang.shortlist.length} of ${lang.voices.length}` : `all ${lang.voices.length}`}
           </button>
         </TableCell>
       </TableRow>
       {editing && (
         <TableRow>
-          <TableCell colSpan={5}>
+          <TableCell colSpan={4}>
             <p className="mb-2 text-xs text-muted-foreground">
-              Voices customers can pick for {lang.display} on Indic Native ({s.tts_model}). None ticked = all.
+              Voices customers can pick for {lang.display} ({lang.tts_model}). None ticked = all.
             </p>
             <div className="flex flex-wrap gap-2">
-              {s.voices.map((v) => {
+              {lang.voices.map((v) => {
                 const on = shortlist.has(v.id);
                 return (
                   <button
@@ -263,8 +189,8 @@ function LanguageRow({
                     type="button"
                     disabled={disabled}
                     onClick={() => {
-                      const next = on ? s.shortlist.filter((x) => x !== v.id) : [...s.shortlist, v.id];
-                      onChange({ sarvam: { voices: next } }, `${lang.display} voices updated`);
+                      const next = on ? lang.shortlist.filter((x) => x !== v.id) : [...lang.shortlist, v.id];
+                      onChange({ voices: next }, `${lang.display} voices updated`);
                     }}
                     className={cn("rounded-full border px-2.5 py-1 text-xs", on ? "border-primary bg-primary/10" : "border-border")}
                   >

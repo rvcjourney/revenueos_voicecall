@@ -15,31 +15,22 @@ import type {
   CampaignContact,
   CampaignCreate,
   CampaignFolder,
+  CampaignPreview,
+  CustomizeResult,
+  LanguagesResponse,
   CheckoutResponse,
   ClonedVoice,
-  EnginesResponse,
-  LanguageOption,
-  Pipeline,
-  CompanyProfile,
-  CompanyProfileInput,
   ConcurrencyUsage,
   CreditUsage,
   DashboardStats,
   DncEntry,
   BillingAddress,
-  InboundAgent,
-  InboundAgentCreate,
   InvoiceList,
   ListResponse,
   LoginResponse,
   OrgInfo,
   OrgQuotaInfo,
   OrgStats,
-  PromptLibraryCreate,
-  PromptLibraryEntry,
-  PromptLibraryUpdate,
-  PromptLibraryVersion,
-  PrimePreview,
   PublicPlan,
   SipTrunk,
   VerifyPaymentRequest,
@@ -200,25 +191,13 @@ export const agentsApi = {
   update: (id: string, data: Partial<AgentCreate>) => api.patch<AgentTemplate>(`/api/agents/${id}`, data),
   remove: (id: string) => api.delete(`/api/agents/${id}`),
   requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
-  testCall: (
-    id: string,
-    phone_number: string,
-    overrides?: {
-      trunk_id?: string;
-      language?: string;
-      voice_provider?: string;
-      voice_id?: string;
-      stt_model?: string;
-      llm_provider?: string;
-      llm_model?: string;
-      tts_model?: string;
-      pipeline?: Pipeline;
-    }
-  ) => api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, ...overrides }),
+  testCall: (id: string, phone_number: string, trunk_id?: string) =>
+    api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, trunk_id }),
   tryNow: (phone_number: string) =>
     api.post<{ call_id: string; status: string }>("/api/agents/try-now", { phone_number }),
-  optimizePrompt: (raw_input: string) =>
-    api.post<{ optimized_prompt: string }>("/api/agents/optimize-prompt", { raw_input }),
+  // Sarvam rewrites a full script: ~1 minute is normal, so well past the default timeout
+  customize: (data: { greeting: string; instructions: string; request: string }) =>
+    api.post<CustomizeResult>("/api/agents/customize", data, { timeout: 200_000 }),
   requestCreation: (form: FormData) =>
     api.post<{ id: string; message: string }>("/api/agents/creation-request", form, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -226,36 +205,9 @@ export const agentsApi = {
   myCreationRequests: () => api.get<AgentCreationRequest[]>("/api/agents/my-creation-requests"),
 };
 
-// ── Prompt library ───────────────────────────────────────────────────────
-export const promptLibraryApi = {
-  list: (params?: { q?: string; tag?: string }) =>
-    api.get<ListResponse<PromptLibraryEntry>>("/api/prompt-library", { params }),
-  create: (data: PromptLibraryCreate) => api.post<PromptLibraryEntry>("/api/prompt-library", data),
-  update: (id: string, data: PromptLibraryUpdate) =>
-    api.patch<PromptLibraryEntry>(`/api/prompt-library/${id}`, data),
-  remove: (id: string) => api.delete(`/api/prompt-library/${id}`),
-  history: (id: string) => api.get<PromptLibraryVersion[]>(`/api/prompt-library/${id}/history`),
-  restore: (id: string, version: number) =>
-    api.post<PromptLibraryEntry>(`/api/prompt-library/${id}/restore/${version}`),
-  markPerformance: (id: string, is_high_performing: boolean) =>
-    api.patch<PromptLibraryEntry>(`/api/prompt-library/${id}/performance`, { is_high_performing }),
-  syncFromAgents: () =>
-    api.post<{ created: number; message: string }>("/api/prompt-library/sync-from-agents"),
-};
-
-// ── Inbound Agents (answer calls arriving on a number) ────────────────────
-export const inboundAgentsApi = {
-  list: () => api.get<ListResponse<InboundAgent> | InboundAgent[]>("/api/inbound-agents"),
-  get: (id: string) => api.get<InboundAgent>(`/api/inbound-agents/${id}`),
-  create: (data: InboundAgentCreate) => api.post<InboundAgent>("/api/inbound-agents", data),
-  update: (id: string, data: Partial<InboundAgentCreate>) =>
-    api.patch<InboundAgent>(`/api/inbound-agents/${id}`, data),
-  remove: (id: string) => api.delete(`/api/inbound-agents/${id}`),
-};
-
 // ── Campaigns ────────────────────────────────────────────────────────────
 export const campaignsApi = {
-  list: (params?: { status?: string; folder_id?: string; is_prime?: boolean }) =>
+  list: (params?: { status?: string; folder_id?: string }) =>
     api.get<ListResponse<Campaign> | Campaign[]>("/api/campaigns", { params }),
   get: (id: string) => api.get<Campaign>(`/api/campaigns/${id}`),
   create: (data: CampaignCreate) => api.post<Campaign>("/api/campaigns", data),
@@ -271,12 +223,7 @@ export const campaignsApi = {
     });
   },
   launch: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/launch`),
-  // Website fetch + LLM generation can take well over the default 20s timeout
-  primePreview: (id: string, contactId?: string) =>
-    api.post<PrimePreview>(`/api/campaigns/${id}/prime-preview`, undefined, {
-      params: contactId ? { contact_id: contactId } : undefined,
-      timeout: 120_000,
-    }),
+  preview: (id: string) => api.get<CampaignPreview>(`/api/campaigns/${id}/preview`),
   pause: (id: string) => api.post<Campaign>(`/api/campaigns/${id}/pause`),
   duplicate: (id: string, copyContacts = true) =>
     api.post<Campaign>(`/api/campaigns/${id}/duplicate`, undefined, { params: { copy_contacts: copyContacts } }),
@@ -288,12 +235,6 @@ export const campaignsApi = {
     downloadBlob(`/api/campaigns/${id}/export/callback_requested`, filename),
   exportAll: (id: string, filename = "all-results.csv") =>
     downloadBlob(`/api/campaigns/${id}/export/all`, filename),
-};
-
-// ── Prime Calling: company profile ──────────────────────────────────────
-export const companyProfileApi = {
-  get: () => api.get<CompanyProfile>("/api/company-profile"),
-  save: (data: CompanyProfileInput) => api.put<CompanyProfile>("/api/company-profile", data),
 };
 
 // ── Folders ──────────────────────────────────────────────────────────────
@@ -319,10 +260,6 @@ export const callsApi = {
 // ── Analytics & usage ────────────────────────────────────────────────────
 export const analyticsApi = {
   dashboard: () => api.get<DashboardStats>("/api/analytics/dashboard"),
-  engines: () =>
-    api.get<{ items: { engine: Pipeline; label: string; calls: number; answer_rate: number; interested_rate: number; avg_duration_seconds: number }[] }>(
-      "/api/analytics/engines"
-    ),
 };
 
 export const usageApi = {
@@ -352,10 +289,9 @@ export const billingApi = {
 // ── Voice cloning ────────────────────────────────────────────────────────
 export const voiceCloningApi = {
   list: () => api.get<ListResponse<ClonedVoice> | ClonedVoice[]>("/api/voice-cloning"),
-  create: (data: { name: string; file: File; consentVideo: File; engine?: Pipeline; language?: string }) => {
+  create: (data: { name: string; file: File; consentVideo: File; language: string }) => {
     const form = new FormData();
     form.append("name", data.name);
-    if (data.engine) form.append("engine", data.engine);
     if (data.language) form.append("language", data.language);
     form.append("file", data.file);
     form.append("consent_video", data.consentVideo);
@@ -366,11 +302,9 @@ export const voiceCloningApi = {
   remove: (id: string) => api.delete(`/api/voice-cloning/${id}`),
 };
 
-// ── Calling engines + the languages/voices valid on each (server registry) ──
+// ── Languages and their voices (server registry) ─────────────────────────
 export const languagesApi = {
-  engines: () => api.get<EnginesResponse>("/api/languages/engines"),
-  list: (pipeline: Pipeline) =>
-    api.get<{ pipeline: Pipeline; languages: LanguageOption[] }>("/api/languages", { params: { pipeline } }),
+  list: () => api.get<LanguagesResponse>("/api/languages"),
 };
 
 // ── SIP trunks / phone numbers ───────────────────────────────────────────
@@ -387,18 +321,8 @@ export const sipTrunksApi = {
   test: (id: string) => api.post<{ is_active: boolean }>(`/api/sip-trunks/${id}/test`),
   capacity: () => api.get<TrunkCapacity[]>("/api/sip-trunks/capacity"),
   my: () => api.get<ListResponse<SipTrunk> | SipTrunk[]>("/api/sip-trunks/my"),
-  setupInbound: (trunkId: string, inbound_agent_template_id: string) =>
-    api.post<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
-      `/api/sip-trunks/${trunkId}/inbound`,
-      { inbound_agent_template_id }
-    ),
-  updateInboundAgent: (trunkId: string, inbound_agent_template_id: string) =>
-    api.patch<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
-      `/api/sip-trunks/${trunkId}/inbound`,
-      { inbound_agent_template_id }
-    ),
   disableInbound: (trunkId: string) =>
-    api.delete<{ trunk_id: string; inbound_enabled: boolean; inbound_agent_template_id: string | null }>(
+    api.delete<{ trunk_id: string; inbound_enabled: boolean }>(
       `/api/sip-trunks/${trunkId}/inbound`
     ),
 };

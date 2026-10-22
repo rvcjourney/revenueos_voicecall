@@ -66,18 +66,8 @@ function SystemHealthCard() {
               : "No workers responding",
         },
         {
-          label: "ElevenLabs",
-          ok: health.data.elevenlabs_ok,
-          detail: health.data.elevenlabs_ok ? "Reachable" : "Unreachable",
-        },
-        {
-          label: "Groq (call classification)",
-          ok: health.data.groq_ok,
-          detail: health.data.groq_ok ? "Reachable" : (health.data.groq_error ?? "Unreachable"),
-        },
-        {
           // Sarvam has no balance API; the daily probe (STT, LLM, both Bulbul models) stands in.
-          label: "Sarvam (Indic Native engine)",
+          label: "Sarvam (all calls)",
           ok: !!health.data.sarvam_probe && Object.keys(health.data.sarvam_probe.errors).length === 0,
           detail: !health.data.sarvam_probe
             ? "Not checked yet (runs daily 03:00 IST)"
@@ -87,11 +77,6 @@ function SystemHealthCard() {
         },
       ]
     : [];
-
-  const elevenlabsPct =
-    health.data?.elevenlabs_characters_used != null && health.data?.elevenlabs_characters_limit
-      ? Math.min((health.data.elevenlabs_characters_used / health.data.elevenlabs_characters_limit) * 100, 100)
-      : null;
 
   const dbSizePct = health.data
     ? Math.min((health.data.db_size_bytes / health.data.db_size_limit_bytes) * 100, 100)
@@ -133,7 +118,7 @@ function SystemHealthCard() {
                   </div>
                   {/* min-w-0 lets this actually shrink inside the flex row instead of
                       forcing the row (and the whole card) to overflow at its intrinsic
-                      width -- a raw Groq/provider error string here previously spilled
+                      width -- a raw provider error string here previously spilled
                       off the edge of the page instead of wrapping or truncating.
                       title= keeps the full message reachable on hover. */}
                   <Badge
@@ -146,29 +131,6 @@ function SystemHealthCard() {
                 </div>
               ))}
             </div>
-
-            {elevenlabsPct !== null && (
-              <div className="space-y-2 border-t border-border pt-4">
-                <div className="flex items-center justify-between text-sm">
-                  <p className="font-medium">
-                    ElevenLabs character quota
-                    {health.data.elevenlabs_tier && (
-                      <span className="ml-2 text-xs capitalize text-muted-foreground">
-                        · {health.data.elevenlabs_tier} plan
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {health.data.elevenlabs_characters_used!.toLocaleString()} /{" "}
-                    {health.data.elevenlabs_characters_limit!.toLocaleString()} characters
-                  </p>
-                </div>
-                <Progress value={elevenlabsPct} />
-                {elevenlabsPct >= 85 && (
-                  <p className="text-xs text-warning">Approaching character limit — {Math.round(elevenlabsPct)}% used</p>
-                )}
-              </div>
-            )}
 
             <div className="space-y-4 border-t border-border pt-4">
               <div className="grid gap-4 sm:grid-cols-2">
@@ -207,17 +169,6 @@ function SystemHealthCard() {
                 </div>
               )}
 
-              {!health.data.groq_ok && (
-                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                  <p>
-                    <span className="font-medium text-destructive">Call classification is broken</span> — every call's
-                    outcome will silently land on "Pending" until this is fixed.{" "}
-                    <span className="text-muted-foreground">{health.data.groq_error}</span>
-                  </p>
-                </div>
-              )}
-
               {health.data.stale_pending_calls_count > 0 && (
                 <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -227,7 +178,7 @@ function SystemHealthCard() {
                       at "Pending"
                     </span>{" "}
                     <span className="text-muted-foreground">
-                      — ended 10+ minutes ago with no classification. Check the Groq status above, or a call's own
+                      — ended 10+ minutes ago with no classification. Check the Sarvam status above, or a call's own
                       logs if that's healthy.
                     </span>
                   </p>

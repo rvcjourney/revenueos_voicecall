@@ -1,65 +1,24 @@
-import { useEffect, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import {
-  Bot,
-  Headset,
-  Loader2,
-  Lock,
-  Pencil,
-  Phone,
-  Plus,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
+import { Bot, Headset, Loader2, Lock, Pencil, Phone, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { usesSarvamVoice } from "@/lib/languages";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AgentAccessBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
-import {
-  useAgents,
-  useClonedVoices,
-  useEngines,
-  useCreateAgent,
-  useDeleteAgent,
-  useRequestAgentAccess,
-  useUpdateAgent,
-  useMyTrunks,
-} from "@/lib/hooks";
+import { useAgents, useDeleteAgent, useRequestAgentAccess, useMyTrunks } from "@/lib/hooks";
 import { agentsApi, apiErrorMessage } from "@/lib/api";
+import { languageLabel } from "@/lib/languages";
 import { formatDate } from "@/lib/utils";
-import type { AgentCreate, AgentTemplate, Pipeline } from "@/lib/types";
-import { engineLabel, voiceProviderLabel, llmModelLabel } from "@/lib/providerLabels";
-import { EngineSelect, IndicNativeVoiceSelect, engineSwitchPatch, useEngineLanguages } from "@/components/shared/EngineFields";
-import { SARVAM_VOICES, ELEVENLABS_VOICES } from "@/lib/voiceCatalog";
-
-const VOICE_PROVIDERS = ["elevenlabs", "sarvam"];
-const LLM_MODELS = ["qwen/qwen3.6-27b"];
+import type { AgentTemplate } from "@/lib/types";
 
 const ACCESS_ACCENT: Record<string, string> = {
   approved: "var(--success)",
@@ -67,69 +26,29 @@ const ACCESS_ACCENT: Record<string, string> = {
   locked: "var(--muted-foreground)",
 };
 
-const emptyForm: AgentCreate = {
-  name: "",
-  description: "",
-  language: "hinglish",
-  welcome_message: "",
-  system_prompt: "",
-  voice_id: "",
-  voice_provider: "elevenlabs",
-  llm_model: "qwen/qwen3.6-27b",
-  llm_temperature: 0.7,
-  max_call_duration_seconds: 600,
-};
-
 export default function Agents() {
   const { isAdmin } = useAuth();
   const agents = useAgents();
-  const location = useLocation();
   const navigate = useNavigate();
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<AgentTemplate | null>(null);
-  const [prefillSystemPrompt, setPrefillSystemPrompt] = useState<string | undefined>(undefined);
   const [testCallAgent, setTestCallAgent] = useState<AgentTemplate | null>(null);
   const [requestCreationOpen, setRequestCreationOpen] = useState(false);
 
-  // Arriving from the Prompt Library's "Use in this agent" button — open the
-  // create-agent dialog pre-filled, then clear the nav state so a refresh or
-  // back-navigation doesn't reopen it.
-  useEffect(() => {
-    const prefill = (location.state as { prefillSystemPrompt?: string } | null)?.prefillSystemPrompt;
-    if (!prefill) return;
-    setEditingAgent(null);
-    setPrefillSystemPrompt(prefill);
-    setEditorOpen(true);
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.state, location.pathname, navigate]);
-
-  function openCreate() {
-    setEditingAgent(null);
-    setPrefillSystemPrompt(undefined);
-    setEditorOpen(true);
-  }
-  function openEdit(agent: AgentTemplate) {
-    setEditingAgent(agent);
-    setPrefillSystemPrompt(undefined);
-    setEditorOpen(true);
-  }
+  const createButton = isAdmin ? (
+    <Button variant="gradient" onClick={() => navigate("/agents/new")}>
+      <Plus className="h-4 w-4" /> Create Agent
+    </Button>
+  ) : (
+    <Button variant="outline" onClick={() => setRequestCreationOpen(true)}>
+      <Plus className="h-4 w-4" /> Request new agent
+    </Button>
+  );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="AI Agents"
-        description="Manage AI agent templates for your team"
-        actions={
-          isAdmin ? (
-            <Button variant="gradient" onClick={openCreate}>
-              <Plus className="h-4 w-4" /> Create Agent
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={() => setRequestCreationOpen(true)}>
-              <Plus className="h-4 w-4" /> Request new agent
-            </Button>
-          )
-        }
+        description="Each agent is a greeting plus instructions with {placeholders}, filled in for every contact."
+        actions={createButton}
       />
 
       {agents.isError ? (
@@ -145,7 +64,7 @@ export default function Agents() {
               key={a.id}
               agent={a}
               isAdmin={isAdmin}
-              onEdit={() => openEdit(a)}
+              onEdit={() => navigate(`/agents/${a.id}`)}
               onTestCall={() => setTestCallAgent(a)}
             />
           ))}
@@ -154,23 +73,11 @@ export default function Agents() {
         <EmptyState
           icon={Bot}
           title="No AI agents yet"
-          description={isAdmin ? "Create your first AI voice agent persona." : "Ask an admin to create an AI agent, or request a new one."}
-          action={
-            isAdmin ? (
-              <Button variant="gradient" onClick={openCreate}>Create agent</Button>
-            ) : (
-              <Button variant="gradient" onClick={() => setRequestCreationOpen(true)}>Request new agent</Button>
-            )
-          }
+          description={isAdmin ? "Create your first agent — it starts from a ready-made discovery-call template." : "Ask an admin to create an AI agent, or request a new one."}
+          action={createButton}
         />
       )}
 
-      <AgentEditorDialog
-        open={editorOpen}
-        onOpenChange={setEditorOpen}
-        agent={editingAgent}
-        initialSystemPrompt={prefillSystemPrompt}
-      />
       <TestCallDialog agent={testCallAgent} onOpenChange={() => setTestCallAgent(null)} />
       <RequestCreationDialog open={requestCreationOpen} onOpenChange={setRequestCreationOpen} />
     </div>
@@ -224,7 +131,7 @@ function AgentCard({
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold leading-tight">{agent.name}</p>
-            <p className="truncate text-[11px] text-muted-foreground">{agent.description || "AI voice agent"}</p>
+            <p className="truncate text-[11px] text-muted-foreground">{agent.description || languageLabel(agent.language)}</p>
           </div>
         </div>
 
@@ -263,365 +170,6 @@ function AgentCard({
   );
 }
 
-function AgentEditorDialog({
-  open,
-  onOpenChange,
-  agent,
-  initialSystemPrompt,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  agent: AgentTemplate | null;
-  initialSystemPrompt?: string;
-}) {
-  const { isAdmin } = useAuth();
-  const [form, setForm] = useState<AgentCreate>(agent ? toFormValues(agent) : emptyForm);
-  const [optimizing, setOptimizing] = useState(false);
-  const createAgent = useCreateAgent();
-  const updateAgent = useUpdateAgent();
-  const clonedVoices = useClonedVoices();
-  // Cloned voices are ElevenLabs voice_ids too -- surfaced as a group inside
-  // the same Voice dropdown below (not a second selector) so there's only
-  // ever one place that can set voice_id, never two controls disagreeing
-  // about what's actually selected.
-  const readyClonedVoices = isAdmin
-    ? (clonedVoices.data ?? []).filter((v) => v.status === "ready" && v.elevenlabs_voice_id && v.engine !== "sarvam")
-    : [];
-
-  // Whether the Voice field shows the cloned-voice picker or the regular
-  // name/gender list -- exactly one is ever interactive at a time, so
-  // there's only one place that can set voice_id.
-  const [useClonedVoice, setUseClonedVoice] = useState(false);
-
-  // AgentEditorDialog stays mounted permanently (only `open` toggles) so the
-  // form must be re-synced here whenever it's opened for a different agent --
-  // Radix's onOpenChange only fires for user-driven close events, never when
-  // the parent flips `open` externally (which is how "Edit" opens this).
-  useEffect(() => {
-    if (open) {
-      const base = agent ? toFormValues(agent) : emptyForm;
-      setForm(initialSystemPrompt ? { ...base, system_prompt: initialSystemPrompt } : base);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, agent, initialSystemPrompt]);
-
-  // Default the toggle to "on" when editing an agent whose saved voice_id is
-  // actually one of this org's ready cloned voices. Watches clonedVoices.data
-  // too since that query can still be loading the moment the dialog opens.
-  useEffect(() => {
-    if (!open) return;
-    setUseClonedVoice(!!agent?.voice_id && readyClonedVoices.some((v) => v.elevenlabs_voice_id === agent.voice_id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, agent, clonedVoices.data]);
-
-  function update<K extends keyof AgentCreate>(key: K, value: AgentCreate[K]) {
-    setForm((f) => ({ ...f, [key]: value }));
-  }
-
-  const engines = useEngines();
-  const pipeline: Pipeline = form.pipeline ?? engines.data?.default_pipeline ?? "standard";
-  const engineLanguages = useEngineLanguages(pipeline);
-
-  function changeEngine(next: Pipeline | null) {
-    const p = next ?? "standard";
-    if (p === pipeline) return;
-    // A voice from one engine never works on the other — reset it (and the
-    // language, if the new engine doesn't offer it) rather than fail on save.
-    setForm((f) => ({ ...f, ...engineSwitchPatch(p) }));
-    setUseClonedVoice(false);
-    toast.info(`Switched to ${engineLabel(p)} — pick a voice for it.`);
-  }
-
-  async function handleOptimize() {
-    if (!form.system_prompt?.trim()) {
-      toast.error("Write a rough prompt first, then optimize it");
-      return;
-    }
-    setOptimizing(true);
-    try {
-      const res = await agentsApi.optimizePrompt(form.system_prompt);
-      update("system_prompt", res.data.optimized_prompt);
-      toast.success("Prompt optimized");
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't optimize prompt"));
-    } finally {
-      setOptimizing(false);
-    }
-  }
-
-  async function handleSave() {
-    if (!form.name?.trim()) {
-      toast.error("Agent name is required");
-      return;
-    }
-    try {
-      if (pipeline === "sarvam" && !form.voice_id) {
-        toast.error("Choose a voice");
-        return;
-      }
-      if (agent) {
-        await updateAgent.mutateAsync({ id: agent.id, data: { ...form, pipeline } });
-        toast.success("Agent updated");
-      } else {
-        await createAgent.mutateAsync({ ...form, pipeline });
-        toast.success("Agent created");
-      }
-      onOpenChange(false);
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't save agent"));
-    }
-  }
-
-  const saving = createAgent.isPending || updateAgent.isPending;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{agent ? "Edit agent" : "Create agent"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          {agent ? (
-            // Language isn't editable once an agent exists -- form.language still
-            // carries the agent's actual saved value through to handleSave() below
-            // unchanged, this just removes the (confusing, free-text) control that
-            // let it be edited here. Still editable at creation time, below.
-            <div className="space-y-1.5">
-              <Label>Name</Label>
-              <Input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Enterprise Sales Agent" />
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Name</Label>
-                <Input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Enterprise Sales Agent" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Language</Label>
-                <Select
-                  value={form.language}
-                  onValueChange={(v) => {
-                    update("language", v);
-                    if (pipeline === "sarvam") update("voice_id", "");  // voices are per language here
-                  }}
-                >
-                  <SelectTrigger><SelectValue placeholder="Choose a language" /></SelectTrigger>
-                  <SelectContent>
-                    {engineLanguages.map((l) => (
-                      <SelectItem key={l.value} value={l.value}>{l.label} · {l.native}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {pipeline === "standard" && usesSarvamVoice(form.language) && (
-                  <p className="text-xs text-muted-foreground">
-                    Spoken by an Indian-language voice — the voice chosen below only applies to Hindi,
-                    Hinglish and English agents.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-          <EngineSelect value={pipeline} onChange={changeEngine} />
-          <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Input value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What is this agent for?" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Welcome message</Label>
-            <Textarea value={form.welcome_message} onChange={(e) => update("welcome_message", e.target.value)} placeholder="Namaste! Main Aniket bol raha hoon..." rows={2} />
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label>System prompt</Label>
-              <Button type="button" variant="ghost" size="sm" onClick={handleOptimize} disabled={optimizing}>
-                {optimizing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                Optimize with AI
-              </Button>
-            </div>
-            <Textarea value={form.system_prompt} onChange={(e) => update("system_prompt", e.target.value)} rows={6} placeholder="Describe how the agent should behave, what to pitch, objection handling..." />
-          </div>
-          {pipeline === "sarvam" ? (
-            <div className="space-y-1.5">
-              <Label>Voice</Label>
-              <IndicNativeVoiceSelect
-                language={form.language ?? "hinglish"}
-                value={form.voice_id ?? ""}
-                onChange={(v) => update("voice_id", v)}
-                includeCloned={isAdmin}
-              />
-            </div>
-          ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Voice provider</Label>
-              <Select
-                value={form.voice_provider}
-                onValueChange={(v) => {
-                  // A voice_id from the old provider is meaningless (and can't be
-                  // validated) for the new one -- clear it so a stale/mismatched
-                  // pair can never get saved. See: previous agent voice_id vs
-                  // voice_provider mismatch bug.
-                  setForm((f) => ({ ...f, voice_provider: v, voice_id: "" }));
-                }}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {VOICE_PROVIDERS.map((v) => (
-                    <SelectItem key={v} value={v}>{voiceProviderLabel(v)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Voice</Label>
-                {isAdmin && form.voice_provider === "elevenlabs" && (
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    Use cloned voice
-                    <Switch
-                      checked={useClonedVoice}
-                      onCheckedChange={(v) => {
-                        // Whichever side you're leaving had voice_id pointed at
-                        // its own list -- clear it so a stale value from one
-                        // list can never get saved while the other is showing.
-                        setUseClonedVoice(v);
-                        update("voice_id", "");
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
-              {form.voice_provider === "sarvam" ? (
-                <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
-                  <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Hindi / Hinglish voices</SelectLabel>
-                      {SARVAM_VOICES.filter((v) => v.focus === "hindi").map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                    <SelectGroup>
-                      <SelectLabel>International (English-accented)</SelectLabel>
-                      {SARVAM_VOICES.filter((v) => v.focus === "international").map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              ) : useClonedVoice ? (
-                readyClonedVoices.length > 0 ? (
-                  <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
-                    <SelectTrigger><SelectValue placeholder="Pick a cloned voice…" /></SelectTrigger>
-                    <SelectContent>
-                      {readyClonedVoices.map((v) => (
-                        <SelectItem key={v.id} value={v.elevenlabs_voice_id ?? ""}>{v.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    {clonedVoices.isLoading ? "Loading cloned voices…" : (
-                      <>
-                        No cloned voices yet —{" "}
-                        <Link to="/voice-cloning" className="text-primary hover:underline">
-                          clone one from the Voice Cloning section
-                        </Link>{" "}
-                        to use it here.
-                      </>
-                    )}
-                  </p>
-                )
-              ) : (
-                <Select value={form.voice_id} onValueChange={(v) => update("voice_id", v)}>
-                  <SelectTrigger><SelectValue placeholder="Choose a voice…" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Hindi voices</SelectLabel>
-                      {ELEVENLABS_VOICES.filter((v) => v.focus === "hindi").map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                    <SelectGroup>
-                      <SelectLabel>Indian-accented English</SelectLabel>
-                      {ELEVENLABS_VOICES.filter((v) => v.focus === "indian-english").map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.name} <span className="text-muted-foreground">({v.gender})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-          </div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            {pipeline === "standard" && (
-            <div className="space-y-1.5">
-              <Label>LLM model</Label>
-              <Select value={form.llm_model} onValueChange={(v) => update("llm_model", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {LLM_MODELS.map((m) => (
-                    <SelectItem key={m} value={m}>{llmModelLabel(m)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            )}
-            <div className="space-y-1.5">
-              <Label>Max call duration (seconds)</Label>
-              <Input type="number" value={form.max_call_duration_seconds} onChange={(e) => update("max_call_duration_seconds", Number(e.target.value))} />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label>LLM temperature</Label>
-              <span className="text-xs text-muted-foreground">{form.llm_temperature}</span>
-            </div>
-            <Slider
-              value={[form.llm_temperature ?? 0.7]}
-              min={0}
-              max={1}
-              step={0.05}
-              onValueChange={([v]) => update("llm_temperature", v)}
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="gradient" onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {agent ? "Save changes" : "Create agent"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function toFormValues(agent: AgentTemplate): AgentCreate {
-  return {
-    name: agent.name,
-    description: agent.description ?? "",
-    language: agent.language,
-    welcome_message: agent.welcome_message,
-    system_prompt: agent.system_prompt,
-    voice_id: agent.voice_id,
-    voice_provider: agent.voice_provider,
-    llm_model: agent.llm_model,
-    llm_temperature: agent.llm_temperature,
-    max_call_duration_seconds: agent.max_call_duration_seconds,
-    pipeline: agent.pipeline,
-  };
-}
-
 export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; onOpenChange: () => void }) {
   const [phone, setPhone] = useState("+91");
   const [trunkId, setTrunkId] = useState<string>("");
@@ -637,7 +185,7 @@ export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate |
     setLoading(true);
     setError(null);
     try {
-      await agentsApi.testCall(agent.id, phone, { trunk_id: selectedTrunk?.id });
+      await agentsApi.testCall(agent.id, phone, selectedTrunk?.id);
       toast.success("Test call started — it should ring shortly");
       onOpenChange();
     } catch (err) {

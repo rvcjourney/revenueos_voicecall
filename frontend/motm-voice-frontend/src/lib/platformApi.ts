@@ -125,7 +125,7 @@ export const platformCostSettingsApi = {
     platformApi.patch<PlatformCostSettings>("/api/platform/settings/cost", data),
 };
 
-// ── Calling engines (owner switches) ──────────────────────────────────────
+// ── Languages & voices (owner overrides) ──────────────────────────────────────
 export const platformEnginesApi = {
   get: () => platformApi.get<EnginesOverview>("/api/platform/engines"),
   update: (data: EnginesUpdate) => platformApi.patch<EnginesOverview>("/api/platform/engines", data),

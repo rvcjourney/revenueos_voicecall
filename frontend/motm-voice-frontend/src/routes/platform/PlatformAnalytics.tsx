@@ -150,7 +150,7 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
     }
     const sarvamValue = sarvamRate.trim() === "" ? null : Number(sarvamRate);
     if (sarvamValue !== null && (!Number.isFinite(sarvamValue) || sarvamValue < 0)) {
-      toast.error("Enter a valid, non-negative Indic Native cost per minute (or leave it blank)");
+      toast.error("Enter a valid, non-negative Sarvam cost per minute (or leave it blank)");
       return;
     }
     try {
@@ -167,8 +167,8 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
         <div className="space-y-1.5">
           <Label>Blended cost per call-minute (minor units{currency ? `, ${currency}` : ""})</Label>
           <p className="text-xs text-muted-foreground">
-            One estimate covering Groq + ElevenLabs + Vobiz + LiveKit combined, used to compute estimated gross
-            margin above. Current: {costPerMinuteMinor != null && currency ? formatPrice(costPerMinuteMinor, currency) : "—"}/min.
+            Base estimate used to compute estimated gross
+            margin above (also prices calls from before the Sarvam-only change). Current: {costPerMinuteMinor != null && currency ? formatPrice(costPerMinuteMinor, currency) : "—"}/min.
           </p>
           <Input
             type="number"
@@ -178,8 +178,8 @@ function CostRateCard({ costPerMinuteMinor, currency }: { costPerMinuteMinor?: n
             onChange={(e) => setRate(e.target.value)}
             disabled={costSettings.isLoading}
           />
-          <Label className="pt-2 block">Indic Native engine cost per call-minute (blank = same as above)</Label>
-          <p className="text-xs text-muted-foreground">Sarvam STT + LLM + Bulbul + Vobiz + LiveKit, for calls on the Indic Native engine.</p>
+          <Label className="pt-2 block">Sarvam calls: cost per call-minute (blank = same as above)</Label>
+          <p className="text-xs text-muted-foreground">Sarvam STT + LLM + Bulbul + Vobiz + LiveKit — every call from now on.</p>
           <Input
             type="number"
             min={0}

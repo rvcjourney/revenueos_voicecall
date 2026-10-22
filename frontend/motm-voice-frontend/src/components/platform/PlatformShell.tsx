@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { to: "/ops/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ops/plans", label: "Plans", icon: Layers },
   { to: "/ops/voice-clone-requests", label: "Voice Requests", icon: Mic },
-  { to: "/ops/engines", label: "Calling engines", icon: AudioLines },
+  { to: "/ops/engines", label: "Languages & voices", icon: AudioLines },
 ];
 
 /** Route guard + chrome for everything under /ops, gated on the platform (not tenant) session. */

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Check, Loader2, Phone, PhoneCall, PhoneIncoming, Plus, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,11 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAdminUsers,
   useDisableInboundCalling,
-  useInboundAgents,
-  useSetupInboundCalling,
   useSipTrunks,
   useTrunkAssignments,
-  useUpdateInboundCallingAgent,
 } from "@/lib/hooks";
 import { sipTrunksApi, apiErrorMessage } from "@/lib/api";
 import { initials } from "@/lib/utils";
@@ -221,97 +217,30 @@ function TrunkCard({ trunk }: { trunk: SipTrunk }) {
   );
 }
 
+/** Inbound calling was removed; numbers set up for it before can only be switched off. */
 function InboundCallingSection({ trunk }: { trunk: SipTrunk }) {
-  const inboundAgents = useInboundAgents();
-  const [selectedAgentId, setSelectedAgentId] = useState(trunk.inbound_agent_template_id ?? "");
-  const setupInbound = useSetupInboundCalling();
-  const updateAgent = useUpdateInboundCallingAgent();
   const disableInbound = useDisableInboundCalling();
-
-  const agents = inboundAgents.data ?? [];
-  const currentAgent = agents.find((a) => a.id === trunk.inbound_agent_template_id);
-  const busy = setupInbound.isPending || updateAgent.isPending || disableInbound.isPending;
-
-  async function handleEnable() {
-    if (!selectedAgentId) return;
-    try {
-      await setupInbound.mutateAsync({ trunkId: trunk.id, agentId: selectedAgentId });
-      toast.success("Inbound calling enabled for this number");
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't set up inbound calling"));
-    }
-  }
-
-  async function handleChangeAgent(agentId: string) {
-    setSelectedAgentId(agentId);
-    try {
-      await updateAgent.mutateAsync({ trunkId: trunk.id, agentId });
-      toast.success("Inbound agent updated");
-    } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't change inbound agent"));
-    }
-  }
+  if (!trunk.inbound_enabled) return null;
 
   async function handleDisable() {
-    if (!confirm(`Turn off inbound calling for ${trunk.caller_id}? Callers will no longer be routed to an AI agent.`)) return;
+    if (!confirm(`Turn off inbound routing for ${trunk.caller_id}?`)) return;
     try {
       await disableInbound.mutateAsync(trunk.id);
-      setSelectedAgentId("");
-      toast.success("Inbound calling disabled");
+      toast.success("Inbound routing turned off");
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Couldn't disable inbound calling"));
+      toast.error(apiErrorMessage(err, "Couldn't turn off inbound routing"));
     }
   }
 
   return (
-    <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
-      <div className="flex items-center justify-between">
-        <p className="flex items-center gap-2 text-sm font-semibold">
-          <PhoneIncoming className="h-4 w-4 text-muted-foreground" /> Inbound calls
-        </p>
-        <Badge variant={trunk.inbound_enabled ? "success" : "muted"}>
-          {trunk.inbound_enabled ? "Enabled" : "Disabled"}
-        </Badge>
-      </div>
-
-      {inboundAgents.isLoading ? (
-        <Skeleton className="h-9 w-full" />
-      ) : agents.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No inbound agents yet —{" "}
-          <Link to="/admin/inbound-agents" className="text-primary hover:underline">
-            create one
-          </Link>{" "}
-          to answer calls on this number.
-        </p>
-      ) : trunk.inbound_enabled ? (
-        <div className="flex gap-2">
-          <Select value={selectedAgentId} onValueChange={handleChangeAgent} disabled={busy}>
-            <SelectTrigger className="flex-1 bg-card"><SelectValue placeholder="Select an inbound agent..." /></SelectTrigger>
-            <SelectContent>
-              {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={handleDisable} disabled={busy}>
-            {disableInbound.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Disable"}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          <Select value={selectedAgentId} onValueChange={setSelectedAgentId} disabled={busy}>
-            <SelectTrigger className="flex-1 bg-card"><SelectValue placeholder="Select an inbound agent..." /></SelectTrigger>
-            <SelectContent>
-              {agents.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button variant="gradient" onClick={handleEnable} disabled={busy || !selectedAgentId}>
-            {setupInbound.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Enable"}
-          </Button>
-        </div>
-      )}
-      {currentAgent && trunk.inbound_enabled && (
-        <p className="text-xs text-muted-foreground">Currently answered by <span className="font-medium text-foreground">{currentAgent.name}</span>.</p>
-      )}
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm">
+      <p className="flex items-center gap-2">
+        <PhoneIncoming className="h-4 w-4 shrink-0 text-warning" />
+        Incoming calls to this number are no longer answered by an AI agent. Turn off the old inbound routing.
+      </p>
+      <Button variant="outline" size="sm" onClick={handleDisable} disabled={disableInbound.isPending}>
+        {disableInbound.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Turn off"}
+      </Button>
     </div>
   );
 }

@@ -42,8 +42,7 @@ export default function CampaignsList() {
   const [search, setSearch] = useState("");
 
   const folders = useFolders();
-  // Prime Calling campaigns live on their own page (routes/PrimeCalling.tsx)
-  const campaigns = useCampaigns(status === "all" ? { is_prime: false } : { status, is_prime: false });
+  const campaigns = useCampaigns(status === "all" ? undefined : { status });
 
   const filtered = useMemo(() => {
     let list = campaigns.data ?? [];

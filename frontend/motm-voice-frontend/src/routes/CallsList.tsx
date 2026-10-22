@@ -12,8 +12,7 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { CallOutcomeBadge } from "@/components/shared/StatusBadge";
-import { useCalls, useCampaigns, useEngines } from "@/lib/hooks";
-import { engineLabel } from "@/lib/providerLabels";
+import { useCalls, useCampaigns } from "@/lib/hooks";
 import { callDurationSeconds, formatDateTime, formatDuration } from "@/lib/utils";
 
 const OUTCOMES = [
@@ -34,8 +33,6 @@ export default function CallsList() {
   const [search, setSearch] = useState("");
 
   const campaigns = useCampaigns();
-  const engines = useEngines();
-  const showEngine = (engines.data?.engines.length ?? 0) > 1;
   const calls = useCalls({
     campaign_id: campaignId === "all" ? undefined : campaignId,
     outcome: outcome === "all" ? undefined : outcome,
@@ -154,7 +151,6 @@ export default function CallsList() {
                   <TableHead>Started</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Outcome</TableHead>
-                  {showEngine && <TableHead>Engine</TableHead>}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -175,7 +171,6 @@ export default function CallsList() {
                     <TableCell className="text-xs text-muted-foreground">{formatDateTime(c.started_at)}</TableCell>
                     <TableCell className="tabular-figure text-sm">{formatDuration(callDurationSeconds(c))}</TableCell>
                     <TableCell><CallOutcomeBadge outcome={c.outcome} status={c.status} /></TableCell>
-                    {showEngine && <TableCell className="text-xs text-muted-foreground">{engineLabel(c.pipeline)}</TableCell>}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" asChild>
                         <Link to={`/calls/${c.id}`}>

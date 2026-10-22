@@ -104,7 +104,6 @@ export default function PlatformOrgDetail() {
             id={org.data.id}
             planId={org.data.plan_name}
             monthlyCallQuota={org.data.monthly_call_quota}
-            elevenlabsEnabled={org.data.elevenlabs_enabled}
           />
           <EnginesCard org={org.data} />
           <CreditsCard id={org.data.id} />
@@ -215,12 +214,10 @@ function SettingsCard({
   id,
   planId,
   monthlyCallQuota,
-  elevenlabsEnabled,
 }: {
   id: string;
   planId: string;
   monthlyCallQuota: number;
-  elevenlabsEnabled: boolean;
 }) {
   const plans = usePlatformPlans();
   const update = useUpdatePlatformOrg();
@@ -230,7 +227,6 @@ function SettingsCard({
   // plan whose name matches, and fall back to no selection if it can't be found.
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
   const [quota, setQuota] = useState(String(monthlyCallQuota));
-  const [elevenlabs, setElevenlabs] = useState(elevenlabsEnabled);
 
   useEffect(() => {
     if (!plans.data) return;
@@ -240,8 +236,7 @@ function SettingsCard({
 
   useEffect(() => {
     setQuota(String(monthlyCallQuota));
-    setElevenlabs(elevenlabsEnabled);
-  }, [monthlyCallQuota, elevenlabsEnabled]);
+  }, [monthlyCallQuota]);
 
   async function handleSave() {
     const parsedQuota = Number(quota);
@@ -255,7 +250,6 @@ function SettingsCard({
         data: {
           plan_id: selectedPlanId || undefined,
           monthly_call_quota: parsedQuota,
-          elevenlabs_enabled: elevenlabs,
         },
       });
       toast.success("Organization updated");
@@ -294,13 +288,6 @@ function SettingsCard({
             <Input type="number" min={0} value={quota} onChange={(e) => setQuota(e.target.value)} />
           </div>
         </div>
-        <div className="flex items-center justify-between rounded-lg border border-border p-3">
-          <div>
-            <p className="text-sm font-medium">ElevenLabs voices</p>
-            <p className="text-xs text-muted-foreground">Feature flag for this organization.</p>
-          </div>
-          <Switch checked={elevenlabs} onCheckedChange={setElevenlabs} />
-        </div>
         <Button variant="gradient" onClick={handleSave} disabled={update.isPending}>
           {update.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           Save changes
@@ -317,49 +304,19 @@ function EnginesCard({ org }: { org: PlatformOrgDetail }) {
       await update.mutateAsync({ id: org.id, data });
       toast.success(label);
     } catch (err) {
-      toast.error(platformApiErrorMessage(err, "Couldn't update calling engines"));
+      toast.error(platformApiErrorMessage(err, "Couldn't update voice cloning"));
     }
   }
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Calling engines</CardTitle>
-        <CardDescription>
-          Indic Native (Sarvam STT + sarvam-105b-conversations + Bulbul) for this company. Applies from the next
-          call; calls in progress are never affected. Now: <span className="font-medium">{org.sarvam_effective}</span>
-        </CardDescription>
+        <CardTitle>Voice cloning</CardTitle>
+        <CardDescription>Applies to this company's next request; existing cloned voices keep working.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 pt-0">
         <div className="flex items-center justify-between rounded-lg border border-border p-3">
           <div>
-            <p className="text-sm font-medium">Indic Native available</p>
-            <p className="text-xs text-muted-foreground">Shows the engine choice in this company's app.</p>
-          </div>
-          <Switch
-            checked={org.sarvam_pipeline_enabled}
-            disabled={update.isPending}
-            onCheckedChange={(v) => save({ sarvam_pipeline_enabled: v }, v ? "Indic Native enabled" : "Indic Native disabled")}
-          />
-        </div>
-        <div className="flex items-center justify-between rounded-lg border border-border p-3">
-          <div>
-            <p className="text-sm font-medium">Default for new agents and campaigns</p>
-            <p className="text-xs text-muted-foreground">Existing agents and campaigns keep their own setting.</p>
-          </div>
-          <Select
-            value={org.default_pipeline}
-            onValueChange={(v) => save({ default_pipeline: v as "standard" | "sarvam" }, "Default engine updated")}
-          >
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="standard">Standard</SelectItem>
-              <SelectItem value="sarvam">Indic Native</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between rounded-lg border border-border p-3">
-          <div>
-            <p className="text-sm font-medium">Indic Native voice cloning</p>
+            <p className="text-sm font-medium">Allow voice cloning</p>
             <p className="text-xs text-muted-foreground">Lets this company request Sarvam cloned voices (owner approval still required).</p>
           </div>
           <Switch

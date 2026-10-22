@@ -11,13 +11,11 @@ import { InterestedRateChart } from "@/components/charts/InterestedRateChart";
 import { CallsByDayChart } from "@/components/charts/CallsByDayChart";
 import { OutcomeDonutChart } from "@/components/charts/OutcomeDonutChart";
 import { ChartZoomButton } from "@/components/charts/ChartZoomButton";
-import { useCampaigns, useDashboard, useEngineComparison } from "@/lib/hooks";
-import { formatDuration } from "@/lib/utils";
+import { useCampaigns, useDashboard } from "@/lib/hooks";
 
 export default function Analytics() {
   const dashboard = useDashboard();
   const campaigns = useCampaigns();
-  const engineComparison = useEngineComparison();
 
   return (
     <div className="space-y-8">
@@ -95,29 +93,6 @@ export default function Analytics() {
           </ChartZoomButton>
         )}
       </div>
-
-      {(engineComparison.data?.length ?? 0) > 1 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Calling engines compared</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {engineComparison.data!.map((e) => (
-                <div key={e.engine} className="rounded-lg border p-4">
-                  <p className="font-medium">{e.label}</p>
-                  <dl className="mt-2 grid grid-cols-2 gap-y-1 text-sm">
-                    <dt className="text-muted-foreground">Calls</dt><dd className="tabular-figure text-right">{e.calls}</dd>
-                    <dt className="text-muted-foreground">Answer rate</dt><dd className="tabular-figure text-right">{Math.round(e.answer_rate * 100)}%</dd>
-                    <dt className="text-muted-foreground">Interested (of answered)</dt><dd className="tabular-figure text-right">{Math.round(e.interested_rate * 100)}%</dd>
-                    <dt className="text-muted-foreground">Avg duration</dt><dd className="tabular-figure text-right">{formatDuration(Math.round(e.avg_duration_seconds))}</dd>
-                  </dl>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <CampaignComparisonTable
         campaigns={campaigns.data}

@@ -7,18 +7,15 @@ import {
   billingApi,
   callsApi,
   campaignsApi,
-  companyProfileApi,
   foldersApi,
-  inboundAgentsApi,
   languagesApi,
   plansApi,
-  promptLibraryApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, BillingAddress, CampaignCreate, CompanyProfileInput, InboundAgentCreate, Pipeline, PromptLibraryCreate, PromptLibraryEntry, PromptLibraryUpdate } from "./types";
+import type { AgentCreate, BillingAddress, CampaignCreate } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -115,7 +112,7 @@ export function useCreateFolder() {
 }
 
 // ── Campaigns ────────────────────────────────────────────────────────────
-export function useCampaigns(params?: { status?: string; folder_id?: string; is_prime?: boolean }) {
+export function useCampaigns(params?: { status?: string; folder_id?: string }) {
   return useQuery({
     queryKey: ["campaigns", params],
     queryFn: () => campaignsApi.list(params).then((r) => unwrapList(r.data)),
@@ -190,26 +187,11 @@ export function useDuplicateCampaign() {
   });
 }
 
-// ── Prime Calling ───────────────────────────────────────────────────────
-export function useCompanyProfile() {
+export function useCampaignPreview(id: string | null | undefined) {
   return useQuery({
-    queryKey: ["company-profile"],
-    queryFn: () => companyProfileApi.get().then((r) => r.data),
-  });
-}
-
-export function useSaveCompanyProfile() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: CompanyProfileInput) => companyProfileApi.save(data),
-    onSuccess: (r) => qc.setQueryData(["company-profile"], r.data),
-  });
-}
-
-export function usePrimePreview() {
-  return useMutation({
-    mutationFn: ({ id, contactId }: { id: string; contactId?: string }) =>
-      campaignsApi.primePreview(id, contactId).then((r) => r.data),
+    queryKey: ["campaign-preview", id],
+    queryFn: () => campaignsApi.preview(id!).then((r) => r.data),
+    enabled: !!id,
   });
 }
 
@@ -220,6 +202,7 @@ export function useUploadContacts() {
     onSuccess: (_r, vars) => {
       qc.invalidateQueries({ queryKey: ["campaign", vars.id] });
       qc.invalidateQueries({ queryKey: ["campaign-contacts", vars.id] });
+      qc.invalidateQueries({ queryKey: ["campaign-preview", vars.id] });
     },
   });
 }
@@ -256,6 +239,21 @@ export function useAgents() {
     queryFn: () => agentsApi.list().then((r) => unwrapList(r.data)),
     refetchInterval: 20_000,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useAgent(id: string | undefined) {
+  return useQuery({
+    queryKey: ["agents", id],
+    queryFn: () => agentsApi.get(id!).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useCustomizeAgent() {
+  return useMutation({
+    mutationFn: (data: { greeting: string; instructions: string; request: string }) =>
+      agentsApi.customize(data).then((r) => r.data),
   });
 }
 
@@ -298,146 +296,12 @@ export function useMyCreationRequests() {
   });
 }
 
-// ── Prompt library ───────────────────────────────────────────────────────
-export function usePromptLibrary(params?: { q?: string; tag?: string }) {
-  return useQuery({
-    queryKey: ["prompt-library", params],
-    queryFn: () => promptLibraryApi.list(params).then((r) => unwrapList(r.data)),
-  });
-}
-
-export function usePromptHistory(id: string | undefined) {
-  return useQuery({
-    queryKey: ["prompt-library-history", id],
-    queryFn: () => promptLibraryApi.history(id!).then((r) => r.data),
-    enabled: !!id,
-  });
-}
-
-export function useCreatePrompt() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: PromptLibraryCreate) => promptLibraryApi.create(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
-  });
-}
-
-export function useUpdatePrompt() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: PromptLibraryUpdate }) => promptLibraryApi.update(id, data),
-    onSuccess: (_r, vars) => {
-      qc.invalidateQueries({ queryKey: ["prompt-library"] });
-      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
-    },
-  });
-}
-
-export function useDeletePrompt() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => promptLibraryApi.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
-  });
-}
-
-export function useRestorePromptVersion() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, version }: { id: string; version: number }) => promptLibraryApi.restore(id, version),
-    onSuccess: (_r, vars) => {
-      qc.invalidateQueries({ queryKey: ["prompt-library"] });
-      qc.invalidateQueries({ queryKey: ["prompt-library-history", vars.id] });
-    },
-  });
-}
-
-export function useMarkPromptPerformance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, is_high_performing }: { id: string; is_high_performing: boolean }) =>
-      promptLibraryApi.markPerformance(id, is_high_performing),
-    onMutate: async ({ id, is_high_performing }) => {
-      await qc.cancelQueries({ queryKey: ["prompt-library"] });
-      const previous = qc.getQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] });
-      qc.setQueriesData<PromptLibraryEntry[]>({ queryKey: ["prompt-library"] }, (old) =>
-        old?.map((p) => (p.id === id ? { ...p, is_high_performing } : p))
-      );
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      context?.previous.forEach(([key, data]) => qc.setQueryData(key, data));
-    },
-    onSettled: () => {
-      // Refetch in the background — don't block the mutation on it, that's
-      // what made the star toggle feel slow (mutateAsync waited on the
-      // whole list reload before resolving).
-      void qc.invalidateQueries({ queryKey: ["prompt-library"] });
-    },
-  });
-}
-
-export function useSyncPromptsFromAgents() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => promptLibraryApi.syncFromAgents(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompt-library"] }),
-  });
-}
-
-// ── Inbound agents ─────────────────────────────────────────────────────────
-export function useInboundAgents() {
-  return useQuery({
-    queryKey: ["inbound-agents"],
-    queryFn: () => inboundAgentsApi.list().then((r) => unwrapList(r.data)),
-  });
-}
-
-export function useCreateInboundAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: InboundAgentCreate) => inboundAgentsApi.create(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
-  });
-}
-
-export function useUpdateInboundAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<InboundAgentCreate> }) => inboundAgentsApi.update(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
-  });
-}
-
-export function useDeleteInboundAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => inboundAgentsApi.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inbound-agents"] }),
-  });
-}
-
 // ── Voice cloning ────────────────────────────────────────────────────────
-export function useEngineComparison() {
+export function useLanguages() {
   return useQuery({
-    queryKey: ["analytics", "engines"],
-    queryFn: () => analyticsApi.engines().then((r) => r.data.items),
-  });
-}
-
-export function useEngines() {
-  return useQuery({
-    queryKey: ["engines"],
-    queryFn: () => languagesApi.engines().then((r) => r.data),
-    staleTime: 60_000,
-  });
-}
-
-export function useLanguages(pipeline: Pipeline) {
-  return useQuery({
-    queryKey: ["languages", pipeline],
-    queryFn: () => languagesApi.list(pipeline).then((r) => r.data.languages),
-    staleTime: 60_000,
+    queryKey: ["languages"],
+    queryFn: () => languagesApi.list().then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -451,7 +315,7 @@ export function useClonedVoices() {
 export function useCreateClonedVoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; file: File; consentVideo: File; engine?: Pipeline; language?: string }) =>
+    mutationFn: (data: { name: string; file: File; consentVideo: File; language: string }) =>
       voiceCloningApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cloned-voices"] }),
   });
@@ -485,24 +349,6 @@ export function useTrunkAssignments(id: string | undefined) {
     queryKey: ["trunk-assignments", id],
     queryFn: () => sipTrunksApi.assignments(id!).then((r) => r.data),
     enabled: !!id,
-  });
-}
-
-export function useSetupInboundCalling() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ trunkId, agentId }: { trunkId: string; agentId: string }) =>
-      sipTrunksApi.setupInbound(trunkId, agentId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sip-trunks"] }),
-  });
-}
-
-export function useUpdateInboundCallingAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ trunkId, agentId }: { trunkId: string; agentId: string }) =>
-      sipTrunksApi.updateInboundAgent(trunkId, agentId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sip-trunks"] }),
   });
 }
 

@@ -6,11 +6,9 @@ import {
   Phone,
   BarChart3,
   Headset,
-  BookMarked,
   Mic,
   Users,
   PhoneCall,
-  PhoneIncoming,
   ShieldBan,
   ClipboardList,
   CreditCard,
@@ -18,8 +16,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   LogOut,
-  Sparkles,
-  TestTube,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -29,20 +25,16 @@ import { cn, initials } from "@/lib/utils";
 import { toast } from "sonner";
 
 const mainNav = [
+  { to: "/agents", label: "AI Agents", icon: Headset },
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
-  { to: "/prime-calling", label: "Prime Calling", icon: Sparkles },
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/agents", label: "AI Agents", icon: Headset },
-  { to: "/testing", label: "Testing", icon: TestTube },
-  { to: "/prompt-library", label: "Prompt Library", icon: BookMarked },
 ];
 
 const adminNav = [
   { to: "/admin/team", label: "Team", icon: Users },
   { to: "/admin/phone-numbers", label: "Phone Numbers", icon: PhoneCall },
-  { to: "/admin/inbound-agents", label: "Inbound Agents", icon: PhoneIncoming },
   { to: "/voice-cloning", label: "Voice Cloning", icon: Mic },
   { to: "/admin/dnc", label: "DNC List", icon: ShieldBan },
   { to: "/admin/audit", label: "Audit Log", icon: ClipboardList },

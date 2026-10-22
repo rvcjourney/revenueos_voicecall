@@ -20,20 +20,16 @@ const Dashboard = lazy(() => import("@/routes/Dashboard"));
 const CampaignsList = lazy(() => import("@/routes/CampaignsList"));
 const CampaignNew = lazy(() => import("@/routes/CampaignNew"));
 const CampaignDetail = lazy(() => import("@/routes/CampaignDetail"));
-const PrimeCalling = lazy(() => import("@/routes/PrimeCalling"));
-const PrimeCompanyProfile = lazy(() => import("@/routes/PrimeCompanyProfile"));
 const CallsList = lazy(() => import("@/routes/CallsList"));
 const CallDetail = lazy(() => import("@/routes/CallDetail"));
 const Agents = lazy(() => import("@/routes/Agents"));
-const PromptLibrary = lazy(() => import("@/routes/PromptLibrary"));
+const AgentEditor = lazy(() => import("@/routes/AgentEditor"));
 const VoiceCloning = lazy(() => import("@/routes/VoiceCloning"));
-const Testing = lazy(() => import("@/routes/Testing"));
 const Analytics = lazy(() => import("@/routes/Analytics"));
 const Billing = lazy(() => import("@/routes/Billing"));
 const Settings = lazy(() => import("@/routes/Settings"));
 const AdminTeam = lazy(() => import("@/routes/admin/AdminTeam"));
 const AdminPhoneNumbers = lazy(() => import("@/routes/admin/AdminPhoneNumbers"));
-const InboundAgents = lazy(() => import("@/routes/admin/InboundAgents"));
 const AdminDnc = lazy(() => import("@/routes/admin/AdminDnc"));
 const AdminAudit = lazy(() => import("@/routes/admin/AdminAudit"));
 
@@ -81,21 +77,17 @@ export default function App() {
                       <Route path="/campaigns" element={<CampaignsList />} />
                       <Route path="/campaigns/new" element={<CampaignNew />} />
                       <Route path="/campaigns/:id" element={<CampaignDetail />} />
-                      <Route path="/prime-calling" element={<PrimeCalling />} />
-                      <Route path="/prime-calling/new" element={<CampaignNew prime />} />
-                      <Route path="/prime-calling/company" element={<PrimeCompanyProfile />} />
+                      <Route path="/prime-calling/*" element={<Navigate to="/campaigns" replace />} />
                       <Route path="/calls" element={<CallsList />} />
                       <Route path="/calls/:id" element={<CallDetail />} />
                       <Route path="/agents" element={<Agents />} />
-                      <Route path="/prompt-library" element={<PromptLibrary />} />
+                      <Route path="/agents/:id" element={<AgentEditor />} />
                       <Route path="/voice-cloning" element={<VoiceCloning />} />
-                      <Route path="/testing" element={<Testing />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/billing" element={<Billing />} />
                       <Route path="/settings" element={<Settings />} />
                       <Route path="/admin/team" element={<AdminTeam />} />
                       <Route path="/admin/phone-numbers" element={<AdminPhoneNumbers />} />
-                      <Route path="/admin/inbound-agents" element={<InboundAgents />} />
                       <Route path="/admin/dnc" element={<AdminDnc />} />
                       <Route path="/admin/audit" element={<AdminAudit />} />
                     </Route>

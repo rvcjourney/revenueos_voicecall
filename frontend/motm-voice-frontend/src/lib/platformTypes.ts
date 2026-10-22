@@ -40,12 +40,7 @@ export interface PlatformOrgDetail extends PlatformOrg {
   users_count: number;
   subscription_status: string;
   subscription_current_period_end: string | null;
-  elevenlabs_enabled: boolean;
-  sarvam_pipeline_enabled: boolean;
-  default_pipeline: "standard" | "sarvam";
   sarvam_cloning_allowed: boolean;
-  /** "on" | "off: global switch" | "off: organisation" */
-  sarvam_effective: string;
   plan_price_minor: number | null;
   plan_discount_price_minor: number | null;
   plan_currency: string | null;
@@ -64,9 +59,6 @@ export interface PlatformOrgUpdate {
   is_active?: boolean;
   plan_id?: string;
   monthly_call_quota?: number;
-  elevenlabs_enabled?: boolean;
-  sarvam_pipeline_enabled?: boolean;
-  default_pipeline?: "standard" | "sarvam";
   sarvam_cloning_allowed?: boolean;
 }
 
@@ -109,29 +101,19 @@ export interface PlatformCostSettings {
   sarvam_cost_per_minute_minor: number | null;
 }
 
-export interface EngineLanguageCell {
+export interface EngineLanguage {
+  key: string;
+  display: string;
   enabled: boolean;
   default_enabled: boolean;
-  /** "on" | "off: global switch" | "off: language" */
-  effective: string;
-  tts_model: string | null;
-  default_tts_model: string | null;
+  tts_model: string;
+  default_tts_model: string;
   voices: { id: string; name: string; gender: string }[];
   shortlist: string[];
 }
 
-export interface EngineLanguage {
-  key: string;
-  display: string;
-  standard: EngineLanguageCell;
-  sarvam: EngineLanguageCell;
-}
-
 export interface EnginesOverview {
-  global_enabled: boolean;
   languages: EngineLanguage[];
-  paused_campaigns: { id: string; name: string; org_id: string; org_name: string }[];
-  orgs_enabled: number;
 }
 
 export interface EngineLatency {
@@ -143,8 +125,7 @@ export interface EngineLatency {
 }
 
 export interface EnginesUpdate {
-  global_enabled?: boolean;
-  languages?: Record<string, Partial<Record<"standard" | "sarvam", { enabled?: boolean; tts_model?: string; voices?: string[] }>>>;
+  languages?: Record<string, { enabled?: boolean; tts_model?: string; voices?: string[] }>;
 }
 
 export interface PlatformListResponse<T> {
@@ -177,18 +158,11 @@ export interface PlatformHealth {
   redis: boolean;
   celery_workers_online: number;
   celery_worker_names: string[];
-  elevenlabs_ok: boolean;
-  elevenlabs_tier: string | null;
-  elevenlabs_characters_used: number | null;
-  elevenlabs_characters_limit: number | null;
-  elevenlabs_next_reset_unix: number | null;
   db_size_bytes: number;
   db_size_limit_bytes: number;
   db_connections_current: number;
   db_connections_max: number;
   db_tables_missing_rls: string[];
-  groq_ok: boolean;
-  groq_error: string | null;
   stale_pending_calls_count: number;
   stale_initiated_calls_count: number;
   /** Last daily Sarvam probe; null = never run. */

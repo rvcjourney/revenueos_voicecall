@@ -11,11 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { useClonedVoices, useCreateClonedVoice, useDeleteClonedVoice, useEngines } from "@/lib/hooks";
+import { useClonedVoices, useCreateClonedVoice, useDeleteClonedVoice, useLanguages } from "@/lib/hooks";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useEngineLanguages } from "@/components/shared/EngineFields";
-import { engineLabel } from "@/lib/providerLabels";
-import type { Pipeline } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { VOICE_CLONING_CONSENT_SCRIPT } from "@/lib/consentScript";
@@ -51,13 +48,11 @@ export default function VoiceCloning() {
   const deleteVoice = useDeleteClonedVoice();
 
   const [name, setName] = useState("");
-  // Which calling engine the voice is for — only offered when the owner has
-  // enabled Indic Native cloning for this company.
-  const engines = useEngines();
-  const cloningEngines = engines.data?.cloning_allowed ? engines.data.engines : [];
-  const [engine, setEngine] = useState<Pipeline>("standard");
+  const languages = useLanguages();
+  // The owner turns cloning on per company (/ops); until then requests are refused.
+  const cloningAllowed = languages.data?.cloning_allowed ?? false;
   const [sampleLanguage, setSampleLanguage] = useState("hinglish");
-  const cloneLanguages = useEngineLanguages("sarvam").filter((l) => l.cloned_voices);
+  const cloneLanguages = (languages.data?.languages ?? []).filter((l) => l.cloned_voices);
 
   const slotsUsed = clonedVoices.data?.filter((v) => v.status === "ready" || v.status === "pending").length ?? 0;
   const atCap = slotsUsed >= MAX_CLONED_VOICES_PER_ORG;
@@ -239,7 +234,7 @@ export default function VoiceCloning() {
         name: name.trim(),
         file: audioFile,
         consentVideo: consentVideoFile,
-        ...(engine === "sarvam" ? { engine, language: sampleLanguage } : {}),
+        language: sampleLanguage,
       });
       toast.success("Submitted for review — you'll see it here once approved");
       setName("");
@@ -294,20 +289,12 @@ export default function VoiceCloning() {
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Priya" />
           </div>
 
-          {cloningEngines.length > 1 && (
-            <div className="grid max-w-sm gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Voice for</Label>
-                <Select value={engine} onValueChange={(v) => setEngine(v as Pipeline)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {cloningEngines.map((e) => (
-                      <SelectItem key={e.value} value={e.value}>{e.label} voice</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {engine === "sarvam" && (
+          {!cloningAllowed && languages.isSuccess && (
+            <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
+              Voice cloning isn't switched on for your company yet — contact support to enable it.
+            </p>
+          )}
+          <div className="grid max-w-sm gap-3">
                 <div className="space-y-1.5">
                   <Label>Language spoken in the sample</Label>
                   <Select value={sampleLanguage} onValueChange={setSampleLanguage}>
@@ -319,14 +306,10 @@ export default function VoiceCloning() {
                     </SelectContent>
                   </Select>
                 </div>
-              )}
-              {engine === "sarvam" && (
-                <p className="text-xs text-muted-foreground sm:col-span-2">
+                <p className="text-xs text-muted-foreground">
                   Use 10–15 seconds of calm, clear speech from one person. The voice can then speak any supported language.
                 </p>
-              )}
-            </div>
-          )}
+          </div>
 
           <Tabs
             value={source}
@@ -474,7 +457,6 @@ export default function VoiceCloning() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  {cloningEngines.length > 1 && <TableHead>For</TableHead>}
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -484,7 +466,6 @@ export default function VoiceCloning() {
                 {clonedVoices.data.map((v) => (
                   <TableRow key={v.id}>
                     <TableCell className="font-medium">{v.name}</TableCell>
-                    {cloningEngines.length > 1 && <TableCell>{engineLabel(v.engine)}</TableCell>}
                     <TableCell>
                       <div className="space-y-1">
                         <Badge variant={STATUS_VARIANTS[v.status] ?? "destructive"}>

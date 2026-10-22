@@ -40,8 +40,6 @@ export type CallSentiment = "positive" | "neutral" | "negative";
 
 export type AgentAccessStatus = "approved" | "pending" | "locked";
 
-export type VoiceProvider = "elevenlabs" | "cartesia" | "sarvam" | "chatterbox";
-
 export type DNCReason = "user_request" | "wrong_number" | "complaint" | "manual_block" | "spam_report";
 
 export type SipTransport = "tcp" | "udp" | "tls";
@@ -74,33 +72,24 @@ export interface LoginResponse {
   user: User;
 }
 
-// Calling engine ("Standard" / "Indic Native" to customers — see engineLabel()).
-export type Pipeline = "standard" | "sarvam";
-
-export interface EngineOption {
-  value: Pipeline;
-  label: string;
-}
-
-export interface EnginesResponse {
-  engines: EngineOption[];
-  default_pipeline: Pipeline;
-  cloning_allowed: boolean;
-}
-
 export interface EngineVoice {
   id: string;
   name: string;
   gender: "male" | "female";
 }
 
-// One entry of GET /api/languages?pipeline=… (voices only for the "sarvam" engine).
+// One entry of GET /api/languages.
 export interface LanguageOption {
   value: string;
   label: string;
   native: string;
   cloned_voices: boolean;
-  voices?: EngineVoice[];
+  voices: EngineVoice[];
+}
+
+export interface LanguagesResponse {
+  languages: LanguageOption[];
+  cloning_allowed: boolean;
 }
 
 export interface AgentTemplate {
@@ -108,14 +97,15 @@ export interface AgentTemplate {
   name: string;
   description: string | null;
   language: string;
+  /** The Greeting: spoken word for word when the call connects. */
   welcome_message: string;
+  /** The Instructions (markdown with {placeholders}). */
   system_prompt: string;
+  /** Default value per placeholder; a contact's CSV column wins. */
+  variables: Record<string, string>;
   voice_id: string;
-  voice_provider: VoiceProvider | string;
-  llm_model: string;
   llm_temperature: number;
   max_call_duration_seconds: number;
-  pipeline: Pipeline;
   created_at: string;
   access_status: AgentAccessStatus;
   access_request_id: string | null;
@@ -128,44 +118,16 @@ export interface AgentCreate {
   language?: string;
   welcome_message?: string;
   system_prompt?: string;
+  variables?: Record<string, string>;
   voice_id?: string;
-  voice_provider?: string;
-  llm_model?: string;
   llm_temperature?: number;
   max_call_duration_seconds?: number;
-  pipeline?: Pipeline;
 }
 
-// ── Inbound agents (answer calls arriving on a number, kept separate from
-// outbound campaign/test-call AgentTemplate) ────────────────────────────────
-export interface InboundAgent {
-  id: string;
-  name: string;
-  description: string | null;
-  language: string;
-  welcome_message: string;
-  system_prompt: string;
-  voice_id: string;
-  voice_provider: VoiceProvider | string;
-  llm_model: string;
-  llm_temperature: number;
-  max_call_duration_seconds: number;
-  pipeline: Pipeline;
-  created_at: string;
-}
-
-export interface InboundAgentCreate {
-  name: string;
-  description?: string;
-  language?: string;
-  welcome_message?: string;
-  system_prompt?: string;
-  voice_id?: string;
-  voice_provider?: string;
-  llm_model?: string;
-  llm_temperature?: number;
-  max_call_duration_seconds?: number;
-  pipeline?: Pipeline;
+export interface CustomizeResult {
+  summary: string;
+  greeting: string;
+  instructions: string;
 }
 
 export interface CampaignFolder {
@@ -202,11 +164,8 @@ export interface Campaign {
   completed_at: string | null;
   created_at: string;
   created_by_name: string | null;
-  is_prime: boolean;
   language?: string | null;
   voice_id?: string | null;
-  pitch_structure?: string | null;
-  pipeline?: Pipeline | null;
   pause_reason?: string | null;
 }
 
@@ -216,8 +175,7 @@ export interface CampaignCreate {
   notes?: string;
   goal?: CampaignGoal;
   folder_id?: string;
-  // Required for classic campaigns; a Prime campaign may omit it if pitch_structure is given instead.
-  agent_template_id?: string;
+  agent_template_id: string;
   sip_trunk_id?: string;
   calling_window_start?: string;
   calling_window_end?: string;
@@ -228,15 +186,10 @@ export interface CampaignCreate {
   retry_after_minutes?: number;
   start_time?: string;
   end_time?: string;
-  is_prime?: boolean;
   /** Speak this campaign in another language than the agent's own. Omit to inherit it. */
   language?: string;
-  /** Use one of the org's own cloned voices directly, instead of the agent's own voice. Omit to inherit it. */
+  /** A voice for this campaign instead of the agent's own. Omit to inherit it. */
   voice_id?: string;
-  /** Prime only: this campaign's own pitch structure, used instead of an agent template's system prompt. */
-  pitch_structure?: string;
-  /** Calling engine for this campaign. Omit to use the agent's own. */
-  pipeline?: Pipeline;
 }
 
 export interface CampaignContact {
@@ -249,38 +202,24 @@ export interface CampaignContact {
   status: ContactStatus;
   attempt_count: number;
   last_attempted_at: string | null;
-  generated_system_prompt?: string | null;
-  generated_welcome_message?: string | null;
-  prompt_generated_at?: string | null;
-  prompt_error?: string | null;
 }
 
-// ── Prime Calling ───────────────────────────────────────────────────────
-export interface CompanyProfileInput {
-  company_name: string;
-  website: string | null;
-  industry: string | null;
-  what_we_offer: string | null;
-  value_proposition: string | null;
-  target_customers: string | null;
-  key_points: string | null;
-  call_objective: string | null;
-  tone_notes: string | null;
-  extra_info: string | null;
-}
-
-export interface CompanyProfile extends CompanyProfileInput {
-  is_complete: boolean;
-  updated_at: string | null;
-}
-
-export interface PrimePreview {
+// GET /api/campaigns/{id}/preview: the agent's script filled in per contact.
+export interface CampaignPreviewItem {
   contact_id: string;
-  contact_name: string;
-  system_prompt: string;
+  name: string;
+  phone: string;
   welcome_message: string;
-  website_used: boolean;
-  web_searched?: boolean;
+  system_prompt: string;
+  missing: string[];
+}
+
+export interface CampaignPreview {
+  total_contacts: number;
+  variables: string[];
+  /** Placeholders with no value for at least one contact. */
+  missing: string[];
+  items: CampaignPreviewItem[];
 }
 
 export interface TranscriptSegment {
@@ -305,8 +244,6 @@ export interface Call {
   cost_inr: number | null;
   summary: string | null;
   recording_url: string | null;
-  pipeline?: Pipeline | null;
-  pipeline_fallback?: boolean;
   created_at: string;
 }
 
@@ -338,8 +275,8 @@ export interface SipTrunk {
   is_default: boolean;
   is_active: boolean;
   created_at: string;
+  /** Left over from inbound calling (removed); only lets an admin switch it off. */
   inbound_enabled: boolean;
-  inbound_agent_template_id: string | null;
 }
 
 export interface SipTrunkAssignment {
@@ -396,10 +333,9 @@ export interface ConcurrencyUsage {
 export interface ClonedVoice {
   id: string;
   name: string;
-  elevenlabs_voice_id: string | null;
+  voice_id: string | null;
   status: "ready" | "failed" | "pending" | "rejected";
   rejection_reason?: string | null;
-  engine?: Pipeline;
   language?: string | null;
   created_at: string;
 }
@@ -570,44 +506,4 @@ export interface ActivityEvent {
 export interface ListResponse<T> {
   items: T[];
   total: number;
-}
-
-// ── Prompt library ───────────────────────────────────────────────────────
-export interface PromptLibraryVersion {
-  version: number;
-  structured_prompt: string;
-  editor_id: string | null;
-  editor_name: string;
-  note: string | null;
-  created_at: string;
-}
-
-export interface PromptLibraryEntry {
-  id: string;
-  title: string;
-  tags: string[];
-  raw_input: string | null;
-  structured_prompt: string;
-  is_high_performing: boolean;
-  current_version: number;
-  source_agent_id: string | null;
-  source_agent_name: string | null;
-  created_by_id: string | null;
-  created_by_name: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PromptLibraryCreate {
-  title: string;
-  tags?: string[];
-  raw_input?: string | null;
-  structured_prompt: string;
-}
-
-export interface PromptLibraryUpdate {
-  title?: string;
-  tags?: string[];
-  structured_prompt?: string;
-  note?: string | null;
 }
