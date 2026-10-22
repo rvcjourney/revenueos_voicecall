@@ -191,6 +191,13 @@ export interface PlatformHealth {
   groq_error: string | null;
   stale_pending_calls_count: number;
   stale_initiated_calls_count: number;
+  /** Last daily Sarvam probe; null = never run. */
+  sarvam_probe: {
+    checked_at: string;
+    ok: Record<string, boolean>;
+    errors: Record<string, string>;
+    last_ok_at: Record<string, string>;
+  } | null;
 }
 
 export interface PlatformVoiceCloneRequest {

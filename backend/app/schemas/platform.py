@@ -308,3 +308,7 @@ class PlatformHealthOut(BaseModel):
     # backend/app/database.py's _API_POOL_SIZE comment) and calls were
     # silently orphaned mid-dispatch.
     stale_initiated_calls_count: int
+    # Last daily Sarvam probe (app/workers/tasks/sarvam_probe.py): checked_at,
+    # ok/errors per component, last_ok_at per component. None = never run.
+    # Sarvam publishes no balance/credits API, so this stands in for one.
+    sarvam_probe: dict | None = None

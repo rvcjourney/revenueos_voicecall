@@ -1154,8 +1154,19 @@ async def platform_health(
         )
     ) or 0
 
+    sarvam_probe = None
+    try:
+        import json as _json
+        from app.core.redis import get_redis
+        from app.workers.tasks.sarvam_probe import PROBE_REDIS_KEY
+        raw = await (await get_redis()).get(PROBE_REDIS_KEY)
+        sarvam_probe = _json.loads(raw) if raw else None
+    except Exception:
+        log.warning("sarvam_probe_read_failed")
+
     return PlatformHealthOut(
         api=True,
+        sarvam_probe=sarvam_probe,
         database=db_ok,
         redis=redis_ok,
         celery_workers_online=len(worker_replies),

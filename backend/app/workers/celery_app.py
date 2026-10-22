@@ -18,6 +18,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.campaign", "app.workers.tasks.billing",
         "app.workers.tasks.backup", "app.workers.tasks.retention",
+        "app.workers.tasks.sarvam_probe",
     ],
 )
 
@@ -108,6 +109,12 @@ celery_app.conf.update(
         "purge-expired-call-data": {
             "task": "app.workers.tasks.retention.purge_expired_call_data",
             "schedule": crontab(minute=0, hour=4),
+        },
+        # 03:00 IST, off-peak: one tiny real request per Sarvam model the Indic
+        # Native engine uses; alerts Sentry if any was retired or broke.
+        "probe-sarvam-models": {
+            "task": "app.workers.tasks.sarvam_probe.probe_sarvam_models",
+            "schedule": crontab(minute=30, hour=21),
         },
     },
 )

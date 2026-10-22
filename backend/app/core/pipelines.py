@@ -22,6 +22,11 @@ PIPELINE_LABELS = {STANDARD: "Standard", SARVAM: "Indic Native"}
 V4_FLASH = "bulbul:v4-flash"
 V3 = "bulbul:v3"
 SARVAM_TTS_MODELS = (V4_FLASH, V3)
+# Must match agent/config.py SARVAM_PIPELINE_LLM_MODEL (separate deployables).
+SARVAM_LLM_MODEL = "sarvam-105b-conversations"
+# The live engine uses realtime STT (WebSocket only); the daily probe checks the
+# REST model behind the same service as a cheap availability signal.
+SARVAM_STT_PROBE_MODEL = "saaras:v3"
 
 # bulbul:v3 speakers (simple names, every language) — same set the standard
 # pipeline already uses for regional calls (agent/config.py SARVAM_VOICE_ID etc.).

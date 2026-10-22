@@ -75,6 +75,16 @@ function SystemHealthCard() {
           ok: health.data.groq_ok,
           detail: health.data.groq_ok ? "Reachable" : (health.data.groq_error ?? "Unreachable"),
         },
+        {
+          // Sarvam has no balance API; the daily probe (STT, LLM, both Bulbul models) stands in.
+          label: "Sarvam (Indic Native engine)",
+          ok: !!health.data.sarvam_probe && Object.keys(health.data.sarvam_probe.errors).length === 0,
+          detail: !health.data.sarvam_probe
+            ? "Not checked yet (runs daily 03:00 IST)"
+            : Object.keys(health.data.sarvam_probe.errors).length === 0
+              ? `All OK · checked ${new Date(health.data.sarvam_probe.checked_at).toLocaleString()}`
+              : Object.entries(health.data.sarvam_probe.errors).map(([k, v]) => `${k}: ${v}`).join(" · "),
+        },
       ]
     : [];
 
