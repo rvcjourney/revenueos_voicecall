@@ -139,10 +139,13 @@ def test_switch_every_language_pair(src, dst):
 
 def test_switch_cloned_voice_keeps_voice_and_retargets_language():
     state = _state("hindi", "svc-abc", cloned=True)
-    tts, stt = _Fake(), _Fake()
-    sp.switch_language(state, "tamil", tts, stt)
-    assert tts.calls == [{"target_language_code": "ta-IN"}]
-    assert state.voice_id == "svc-abc"
+    state.extra["fallback_voice"] = "ritu_hi_conversation"
+    clone, stock, stt = _Fake(), _Fake(), _Fake()
+    adapter = SimpleNamespace(_tts_instances=[clone, stock])
+    sp.switch_language(state, "tamil", adapter, stt)
+    assert clone.calls == [{"target_language_code": "ta-IN"}]
+    assert stock.calls[-1]["speaker"] == "ritu" and stock.calls[-1]["target_language_code"] == "ta-IN"
+    assert state.voice_id == "svc-abc" and state.extra["fallback_voice"] == "ritu"
 
 
 def test_switch_to_disabled_language_is_ignored():

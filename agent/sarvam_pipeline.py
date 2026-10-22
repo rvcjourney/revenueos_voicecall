@@ -18,11 +18,13 @@ Settings follow Sarvam's "LiveKit in Production" telephony guidance
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
 
-from livekit.agents import TurnHandlingOptions
+import aiohttp
+from livekit.agents import TurnHandlingOptions, tts as lk_tts
 from livekit.plugins import sarvam
 
 from config import (
@@ -163,20 +165,103 @@ def _tts_kwargs(model: str, speaker: str, language_code: str) -> dict:
     return kw
 
 
-def build_tts(state: SarvamCallState) -> sarvam.TTS:
+def build_tts(state: SarvamCallState):
     lang = state.lang
-    return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], state.voice_id, lang["tts"]))
+    if not state.cloned:
+        return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], state.voice_id, lang["tts"]))
+    # Cloned voice first; if it fails to start or dies mid-call the adapter
+    # moves the rest of the call to a stock Sarvam voice in the same language
+    # (still Sarvam — not a cross-vendor fallback). Never silent.
+    fallback_voice = state.extra.setdefault("fallback_voice", lang["voices"][0]["id"])
+    clone = SarvamCloneTTS(voice_id=state.voice_id, target_language_code=lang["clone"])
+    stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], fallback_voice, lang["tts"]))
+    adapter = lk_tts.FallbackAdapter([clone, stock], max_retry_per_tts=1)
+
+    def _on_availability(ev) -> None:
+        if ev.tts is clone and not ev.available and not state.extra.get("clone_fallback"):
+            state.extra["clone_fallback"] = True
+            logger.warning("clone_fallback | voice=%s fallback_voice=%s request_id=%s",
+                           state.voice_id, fallback_voice, clone.last_request_id or "-")
+
+    adapter.on("tts_availability_changed", _on_availability)
+    return adapter
 
 
-def voice_for_language(state: SarvamCallState, target: dict) -> str:
+# ── Cloned voices (Sarvam Instant Voice Cloning, beta) ────────────────────────
+# Same config/text/flush/ping WebSocket protocol as stock Bulbul (confirmed in
+# the sarvamai 0.1.37 SDK: VoiceCloningConfigureConnection etc.), on a different
+# endpoint and with voice_id instead of speaker/model — so the stock plugin's
+# streaming, interruption, pooling, keep-alive and metrics are reused and only
+# the outgoing config message is rewritten.
+SARVAM_CLONE_WS_URL = "wss://api.sarvam.ai/voices/clone/ws"
+_CLONE_CONFIG_FIELDS = (
+    "target_language_code", "pace", "speech_sample_rate", "output_audio_codec",
+    "output_audio_bitrate", "min_buffer_size", "max_chunk_length",
+)
+
+
+def _clone_config(data: str, voice_id: str) -> str:
+    """Rewrite the plugin's stock-voice config message into the cloned-voice one;
+    every other message passes through unchanged."""
+    if '"type": "config"' not in data[:40]:
+        return data
+    stock = json.loads(data)["data"]
+    cfg = {k: stock[k] for k in _CLONE_CONFIG_FIELDS if k in stock}
+    # Must be target_language_code (a wrong field name is silently ignored);
+    # enable_pretts is the cloning API's name for number/date normalisation.
+    cfg.update(voice_id=voice_id, enable_pretts=True)
+    return json.dumps({"type": "config", "data": cfg})
+
+
+def _hook_socket(ws, owner: "SarvamCloneTTS"):
+    """Patch THIS socket instance (not a proxy: the plugin tracks sockets by
+    identity for its keep-alive task, so the object it gets must be the real one)."""
+    send_str, receive = ws.send_str, ws.receive
+
+    async def _send_str(data, *args, **kwargs):
+        return await send_str(_clone_config(data, owner.voice_id), *args, **kwargs)
+
+    async def _receive(*args, **kwargs):
+        msg = await receive(*args, **kwargs)
+        if msg.type == aiohttp.WSMsgType.TEXT and '"request_id"' in msg.data:
+            try:
+                rid = (json.loads(msg.data).get("data") or {}).get("request_id")
+                if rid:
+                    owner.last_request_id = rid
+            except ValueError:
+                pass
+        return msg
+
+    ws.send_str, ws.receive = _send_str, _receive
+    return ws
+
+
+class SarvamCloneTTS(sarvam.TTS):
+    def __init__(self, *, voice_id: str, target_language_code: str, ws_url: str = SARVAM_CLONE_WS_URL,
+                 api_key: str | None = None, http_session=None) -> None:
+        # model/speaker only satisfy the parent's local checks; they're never sent.
+        kw = _tts_kwargs("bulbul:v3", "ritu", target_language_code)
+        kw.pop("model"), kw.pop("speaker"), kw.pop("target_language_code")
+        super().__init__(api_key=api_key or SARVAM_API_KEY, model="bulbul:v3", speaker="ritu",
+                         target_language_code=target_language_code, ws_url=ws_url,
+                         http_session=http_session, **kw)
+        self.voice_id = voice_id
+        self.last_request_id = ""
+
+    async def _connect_ws(self, timeout: float):
+        return _hook_socket(await super()._connect_ws(timeout), self)
+
+
+def voice_for_language(state: SarvamCallState, target: dict, voice_id: str | None = None) -> str:
     """Same persona family in the new language if it exists (ritu_hi_* -> ritu_mr_*,
     or the same v3 name), else that language's first voice of the same gender."""
-    family = state.voice_id.split("_", 1)[0]
+    voice_id = voice_id or state.voice_id
+    family = voice_id.split("_", 1)[0]
     voices = target["voices"]
     for v in voices:
         if v["id"] == family or v["id"].split("_", 1)[0] == family:
             return v["id"]
-    current = next((v for lang in state.languages.values() for v in lang["voices"] if v["id"] == state.voice_id), None)
+    current = next((v for lang in state.languages.values() for v in lang["voices"] if v["id"] == voice_id), None)
     gender = current["gender"] if current else None
     return next((v["id"] for v in voices if v["gender"] == gender), voices[0]["id"])
 
@@ -190,14 +275,20 @@ def switch_language(state: SarvamCallState, target_key: str, tts, stt_engine) ->
         logger.warning("Language switch requested for %r — not enabled on this engine, ignored", target_key)
         return False
     stt_engine.update_options(language=target["stt"], mode=stt_mode(target["stt"]))
+    stock_tts = tts
     if state.cloned:
-        # Cross-lingual cloning: same voice_id, new target language.
-        tts.update_options(target_language_code=target["clone"])
+        # Cross-lingual cloning: same voice_id, new target language. The stock
+        # fallback voice behind it follows the language too.
+        clone, stock_tts = tts._tts_instances
+        clone.update_options(target_language_code=target["clone"])
+    current = state.extra["fallback_voice"] if state.cloned else state.voice_id
+    voice = voice_for_language(state, target, current)
+    kw = _tts_kwargs(target["tts_model"], voice, target["tts"])
+    stock_tts.update_options(**{k: kw[k] for k in ("model", "speaker", "target_language_code")},
+                             **({"temperature": kw["temperature"]} if "temperature" in kw else {}))
+    if state.cloned:
+        state.extra["fallback_voice"] = voice
     else:
-        voice = voice_for_language(state, target)
-        kw = _tts_kwargs(target["tts_model"], voice, target["tts"])
-        tts.update_options(**{k: kw[k] for k in ("model", "speaker", "target_language_code")},
-                           **({"temperature": kw["temperature"]} if "temperature" in kw else {}))
         state.voice_id = voice
     state.language = target_key
     logger.info("Language switched mid-call → %s (engine=sarvam voice=%s)", target_key, state.voice_id)
