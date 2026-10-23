@@ -1212,6 +1212,8 @@ async def _approve_sarvam_clone(db: AsyncSession, req: VoiceCloneRequest, admin:
         raise ConflictError(str(exc))
     except sarvam_voice.SarvamVoiceError as exc:
         if exc.status is not None and 400 <= exc.status < 500 and exc.status not in (401, 403, 429):
+            log.warning("sarvam_clone_sample_rejected", request=str(req.id), status=exc.status,
+                        request_id=exc.request_id, message=str(exc)[:300])
             req.status = "rejected"
             req.rejection_reason = _SARVAM_RETAKE_REASON
             req.reviewed_by_admin_id = admin.id
@@ -1220,7 +1222,8 @@ async def _approve_sarvam_clone(db: AsyncSession, req: VoiceCloneRequest, admin:
                 actor_type="platform_admin", actor_id=admin.id, org_id=req.org_id,
                 action="voice_clone_request.sample_rejected_by_provider",
                 target_type="voice_clone_request", target_id=req.id,
-                audit_metadata={"provider": "sarvam", "status": exc.status, "request_id": exc.request_id},
+                audit_metadata={"provider": "sarvam", "status": exc.status, "request_id": exc.request_id,
+                                "message": str(exc)[:300]},
             ))
             await db.commit()
             await db.refresh(req)
