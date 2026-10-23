@@ -153,6 +153,7 @@ _BACKCHANNEL_WORDS = frozenset({
     "है", "सही", "बिल्कुल", "बिलकुल", "बोलिए", "बोलो", "बताइए", "ओके", "यस", "राइट", "श्योर",
 })
 _BACKCHANNEL_MAX_WORDS = 6
+_GOODBYE_TIMEOUT_S = 20.0  # hang up anyway if the closing statement never finishes playing
 # Splits on anything but letters/digits/Devanagari. The explicit Devanagari
 # range is needed because Python's \w doesn't match vowel signs (ा ं ्), but it
 # skips U+0964/U+0965 so the danda "।" / "॥" still counts as punctuation.
@@ -297,6 +298,7 @@ class VoiceAgent(Agent):
     ) -> None:
         self._room            = room
         self._ending          = False
+        self._hung_up         = False
         self._reported        = False
         self._welcome_message = welcome_message
         self._sarvam          = sarvam_state
@@ -321,22 +323,35 @@ class VoiceAgent(Agent):
 
     # ── Tools ─────────────────────────────────────────────────────────────────
     @function_tool
-    async def end_interaction(self, ctx: RunContext) -> str | None:
-        """End the phone call, once the conversation is over and you have said goodbye. Never call it mid-conversation."""
+    async def end_interaction(self, ctx: RunContext, end_message: str = "") -> None:
+        """Use this tool when you want to end the conversation gracefully: when the conversation reaches a natural end, when the instructions say to end it, or when the user asks to end the call. Always pass a short closing statement in end_message, in the current language of the conversation. Only put the spoken message in end_message and do not write anything as normal text output.
+
+        Args:
+            end_message: The closing statement spoken to the user before the call ends.
+        """
         if self._ending:
             return None
         self._ending = True
-        said_goodbye = bool(self._last_reply_text.strip())
-        logger.info("end_interaction called at turn %d (goodbye spoken: %s)", self._turn_count, said_goodbye)
-        # The tool reply (if any) plays on this same speech handle, so hang up once
-        # it's done. A callback, not an await: awaiting the handle from inside its
-        # own tool would wait on itself.
-        ctx.speech_handle.add_done_callback(lambda _: _safe_task(self._hangup_after_goodbye(), "end-interaction"))
-        # Sarvam's model often calls this with no words first (checked live
-        # 2026-10-22) — then ask for the goodbye as the tool reply.
-        return None if said_goodbye else "Say a brief, warm goodbye now, in the call's language. Do not call any tool."
+        # If the model already spoke words this step, that was its goodbye; saying
+        # end_message too would double it.
+        spoken = self._last_reply_text.strip()
+        message = "" if spoken else (end_message.strip() or "Thank you for your time. Goodbye.")
+        logger.info("end_interaction at turn %d (end_message spoken: %s)", self._turn_count, bool(message))
+        if not message:
+            ctx.speech_handle.add_done_callback(lambda _: _safe_task(self._hangup_after_goodbye(), "end-interaction"))
+            return None
+        # Queued behind this tool's own speech, so don't await it (it would wait on
+        # itself): hang up from its done-callback, with a timer as a safety net.
+        goodbye = self.session.say(message, allow_interruptions=False)
+        goodbye.add_done_callback(lambda _: _safe_task(self._hangup_after_goodbye(), "end-interaction"))
+        asyncio.get_running_loop().call_later(
+            _GOODBYE_TIMEOUT_S, lambda: _safe_task(self._hangup_after_goodbye(), "end-interaction-timeout"))
+        return None
 
     async def _hangup_after_goodbye(self) -> None:
+        if self._hung_up:
+            return
+        self._hung_up = True
         await asyncio.sleep(0.5)  # let the last audio frames flush through the SIP path
         await self._post_call_report()
         await self._disconnect()

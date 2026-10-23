@@ -304,25 +304,79 @@ def _ending_agent(monkeypatch):
     return va, order
 
 
-async def test_end_interaction_hangs_up_only_after_the_turn_finishes(monkeypatch):
-    va, order = _ending_agent(monkeypatch)
-    va._last_reply_text = "Thank you, have a good day!"
-    handle = _Handle()
-    assert await va.end_interaction(SimpleNamespace(speech_handle=handle)) is None  # goodbye already spoken
-    await _REAL_SLEEP(0)
-    assert va._ending and order == []  # still speaking
-    handle.callbacks[0](handle)
+async def _drain():
     for _ in range(5):
         await _REAL_SLEEP(0)
-    assert order == ["report", "disconnect"]
-    assert await va.end_interaction(SimpleNamespace(speech_handle=_Handle())) is None  # idempotent
 
 
-async def test_end_interaction_without_words_asks_for_a_goodbye(monkeypatch):
+def _say_session(va, said):
+    """Stand-in for the LiveKit session: say() returns a handle we can finish by hand."""
+    handles = []
+
+    def say(text, **kw):
+        said.append((text, kw))
+        handles.append(_Handle())
+        return handles[-1]
+
+    agent_mod.VoiceAgent.session = property(lambda self: SimpleNamespace(say=say))
+    return handles
+
+
+async def test_end_interaction_speaks_end_message_then_hangs_up(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    said = []
+    handles = _say_session(va, said)
+    try:
+        assert await va.end_interaction(SimpleNamespace(speech_handle=_Handle()), "Dhanyavaad, have a nice day!") is None
+        await _drain()
+        assert said == [("Dhanyavaad, have a nice day!", {"allow_interruptions": False})]
+        assert va._ending and order == []  # closing statement still playing
+        handles[0].callbacks[0](handles[0])
+        await _drain()
+        assert order == ["report", "disconnect"]
+        assert await va.end_interaction(SimpleNamespace(speech_handle=_Handle()), "again") is None  # idempotent
+        assert len(said) == 1
+    finally:
+        del agent_mod.VoiceAgent.session
+
+
+async def test_end_interaction_hangs_up_once_even_if_the_timer_also_fires(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    _say_session(va, [])
+    try:
+        await va.end_interaction(SimpleNamespace(speech_handle=_Handle()), "Bye")
+        await va._hangup_after_goodbye()
+        await va._hangup_after_goodbye()
+        assert order == ["report", "disconnect"]
+    finally:
+        del agent_mod.VoiceAgent.session
+
+
+async def test_end_interaction_does_not_double_a_goodbye_the_model_already_spoke(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    said = []
+    _say_session(va, said)
+    va._last_reply_text = "Thank you, have a good day!"
+    handle = _Handle()
+    try:
+        assert await va.end_interaction(SimpleNamespace(speech_handle=handle), "Bye") is None
+        assert said == [] and order == []
+        handle.callbacks[0](handle)
+        await _drain()
+        assert order == ["report", "disconnect"]
+    finally:
+        del agent_mod.VoiceAgent.session
+
+
+async def test_end_interaction_without_any_words_uses_a_default_goodbye(monkeypatch):
     va, _ = _ending_agent(monkeypatch)
-    va._last_reply_text = ""
-    out = await va.end_interaction(SimpleNamespace(speech_handle=_Handle()))
-    assert "goodbye" in out
+    said = []
+    _say_session(va, said)
+    try:
+        await va.end_interaction(SimpleNamespace(speech_handle=_Handle()), "")
+        assert said and "Goodbye" in said[0][0]
+    finally:
+        del agent_mod.VoiceAgent.session
 
 
 _REAL_SLEEP = asyncio.sleep
