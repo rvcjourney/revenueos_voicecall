@@ -79,9 +79,9 @@ export const DEFAULT_INSTRUCTIONS = `## Persona
 - Wish them a good day and call end_interaction.
 
 ### Phase 7: Callback Later
-- Acknowledge the prospect is busy and ask when inside {preferredCallbackWindow} would work. Keep slots inside {preferredCallbackWindow} only.
-- Accept vague answers and echo the time back once for confirmation.
-- Once confirmed, mention that {salesRepName} or Ananya will reach back, thank politely, and call end_interaction.
+- The prospect is busy or cannot talk now (for example driving or in a meeting). Do not continue the pitch and do not ask questions.
+- Reply with one short closing statement: acknowledge their situation, say you will call back at a better time (use the day or time they named, such as tomorrow or evening, if any; otherwise say {preferredCallbackWindow}), and thank them with Sir or Ma'am.
+- Pass that closing statement as end_message to end_interaction.
 
 ### Phase 8: Wrong Person
 - Infer relation only if obvious; skip asking who they are to {userName}.
