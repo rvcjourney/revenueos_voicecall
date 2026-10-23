@@ -231,7 +231,11 @@ _FORWARDING_RE = re.compile(
 def build_instructions(instructions: str, state: "sarvam_pipeline.SarvamCallState") -> str:
     """The agent's own Instructions plus the call's language — a campaign setting
     the LLM can't otherwise know. Nothing else is added."""
-    return f"{instructions.strip()}\n\n# Call language\nThis call is in {state.lang['display']}."
+    line = f"This call is in {state.lang['display']}."
+    if state.language in ("hinglish", "hindi"):
+        line += (" Speak natural Hinglish: conversational Hindi with everyday English words, as Indian professionals do."
+                 " Reply in Hinglish even though these instructions are in English; use plain English only if the caller does.")
+    return f"{instructions.strip()}\n\n# Call language\n{line}"
 
 
 # =============================================================================

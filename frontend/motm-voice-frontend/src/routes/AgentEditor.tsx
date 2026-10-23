@@ -402,7 +402,7 @@ function VariablesTab({
         </div>
       )}
       <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
-        Filled automatically on every call: {SYSTEM_VARIABLES.map((v) => <VarChip key={v} name={v} />)} (today's date).
+        Filled automatically on every call: {SYSTEM_VARIABLES.map((v) => <VarChip key={v} name={v} />)} (today's date; time_greeting = Good morning / afternoon / evening).
       </div>
     </div>
   );

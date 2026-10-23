@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-SYSTEM_VARIABLES = ("current_date",)
+SYSTEM_VARIABLES = ("current_date", "time_greeting")
 
 
 def find(*texts: str) -> list[str]:
@@ -29,7 +29,8 @@ def system_values(tz_name: str | None = None) -> dict[str, str]:
         now = datetime.now(ZoneInfo(tz_name or "Asia/Kolkata"))
     except Exception:
         now = datetime.now()
-    return {"current_date": now.strftime("%A, %d %B %Y")}
+    part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
+    return {"current_date": now.strftime("%A, %d %B %Y"), "time_greeting": f"Good {part}"}
 
 
 def resolve(
@@ -66,6 +67,8 @@ def render(greeting: str, instructions: str, *, columns: dict | None, defaults: 
     return fill(greeting, values), fill(instructions, values), missing
 
 
+# Self-check: time_greeting follows the hour.
+assert system_values("Asia/Kolkata")["time_greeting"] in ("Good morning", "Good afternoon", "Good evening")
 # Self-check: CSV column wins over the default, matching ignores case/underscores,
 # system values fill last, and an unfilled placeholder is reported.
 _g, _i, _m = render("Hi {userName} from {partnerName}", "Today is {current_date}. {crmDealStage}",

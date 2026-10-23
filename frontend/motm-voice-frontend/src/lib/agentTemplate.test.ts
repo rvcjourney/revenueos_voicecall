@@ -16,8 +16,8 @@ describe("findVariables", () => {
 
   it("finds every placeholder in the default template", () => {
     const vars = findVariables(DEFAULT_GREETING, DEFAULT_INSTRUCTIONS);
-    expect(vars.slice(0, 2)).toEqual(["partnerName", "userName"]);
+    expect(vars.slice(0, 3)).toEqual(["time_greeting", "partnerName", "userName"]);
     expect(vars).toContain("current_date");
-    expect(vars).toHaveLength(18);
+    expect(vars).toHaveLength(19);
   });
 });

@@ -24,7 +24,8 @@ Rules:
 - Placeholders look like {camelCaseName} and are filled per call from the contact's CSV
   columns or the agent's default values. Keep existing placeholders unless the request
   removes them. Add a new {placeholder} only for a value that changes per contact or per
-  campaign. {current_date} is today's date and is always available.
+  campaign. {current_date} (today's date) and {time_greeting} ("Good morning"/"Good afternoon"/"Good evening" for
+  the contact's local time) are always available.
 - The agent has three tools; refer to them by these exact names: end_interaction (ends the
   call), book_next_step (books a demo/meeting/follow-up), switch_language (changes the
   spoken language).

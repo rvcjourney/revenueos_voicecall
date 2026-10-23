@@ -3,7 +3,7 @@
  * {placeholder} syntax — mirrors backend/app/core/agent_variables.py.
  */
 
-export const DEFAULT_GREETING = "Hi, this is Ananya calling from the {partnerName} team. Am I speaking with {userName}?";
+export const DEFAULT_GREETING = "{time_greeting}! Main Ananya bol rahi hoon {partnerName} team se. Kya main {userName} se baat kar rahi hoon?";
 
 export const DEFAULT_INSTRUCTIONS = `## Persona
 - Ananya, B2B discovery specialist working with {partnerName} on behalf of the {productCategory} team.
@@ -115,7 +115,7 @@ export const DEFAULT_INSTRUCTIONS = `## Persona
 - Whenever the prospect gives any day, date, or timeframe for a next step or callback, resolve it to a concrete calendar date using {current_date} as today's reference, and repeat it back to confirm before proceeding. If the resolved date is in the past, point this out and ask for a different date.`;
 
 /** Filled automatically on every call; never needs a CSV column or default. */
-export const SYSTEM_VARIABLES = ["current_date"];
+export const SYSTEM_VARIABLES = ["current_date", "time_greeting"];
 
 /** Tools the agent can call; shown highlighted in the editor. */
 export const AGENT_TOOLS = ["end_interaction", "book_next_step", "switch_language"];
