@@ -23,6 +23,7 @@ _SECRET_FIELDS = frozenset({
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
+    "OPENAI_API_KEY",
 })
 
 
@@ -123,13 +124,16 @@ class Settings(BaseSettings):
     VOBIZ_AUTH_ID: str = ""       # Vobiz API Auth ID for CDR/Recording fetch
     VOBIZ_AUTH_TOKEN: str = ""    # Vobiz API Auth Token
 
-    # ── Sarvam (the only AI provider: calls, voice cloning, "Customise with AI") ──
+    # ── Sarvam (calls and voice cloning) ──
     # Same key as agent/.env's SARVAM_API_KEY. Cloning additionally needs the
     # text_to_speech_voice_cloning capability and SARVAM_VOICE_CLONING_ENABLED=true.
     SARVAM_API_KEY: str = ""
     SARVAM_VOICE_CLONING_ENABLED: bool = False
-    # Rewrites an agent's Greeting/Instructions on request (app/services/agent_builder.py)
-    SARVAM_BUILDER_MODEL: str = "sarvam-105b"
+
+    # ── OpenAI ("Customise with AI" only: app/services/agent_builder.py) ──────
+    # sarvam-105b reasoned ~17k tokens per rewrite and overran on big edits (2026-10-23).
+    OPENAI_API_KEY: str = ""
+    OPENAI_BUILDER_MODEL: str = "gpt-5.6-terra"
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = ""

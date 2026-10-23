@@ -1,6 +1,6 @@
 """
-app/services/agent_builder.py — "Customise with AI" in the agent editor: Sarvam's
-LLM rewrites an agent's Greeting and Instructions from a plain-language request.
+app/services/agent_builder.py — "Customise with AI" in the agent editor: an OpenAI
+model rewrites an agent's Greeting and Instructions from a plain-language request.
 Nothing is saved here; the editor shows the result and the user decides.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import httpx
 
 from app.config import settings
 
-_URL = "https://api.sarvam.ai/v2/chat/completions"
+_URL = "https://api.openai.com/v1/responses"
 
 _SYSTEM = """You edit the script of an AI phone agent that makes outbound calls in India.
 You get the agent's current GREETING (spoken word for word when the call connects), its
@@ -52,31 +52,32 @@ def parse(text: str) -> tuple[str, str, str]:
 
 
 async def customize(*, greeting: str, instructions: str, request: str) -> tuple[str, str, str]:
-    if not settings.SARVAM_API_KEY:
+    if not settings.OPENAI_API_KEY:
         raise AgentBuilderError("AI customisation isn't configured yet.")
     user = f"GREETING:\n{greeting}\n\nINSTRUCTIONS:\n{instructions}\n\nCHANGE REQUEST:\n{request}"
     try:
         async with httpx.AsyncClient(timeout=180.0) as http:
             resp = await http.post(
                 _URL,
-                headers={"api-subscription-key": settings.SARVAM_API_KEY},
+                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
                 json={
-                    "model": settings.SARVAM_BUILDER_MODEL,
-                    "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}],
-                    # Reasoning alone used ~7k tokens on a 9k-char script (2026-10-23)
-                    "max_tokens": 24000,
-                    "temperature": 0.3,
-                    "reasoning_effort": "low",
+                    "model": settings.OPENAI_BUILDER_MODEL,
+                    "instructions": _SYSTEM,
+                    "input": user,
+                    "reasoning": {"effort": "low"},
+                    "max_output_tokens": 32000,
+                    "store": False,
                 },
             )
             resp.raise_for_status()
-            choice = resp.json()["choices"][0]
+            data = resp.json()
     except httpx.HTTPError as exc:
         raise AgentBuilderError("The AI service didn't respond. Please try again.") from exc
-    if choice.get("finish_reason") == "length":
+    if data.get("status") == "incomplete":
         raise AgentBuilderError("The script is too long for the AI to rewrite in one go. Try a smaller change.")
-    return parse(choice["message"].get("content") or "")
-
+    text = "".join(part.get("text") or "" for item in data.get("output") or [] if item.get("type") == "message"
+                   for part in item.get("content") or [] if part.get("type") == "output_text")
+    return parse(text)
 
 # Self-check: the tagged reply parses; a reply missing a section is refused.
 assert parse("<summary>s</summary>\n<greeting>Hi {userName}</greeting><instructions>## A\n- b</instructions>") == (
