@@ -314,6 +314,7 @@ async def speak_regional(state: SarvamCallState, text, conn_options):
     audio it is tried again (the same text), and if it fails midway the utterance just ends.
     No second voice is ever used (callers asked who else was talking)."""
     tee = _TextTee(text)
+    audio = {"rate": 0, "seconds": 0.0}
     try:
         for attempt in range(1, ELEVEN_ATTEMPTS + 1):
             spoke = False
@@ -322,6 +323,8 @@ async def speak_regional(state: SarvamCallState, text, conn_options):
                 once = APIConnectOptions(max_retry=0, timeout=conn_options.timeout)
                 async for frame in _stream_frames(state.extra["eleven"], tee.reader(), once, ELEVEN_FIRST_AUDIO_TIMEOUT):
                     spoke = True
+                    audio["rate"] = frame.sample_rate
+                    audio["seconds"] += frame.samples_per_channel / frame.sample_rate
                     yield frame
                 return
             except Exception as exc:
@@ -330,7 +333,8 @@ async def speak_regional(state: SarvamCallState, text, conn_options):
                 if spoke:
                     return
     finally:
-        logger.info("eleven_said | voice=%s text=%r", state.voice_id, "".join(tee.chunks)[:400])
+        logger.info("eleven_said | voice=%s rate=%s audio=%.1fs text=%r", state.voice_id, audio["rate"], audio["seconds"],
+                    "".join(tee.chunks)[:400])
         await tee.close()
 
 
