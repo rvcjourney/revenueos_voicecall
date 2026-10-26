@@ -223,7 +223,7 @@ def build_eleven(state: SarvamCallState):
 
 
 # A silent ElevenLabs request is given up on after this long and the Sarvam voice takes over.
-ELEVEN_FIRST_AUDIO_TIMEOUT = 4.0
+ELEVEN_FIRST_AUDIO_TIMEOUT = 6.0
 # Consecutive failed utterances after which the rest of the call stays on the Sarvam voice.
 ELEVEN_MAX_FAILURES = 2
 
@@ -275,17 +275,25 @@ async def _stream_frames(engine, text, conn_options, first_audio_timeout: float 
     """Audio frames from one TTS engine for a text stream; raises if it fails or stays silent."""
     stream = engine.stream(conn_options=conn_options)
 
+    fed = asyncio.Event()
+
     async def _feed() -> None:
         async for chunk in text:
             stream.push_text(chunk)
+            fed.set()
         stream.end_input()
+        fed.set()
 
     feed = asyncio.create_task(_feed())
     try:
         async with stream:
             frames = stream.__aiter__()
+            first_task = asyncio.ensure_future(frames.__anext__())
             try:
-                first = await asyncio.wait_for(frames.__anext__(), first_audio_timeout)
+                # The deadline starts once the engine has text; the model's own thinking time
+                # must not count, or a slow reply wrongly falls back to the second voice.
+                await asyncio.wait({first_task, asyncio.ensure_future(fed.wait())}, return_when=asyncio.FIRST_COMPLETED)
+                first = await asyncio.wait_for(first_task, first_audio_timeout)
             except StopAsyncIteration:
                 return
             yield first.frame

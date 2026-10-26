@@ -405,6 +405,18 @@ async def test_a_silent_elevenlabs_request_falls_back_after_the_deadline(monkeyp
     assert await _speak(_el_state(monkeypatch), _ElEngine(["hang"]), _ElEngine(["S1"])) == ["S1"]
 
 
+async def test_slow_llm_text_does_not_count_against_elevenlabs_deadline(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVEN_FIRST_AUDIO_TIMEOUT", 0.05)
+    state = _el_state(monkeypatch)
+    state.extra.update(eleven=_ElEngine(["E1"]), eleven_stock=_ElEngine(["S1"]), eleven_failures=0)
+
+    async def slow_text():
+        await asyncio.sleep(0.2)  # the model is still thinking
+        yield "ni"
+    conn = SimpleNamespace(timeout=10.0, max_retry=3, retry_interval=2.0)
+    assert [f async for f in sp.speak_regional(state, slow_text(), conn)] == ["E1"]
+
+
 async def test_after_repeated_failures_the_call_stays_on_the_sarvam_voice(monkeypatch):
     state = _el_state(monkeypatch)
     state.extra["eleven_failures"] = sp.ELEVEN_MAX_FAILURES
