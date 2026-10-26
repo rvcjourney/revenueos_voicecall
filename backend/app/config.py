@@ -137,6 +137,9 @@ class Settings(BaseSettings):
     # ElevenLabs; the agent holds the key (agent/.env), the backend only names the model.
     # eleven_v3_conversational / eleven_v4_turbo started speaking faster in a 2026-10-26 test.
     ELEVENLABS_TTS_MODEL: str = "eleven_v3"
+    # Off (2026-10-26): ElevenLabs' voice drifted between replies, so every language is on Sarvam
+    # again. The owner's saved ElevenLabs voices are kept; set true to use them again.
+    ELEVENLABS_REGIONAL_ENABLED: bool = False
     OPENAI_BUILDER_MODEL: str = "gpt-5.6-terra"
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────

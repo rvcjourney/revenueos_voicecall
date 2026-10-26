@@ -75,6 +75,17 @@ def test_sarvam_call_config_carries_every_enabled_language():
 
 
 # ── ElevenLabs for regional languages ─────────────────────────────────────────
+@pytest.fixture(autouse=True)
+def _elevenlabs_on(monkeypatch):
+    monkeypatch.setattr(p.app_settings, "ELEVENLABS_REGIONAL_ENABLED", True)
+
+
+def test_elevenlabs_switch_off_puts_every_language_back_on_sarvam(monkeypatch):
+    monkeypatch.setattr(p.app_settings, "ELEVENLABS_REGIONAL_ENABLED", False)
+    assert p.tts_engine("gujarati", EL) == p.SARVAM
+    assert p.voices_for("gujarati", EL) == p.sarvam_voices("gujarati", EL)
+
+
 EL = p.OwnerSettings(language_overrides={"gujarati": {"elevenlabs": {"voices": [
     {"id": "9BWtsMINqrJLrRacOk9x", "name": "Aria", "gender": "female"}]}}})
 

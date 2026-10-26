@@ -208,7 +208,7 @@ def _el_override(settings: OwnerSettings, language: str) -> dict:
 
 def elevenlabs_voices(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
     """The owner's ElevenLabs shortlist for a regional language ((), for Hindi/Hinglish/English)."""
-    if language in SARVAM_VOICE_ONLY or language not in LANGUAGES:
+    if not app_settings.ELEVENLABS_REGIONAL_ENABLED or language in SARVAM_VOICE_ONLY or language not in LANGUAGES:
         return ()
     return tuple(Voice(str(v["id"]), str(v.get("name") or v["id"]), str(v.get("gender") or "female"))
                  for v in _el_override(settings, language).get("voices") or [] if v.get("id"))
