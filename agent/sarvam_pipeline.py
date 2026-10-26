@@ -216,7 +216,14 @@ def build_eleven(state: SarvamCallState):
             state.extra["eleven_fallback"] = True
             logger.warning("eleven_fallback | voice=%s — speaking with the Sarvam voice", state.voice_id)
 
+    def _on_error(ev) -> None:
+        # The plugin wraps the real reason ("Could not synthesize"); its cause says what happened.
+        err = getattr(ev, "error", None)
+        cause = getattr(err, "__cause__", None) or getattr(err, "body", None)
+        logger.warning("eleven_error | voice=%s error=%s cause=%r", state.voice_id, err, cause)
+
     adapter.on("tts_availability_changed", _on_availability)
+    eleven.on("error", _on_error)
     state.extra.update(eleven=eleven, eleven_stock=stock, eleven_adapter=adapter)
     return adapter
 
