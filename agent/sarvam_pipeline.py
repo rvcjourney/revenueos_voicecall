@@ -323,8 +323,9 @@ async def speak_regional(state: SarvamCallState, text, conn_options):
                 once = APIConnectOptions(max_retry=0, timeout=conn_options.timeout)
                 async for frame in _stream_frames(state.extra["eleven"], tee.reader(), once, ELEVEN_FIRST_AUDIO_TIMEOUT):
                     spoke = True
-                    audio["rate"] = frame.sample_rate
-                    audio["seconds"] += frame.samples_per_channel / frame.sample_rate
+                    rate = getattr(frame, "sample_rate", 0)
+                    audio["rate"] = rate
+                    audio["seconds"] += getattr(frame, "samples_per_channel", 0) / rate if rate else 0.0
                     yield frame
                 return
             except Exception as exc:
