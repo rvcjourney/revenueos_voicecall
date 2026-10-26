@@ -222,8 +222,9 @@ def build_eleven(state: SarvamCallState):
     return eleven
 
 
-# A silent ElevenLabs request is given up on after this long and the Sarvam voice takes over.
-ELEVEN_FIRST_AUDIO_TIMEOUT = 6.0
+# No deadline on the first sound: a slow ElevenLabs start is waited for, not swapped for the Sarvam voice.
+# Real errors (and the plugin's own 10 s connect limit) still fall back.
+ELEVEN_FIRST_AUDIO_TIMEOUT: float | None = None
 # Consecutive failed utterances after which the rest of the call stays on the Sarvam voice.
 ELEVEN_MAX_FAILURES = 2
 
