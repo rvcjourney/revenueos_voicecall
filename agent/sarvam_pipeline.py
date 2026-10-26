@@ -330,6 +330,7 @@ async def speak_regional(state: SarvamCallState, text, conn_options):
                 if spoke:
                     return
     finally:
+        logger.info("eleven_said | voice=%s text=%r", state.voice_id, "".join(tee.chunks)[:400])
         await tee.close()
 
 
