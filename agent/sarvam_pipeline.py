@@ -210,6 +210,7 @@ def build_eleven(state: SarvamCallState):
     eleven = elevenlabs.TTS(
         voice_id=voice, model=start["eleven_model"], language=start["eleven_code"],
         api_key=ELEVENLABS_API_KEY, encoding=f"pcm_{SARVAM_PIPELINE_TTS_SAMPLE_RATE}",
+        voice_settings=elevenlabs.VoiceSettings(stability=ELEVEN_STABILITY, similarity_boost=0.75),
     )
 
     def _on_error(ev) -> None:
@@ -226,6 +227,9 @@ def build_eleven(state: SarvamCallState):
 # No deadline on the first sound: a slow ElevenLabs start is waited for, not swapped for the Sarvam voice.
 # Real errors (and the plugin's own 10 s connect limit) still fall back.
 ELEVEN_FIRST_AUDIO_TIMEOUT: float | None = None
+# eleven_v3 takes 0.0 (creative), 0.5 (natural) or 1.0 (robust). Creative/natural let the timbre
+# drift from one sentence to the next, which callers hear as a second voice; robust keeps it steady.
+ELEVEN_STABILITY = 1.0
 # Tries per utterance when ElevenLabs fails before any sound.
 ELEVEN_ATTEMPTS = 2
 

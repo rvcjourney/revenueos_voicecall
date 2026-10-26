@@ -530,9 +530,11 @@ class VoiceAgent(Agent):
         (sarvam_pipeline.build_eleven); every other call and language uses the
         session's Sarvam TTS unchanged."""
         if self._sarvam.extra.get("eleven") is None or self._sarvam.cloned or self._sarvam.lang.get("engine") != "elevenlabs":
+            logger.info("tts_route | engine=sarvam voice=%s", self._sarvam.voice_id)
             async for frame in Agent.default.tts_node(self, text, model_settings):
                 yield frame
             return
+        logger.info("tts_route | engine=elevenlabs voice=%s", self._sarvam.voice_id)
         async for frame in sarvam_pipeline.speak_regional(self._sarvam, text, self.session.conn_options.tts_conn_options):
             yield frame
 
