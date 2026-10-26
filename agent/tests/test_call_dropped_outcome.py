@@ -129,3 +129,34 @@ async def test_llm_prompt_only_mentions_call_dropped_when_abrupt():
 
     assert "call_dropped" not in system_prompt_not_abrupt
     assert "call_dropped" in system_prompt_abrupt
+
+
+# ── Classifier: fast model first, reasoning model only as the fallback ──────
+
+async def test_classifier_falls_back_to_the_slow_model_when_the_fast_answer_is_not_json():
+    import json
+    va = _make_agent()
+    va._user_messages = ["yeh ek lambi baat hai jo customer ne kahi thi call par"]
+    good = json.dumps({"outcome": "interested", "summary": "s", "extracted_data": {}})
+    chat = AsyncMock(side_effect=[("", "length"), (good, "stop")])
+    with patch("agent._sarvam_chat", new=chat), patch.object(va, "_post_agent_report", new=AsyncMock()) as mock_post:
+        await va._send_report(abrupt_disconnect=False)
+    assert [c.kwargs["fast"] for c in chat.call_args_list] == [True, False]
+    assert mock_post.call_args.args[0]["outcome"] == "interested"
+
+
+async def test_classifier_stops_after_the_fast_model_when_it_answers():
+    va = _make_agent()
+    va._user_messages = ["yeh ek lambi baat hai jo customer ne kahi thi call par"]
+    chat = _chat("not_interested")
+    with patch("agent._sarvam_chat", new=chat), patch.object(va, "_post_agent_report", new=AsyncMock()):
+        await va._send_report(abrupt_disconnect=False)
+    assert chat.await_count == 1 and chat.call_args.kwargs["fast"] is True
+
+
+def test_voicemail_greetings_written_in_gujarati_or_devanagari_are_recognised():
+    for heard in ("ધ પર્સન યુ આર ટ્રાઈંગ ટુ રીચ ઇઝ નોટ અવેલેબલ.", "અ ધ ટોન, પ્લીઝ રેકોર્ડ યોર મેસેજ.",
+                  "વેન યુ હેવ ફિનિશ રેકોર્ડિંગ યુ મે હેંગ અપ.", "आफ्टर द बीप प्लीज़ लीव अ मैसेज"):
+        assert agent._VOICEMAIL_INDIC_RE.search(heard), heard
+    for person in ("હા બોલો", "હું અત્યારે વ્યસ્ત છું, પછી ફોન કરજો", "मैं गाड़ी चला रहा हूं"):
+        assert not agent._VOICEMAIL_INDIC_RE.search(person), person

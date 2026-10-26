@@ -44,7 +44,9 @@ from config import (
     AGENT_SYSTEM_PROMPT,
     LIVEKIT_AGENT_NAME,
     SARVAM_API_KEY,
+    SARVAM_CHAT_FAST_URL,
     SARVAM_CHAT_URL,
+    SARVAM_CLASSIFY_FAST_MODEL,
     SARVAM_CLASSIFY_MODEL,
     BACKEND_INTERNAL_URL,
     AGENT_WEBHOOK_SECRET,
@@ -104,22 +106,24 @@ def _sign_webhook_body(body: bytes) -> str:
     return f"t={ts},v1={mac}"
 
 
-async def _sarvam_chat(messages: list[dict], *, max_tokens: int) -> tuple[str, str | None]:
+async def _sarvam_chat(messages: list[dict], *, max_tokens: int, fast: bool = False) -> tuple[str, str | None]:
     """One non-streaming Sarvam chat completion (post-call classification).
-    Returns (content, finish_reason)."""
+    fast: the conversation model with reasoning off; otherwise sarvam-105b, which always reasons
+    first and so needs a big max_tokens. Returns (content, finish_reason)."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    body = {
+        "model": SARVAM_CLASSIFY_FAST_MODEL if fast else SARVAM_CLASSIFY_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "reasoning_effort": None if fast else "low",
+    }
+    async with httpx.AsyncClient(timeout=30.0 if fast else 60.0) as http:
         resp = await http.post(
-            SARVAM_CHAT_URL,
+            SARVAM_CHAT_FAST_URL if fast else SARVAM_CHAT_URL,
             headers={"api-subscription-key": SARVAM_API_KEY},
-            json={
-                "model": SARVAM_CLASSIFY_MODEL,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": 0,
-                "reasoning_effort": "low",
-            },
+            json=body,
         )
         resp.raise_for_status()
         choice = resp.json()["choices"][0]
@@ -212,6 +216,17 @@ _BOT_IVR_RE = re.compile(
 # rather than the actual person, and none of that announcement's phrasing matches
 # _VOICEMAIL_RE or _BOT_IVR_RE above. Covers common English carrier wording plus
 # transliterated Hinglish, since outbound trunks here are Indian carriers.
+# Voicemail greetings are in English, but a Gujarati/Hindi speech model writes them out in its own
+# script ("રેકોર્ડ યોર મેસેજ", "नॉट अवेलेबल") and the English pattern above never sees them (2026-10-26
+# Gujarati call). No : it misbehaves around Indic combining marks.
+_VOICEMAIL_INDIC_RE = re.compile(
+    r"(?:"
+    r"રેકોર્ડ\s+યોર\s+મેસેજ|નોટ\s+અવેલેબલ|હેંગ\s+અપ|ફિનિશ\s+રેકોર્ડિંગ|ટ્રાઈંગ\s+ટુ\s+રીચ|(?:આફ્ટર|એટ|અ)\s+ધ\s+(?:બીપ|ટોન)|પ્લીઝ\s+લીવ"
+    r"|रिकॉर्ड\s+योर\s+मे?सेज|नॉट\s+अवेलेबल|हैंग\s+अप|फिनिश\s+रिकॉर्डिंग|ट्राइंग\s+टू\s+रीच|(?:आफ्टर|एट|अ)\s+द\s+(?:बीप|टोन)|प्लीज़?\s+लीव"
+    r")",
+    re.UNICODE,
+)
+
 _FORWARDING_RE = re.compile(
     r"\b("
     r"call is being forwarded"
@@ -565,7 +580,7 @@ class VoiceAgent(Agent):
         self._last_user_activity = time.monotonic()
 
         # Voicemail detected — hang up silently (don't leave a message)
-        if _VOICEMAIL_RE.search(text):
+        if _VOICEMAIL_RE.search(text) or _VOICEMAIL_INDIC_RE.search(text):
             logger.info("Voicemail detected at turn %d — silent hangup", self._turn_count)
             self._ending = True
             _safe_task(self._silent_hangup(outcome_override="voicemail"), "voicemail-hangup")
@@ -883,35 +898,36 @@ class VoiceAgent(Agent):
         if self._booking:
             user += f"\n\nNEXT STEP BOOKED: {json.dumps(self._booking)}"
 
-        raw, finish_reason = None, None
-        try:
-            raw, finish_reason = await _sarvam_chat(
-                [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                max_tokens=1500,
-            )
-            text = raw
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-            result = json.loads(text.strip())
-            outcome = result.get("outcome", "not_interested")
-            summary = result.get("summary", "")
-            extracted = {k: v for k, v in (result.get("extracted_data") or {}).items() if v is not None}
-            valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
-            if abrupt_disconnect:
-                valid.add("call_dropped")
-            if outcome not in valid:
-                outcome = "not_interested"
-            logger.info("classify_llm: call=%s outcome=%s finish_reason=%s", self._call_id, outcome, finish_reason)
-            return outcome, summary, extracted
-        except Exception as exc:
-            logger.warning(
-                "classify_error | call=%s error_type=%s error=%s stage=%s finish_reason=%s raw_preview=%r",
-                self._call_id, type(exc).__name__, exc,
-                "api_call" if raw is None else "parse", finish_reason, raw[:500] if raw else None,
-            )
-            return "pending", "", {}
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        valid = {"interested", "not_interested", "callback_requested", "wrong_number", "do_not_call"}
+        if abrupt_disconnect:
+            valid.add("call_dropped")
+        # fast first; the slow reasoning model only if the fast answer isn't usable JSON
+        for fast, max_tokens in ((True, 1500), (False, 8000)):
+            raw, finish_reason = None, None
+            try:
+                raw, finish_reason = await _sarvam_chat(messages, max_tokens=max_tokens, fast=fast)
+                text = raw
+                if text.startswith("```"):
+                    text = text.split("```")[1]
+                    if text.startswith("json"):
+                        text = text[4:]
+                result = json.loads(text.strip())
+                outcome = result.get("outcome", "not_interested")
+                summary = result.get("summary", "")
+                extracted = {k: v for k, v in (result.get("extracted_data") or {}).items() if v is not None}
+                if outcome not in valid:
+                    outcome = "not_interested"
+                logger.info("classify_llm: call=%s outcome=%s finish_reason=%s fast=%s",
+                            self._call_id, outcome, finish_reason, fast)
+                return outcome, summary, extracted
+            except Exception as exc:
+                logger.warning(
+                    "classify_error | call=%s fast=%s error_type=%s error=%s stage=%s finish_reason=%s raw_preview=%r",
+                    self._call_id, fast, type(exc).__name__, exc,
+                    "api_call" if raw is None else "parse", finish_reason, raw[:500] if raw else None,
+                )
+        return "pending", "", {}
 
 
 def _sentry_message(message: str, level: str) -> None:

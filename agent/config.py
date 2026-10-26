@@ -29,6 +29,10 @@ SARVAM_PIPELINE_TTS_CODEC       = os.getenv("SARVAM_PIPELINE_TTS_CODEC", "linear
 # conversation path. sarvam-105b with low reasoning answers in ~2-3 s.
 SARVAM_CLASSIFY_MODEL = os.getenv("SARVAM_CLASSIFY_MODEL", "sarvam-105b")
 SARVAM_CHAT_URL       = os.getenv("SARVAM_CHAT_URL", "https://api.sarvam.ai/v2/chat/completions")
+# Tried first: the conversation model with reasoning off answers in ~0.5 s. sarvam-105b can't turn
+# reasoning off and spent 1500 tokens thinking before any JSON (2026-10-26), so it is the slow fallback.
+SARVAM_CLASSIFY_FAST_MODEL = os.getenv("SARVAM_CLASSIFY_FAST_MODEL", "sarvam-105b-conversations")
+SARVAM_CHAT_FAST_URL       = os.getenv("SARVAM_CHAT_FAST_URL", "https://api.sarvam.ai/v1/chat/completions")
 
 # ── ElevenLabs (TTS only, regional languages; STT and the LLM stay on Sarvam) ──
 # Unset -> those languages fall back to Sarvam voices.
