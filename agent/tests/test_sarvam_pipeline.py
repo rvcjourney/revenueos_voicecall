@@ -387,22 +387,26 @@ async def test_elevenlabs_speaks_the_whole_utterance_in_one_voice(monkeypatch):
     assert eleven.streams[0][1].max_retry == 0  # the plugin's retry would replay played audio
 
 
-async def test_failure_before_any_audio_is_respoken_whole_by_sarvam(monkeypatch):
-    eleven, stock = _ElEngine([RuntimeError("socket closed")]), _ElEngine(["S1", "S2"])
-    state = _el_state(monkeypatch)
-    assert await _speak(state, eleven, stock) == ["S1", "S2"]
-    assert stock.streams[0][0].pushed == ["ni", "ce"] and state.extra["eleven_failures"] == 1
+async def test_failure_before_any_audio_is_retried_on_elevenlabs_never_sarvam(monkeypatch):
+    class Flaky(_ElEngine):
+        def stream(self, *, conn_options):
+            self.script = [RuntimeError("socket closed")] if not self.streams else ["E1"]
+            return super().stream(conn_options=conn_options)
+    eleven, stock = Flaky([]), _ElEngine(["S1"])
+    assert await _speak(_el_state(monkeypatch), eleven, stock) == ["E1"]
+    assert eleven.streams[1][0].pushed == ["ni", "ce"] and stock.streams == []
 
 
 async def test_failure_midway_ends_the_utterance_instead_of_adding_a_second_voice(monkeypatch):
     eleven, stock = _ElEngine(["E1", RuntimeError("dropped")]), _ElEngine(["S1"])
     assert await _speak(_el_state(monkeypatch), eleven, stock) == ["E1"]
-    assert stock.streams == []
+    assert len(eleven.streams) == 1 and stock.streams == []
 
 
-async def test_a_silent_elevenlabs_request_falls_back_after_the_deadline(monkeypatch):
-    monkeypatch.setattr(sp, "ELEVEN_FIRST_AUDIO_TIMEOUT", 0.05)
-    assert await _speak(_el_state(monkeypatch), _ElEngine(["hang"]), _ElEngine(["S1"])) == ["S1"]
+async def test_repeated_failure_stays_silent_rather_than_use_another_voice(monkeypatch):
+    eleven, stock = _ElEngine([RuntimeError("down")]), _ElEngine(["S1"])
+    assert await _speak(_el_state(monkeypatch), eleven, stock) == []
+    assert len(eleven.streams) == sp.ELEVEN_ATTEMPTS and stock.streams == []
 
 
 async def test_slow_llm_text_does_not_count_against_elevenlabs_deadline(monkeypatch):
@@ -415,20 +419,6 @@ async def test_slow_llm_text_does_not_count_against_elevenlabs_deadline(monkeypa
         yield "ni"
     conn = SimpleNamespace(timeout=10.0, max_retry=3, retry_interval=2.0)
     assert [f async for f in sp.speak_regional(state, slow_text(), conn)] == ["E1"]
-
-
-async def test_after_repeated_failures_the_call_stays_on_the_sarvam_voice(monkeypatch):
-    state = _el_state(monkeypatch)
-    state.extra["eleven_failures"] = sp.ELEVEN_MAX_FAILURES
-    eleven, stock = _ElEngine(["E1"]), _ElEngine(["S1"])
-    assert await _speak(state, eleven, stock) == ["S1"] and eleven.streams == []
-
-
-async def test_a_success_resets_the_failure_count(monkeypatch):
-    state = _el_state(monkeypatch)
-    state.extra["eleven_failures"] = 1
-    await _speak(state, _ElEngine(["E1"]), _ElEngine([]))
-    assert state.extra["eleven_failures"] == 0
 
 
 async def _route(va, monkeypatch):

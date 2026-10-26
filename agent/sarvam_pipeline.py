@@ -225,8 +225,8 @@ def build_eleven(state: SarvamCallState):
 # No deadline on the first sound: a slow ElevenLabs start is waited for, not swapped for the Sarvam voice.
 # Real errors (and the plugin's own 10 s connect limit) still fall back.
 ELEVEN_FIRST_AUDIO_TIMEOUT: float | None = None
-# Consecutive failed utterances after which the rest of the call stays on the Sarvam voice.
-ELEVEN_MAX_FAILURES = 2
+# Tries per utterance when ElevenLabs fails before any sound.
+ELEVEN_ATTEMPTS = 2
 
 
 class _TextTee:
@@ -305,30 +305,25 @@ async def _stream_frames(engine, text, conn_options, first_audio_timeout: float 
 
 
 async def speak_regional(state: SarvamCallState, text, conn_options):
-    """Speak `text` in an ElevenLabs voice. One voice per utterance, always: if ElevenLabs fails
-    before any audio, Sarvam speaks the whole utterance; if it fails midway, the utterance just
-    ends (replaying it in a second voice made callers ask who else was talking)."""
-    eleven, stock = state.extra["eleven"], state.extra["eleven_stock"]
+    """Speak `text` in an ElevenLabs voice and never in any other: if ElevenLabs fails before any
+    audio it is tried again (the same text), and if it fails midway the utterance just ends.
+    No second voice is ever used (callers asked who else was talking)."""
     tee = _TextTee(text)
     try:
-        if state.extra.get("eleven_failures", 0) < ELEVEN_MAX_FAILURES:
+        for attempt in range(1, ELEVEN_ATTEMPTS + 1):
             spoke = False
             try:
-                # one attempt only: the plugin's own retry would re-speak what was already played
+                # the plugin's own retry would re-speak what was already played, so retry here instead
                 once = APIConnectOptions(max_retry=0, timeout=conn_options.timeout)
-                async for frame in _stream_frames(eleven, tee.reader(), once, ELEVEN_FIRST_AUDIO_TIMEOUT):
+                async for frame in _stream_frames(state.extra["eleven"], tee.reader(), once, ELEVEN_FIRST_AUDIO_TIMEOUT):
                     spoke = True
                     yield frame
-                state.extra["eleven_failures"] = 0
                 return
             except Exception as exc:
-                state.extra["eleven_failures"] = state.extra.get("eleven_failures", 0) + 1
-                logger.warning("eleven_%s | voice=%s failures=%d error=%r",
-                               "cut_off" if spoke else "fallback", state.voice_id, state.extra["eleven_failures"], exc)
+                logger.warning("eleven_%s | voice=%s attempt=%d error=%r",
+                               "cut_off" if spoke else "failed", state.voice_id, attempt, exc)
                 if spoke:
                     return
-        async for frame in _stream_frames(stock, tee.reader(), conn_options):
-            yield frame
     finally:
         await tee.close()
 
