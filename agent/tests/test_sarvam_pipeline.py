@@ -379,6 +379,28 @@ async def test_end_interaction_without_any_words_uses_a_default_goodbye(monkeypa
         del agent_mod.VoiceAgent.session
 
 
+async def test_silence_probe_waits_while_the_agent_is_still_speaking(monkeypatch):
+    va = _agent()
+    said = []
+    _say_session(va, said)
+    monkeypatch.setattr(agent_mod, "_SILENCE_INITIAL_SLEEP", 0)
+    monkeypatch.setattr(agent_mod.asyncio, "sleep", lambda _s: _REAL_SLEEP(0.01))
+    va._last_user_activity = agent_mod.time.monotonic() - 60  # long ago: a 30 s answer is playing
+    va._speaking_done.clear()
+    task = asyncio.ensure_future(va._silence_watchdog())
+    try:
+        await _REAL_SLEEP(0.2)
+        assert said == []  # no probe over the agent's own speech
+        va._speaking_done.set()  # it finished; the clock restarts when it stops
+        va._last_user_activity = agent_mod.time.monotonic() - 60
+        await _REAL_SLEEP(0.2)
+        assert said and said[0][0] == "repeat-hindi"  # real silence still probes
+    finally:
+        va._ending = True
+        task.cancel()
+        del agent_mod.VoiceAgent.session
+
+
 _REAL_SLEEP = asyncio.sleep
 
 

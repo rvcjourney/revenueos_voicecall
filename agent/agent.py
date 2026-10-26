@@ -577,6 +577,12 @@ class VoiceAgent(Agent):
         probe_idx = 0
         while not self._ending:
             silence_sec = time.monotonic() - self._last_user_activity
+            # The clock restarts only when the agent stops talking, so a long answer
+            # (> 18 s of audio) would look like caller silence and queue a "can you
+            # hear me?" probe that plays right after it.
+            if not self._speaking_done.is_set() and not self._probing:
+                await asyncio.sleep(2.0)
+                continue
             if silence_sec < _SILENCE_FIRST_TIMEOUT:
                 probe_idx = 0  # user recently spoke — reset probe counter
                 await asyncio.sleep(2.0)
