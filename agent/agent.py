@@ -157,7 +157,8 @@ _BACKCHANNEL_WORDS = frozenset({
     "है", "सही", "बिल्कुल", "बिलकुल", "बोलिए", "बोलो", "बताइए", "ओके", "यस", "राइट", "श्योर",
 })
 _BACKCHANNEL_MAX_WORDS = 6
-_GOODBYE_TIMEOUT_S = 20.0  # hang up anyway if the closing statement never finishes playing
+_LLM_FIRST_TOKEN_TIMEOUT_S = 8.0  # no first word by now: say the "repeat" line instead of silence
+_GOODBYE_TIMEOUT_S = 20.0 # hang up anyway if the closing statement never finishes playing
 # Splits on anything but letters/digits/Devanagari. The explicit Devanagari
 # range is needed because Python's \w doesn't match vowel signs (ा ं ्), but it
 # skips U+0964/U+0965 so the danda "।" / "॥" still counts as punctuation.
@@ -540,7 +541,24 @@ class VoiceAgent(Agent):
         logger.info("llm_prompt_size | turn=%d est_tokens=%d", self._turn_count, sarvam_pipeline.estimate_tokens(ctx))
         text, called_tool = "", False
         self._last_reply_text = ""
-        async for chunk in Agent.default.llm_node(self, ctx, tools, model_settings):
+        stream = Agent.default.llm_node(self, ctx, tools, model_settings).__aiter__()
+
+        async def _chunks():
+            # A Sarvam request that never starts answering left callers in dead air for 25 s+.
+            try:
+                yield await asyncio.wait_for(stream.__anext__(), _LLM_FIRST_TOKEN_TIMEOUT_S)
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError:
+                self._llm_stalled = True
+                logger.warning("llm_first_token_timeout | turn=%d after=%.0fs", self._turn_count, _LLM_FIRST_TOKEN_TIMEOUT_S)
+                await stream.aclose()
+                return
+            async for c in stream:
+                yield c
+
+        self._llm_stalled = False
+        async for chunk in _chunks():
             delta = getattr(chunk, "delta", None)
             if getattr(delta, "tool_calls", None):
                 called_tool = True
@@ -550,7 +568,7 @@ class VoiceAgent(Agent):
         # Only after a real customer turn, and not when the model answered with a tool call.
         if self._turn_count > 0 and not text.strip() and not called_tool and not self._ending:
             self._sarvam.empty_replies += 1
-            logger.warning("empty_llm_reply | turn=%d total=%d", self._turn_count, self._sarvam.empty_replies)
+            logger.warning("empty_llm_reply | turn=%d total=%d stalled=%s", self._turn_count, self._sarvam.empty_replies, self._llm_stalled)
             yield self._sarvam.lang.get("repeat_line") or "Sorry, could you say that again?"
         elif text and sarvam_pipeline.looks_romanised(text, self._sarvam.language):
             self._sarvam.romanised_replies += 1

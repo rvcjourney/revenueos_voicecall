@@ -167,6 +167,17 @@ async def test_empty_reply_after_customer_turn_speaks_repeat_line(monkeypatch):
     assert va._sarvam.empty_replies == 1
 
 
+async def test_stalled_llm_speaks_repeat_line_instead_of_dead_air(monkeypatch):
+    monkeypatch.setattr(agent_mod, "_LLM_FIRST_TOKEN_TIMEOUT_S", 0.05)
+
+    async def hung(agent, chat_ctx, tools, model_settings):
+        await asyncio.sleep(60)
+        yield "late"
+    monkeypatch.setattr(Agent.default, "llm_node", hung)
+    va = _agent(turns=1)
+    assert [c async for c in va.llm_node(lk_llm.ChatContext(), [], None)] == ["repeat-hindi"]
+
+
 async def test_empty_welcome_is_left_to_its_own_fallback(monkeypatch):
     va = _agent(turns=0)
     assert await _collect(va, [], monkeypatch) == []
