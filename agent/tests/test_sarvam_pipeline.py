@@ -317,8 +317,10 @@ def test_switching_between_sarvam_and_elevenlabs_languages_retargets_the_right_e
 
 
 class _ElStream:
-    def __init__(self):
-        self.pushed, self.ended = [], False
+    """A TTS stream that plays a script: frame names, or an Exception to raise, or "hang"."""
+
+    def __init__(self, script):
+        self.script, self.pushed, self.ended = script, [], False
 
     async def __aenter__(self):
         return self
@@ -335,18 +337,89 @@ class _ElStream:
     async def __aiter__(self):
         while not self.ended:
             await asyncio.sleep(0)
-        yield SimpleNamespace(frame="ELEVEN-FRAME")
+        for item in self.script:
+            if item == "hang":
+                await asyncio.sleep(60)
+            if isinstance(item, Exception):
+                raise item
+            yield SimpleNamespace(frame=item)
 
 
-async def _speak(va, monkeypatch, chunks=("ni", "ce")):
-    async def fake_default(agent, text, model_settings):
-        yield "SARVAM-FRAME"
-    monkeypatch.setattr(Agent.default, "tts_node", fake_default)
-    agent_mod.VoiceAgent.session = property(lambda self: SimpleNamespace(conn_options=SimpleNamespace(tts_conn_options=None)))
+class _ElEngine:
+    def __init__(self, script):
+        self.script, self.streams = script, []
+
+    def stream(self, *, conn_options):
+        self.streams.append((_ElStream(self.script), conn_options))
+        return self.streams[-1][0]
+
+
+async def _speak(state, eleven, stock, chunks=("ni", "ce")):
+    state.extra.update(eleven=eleven, eleven_stock=stock, eleven_failures=state.extra.get("eleven_failures", 0))
 
     async def text():
         for c in chunks:
             yield c
+    conn = SimpleNamespace(timeout=10.0, max_retry=3, retry_interval=2.0)
+    return [f async for f in sp.speak_regional(state, text(), conn)]
+
+
+def _el_state(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    return sp.parse_meta(_el_meta())
+
+
+async def test_elevenlabs_speaks_the_whole_utterance_in_one_voice(monkeypatch):
+    eleven, stock = _ElEngine(["E1", "E2"]), _ElEngine(["S1"])
+    assert await _speak(_el_state(monkeypatch), eleven, stock) == ["E1", "E2"]
+    assert eleven.streams[0][0].pushed == ["ni", "ce"] and stock.streams == []
+    assert eleven.streams[0][1].max_retry == 0  # the plugin's retry would replay played audio
+
+
+async def test_failure_before_any_audio_is_respoken_whole_by_sarvam(monkeypatch):
+    eleven, stock = _ElEngine([RuntimeError("socket closed")]), _ElEngine(["S1", "S2"])
+    state = _el_state(monkeypatch)
+    assert await _speak(state, eleven, stock) == ["S1", "S2"]
+    assert stock.streams[0][0].pushed == ["ni", "ce"] and state.extra["eleven_failures"] == 1
+
+
+async def test_failure_midway_ends_the_utterance_instead_of_adding_a_second_voice(monkeypatch):
+    eleven, stock = _ElEngine(["E1", RuntimeError("dropped")]), _ElEngine(["S1"])
+    assert await _speak(_el_state(monkeypatch), eleven, stock) == ["E1"]
+    assert stock.streams == []
+
+
+async def test_a_silent_elevenlabs_request_falls_back_after_the_deadline(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVEN_FIRST_AUDIO_TIMEOUT", 0.05)
+    assert await _speak(_el_state(monkeypatch), _ElEngine(["hang"]), _ElEngine(["S1"])) == ["S1"]
+
+
+async def test_after_repeated_failures_the_call_stays_on_the_sarvam_voice(monkeypatch):
+    state = _el_state(monkeypatch)
+    state.extra["eleven_failures"] = sp.ELEVEN_MAX_FAILURES
+    eleven, stock = _ElEngine(["E1"]), _ElEngine(["S1"])
+    assert await _speak(state, eleven, stock) == ["S1"] and eleven.streams == []
+
+
+async def test_a_success_resets_the_failure_count(monkeypatch):
+    state = _el_state(monkeypatch)
+    state.extra["eleven_failures"] = 1
+    await _speak(state, _ElEngine(["E1"]), _ElEngine([]))
+    assert state.extra["eleven_failures"] == 0
+
+
+async def _route(va, monkeypatch):
+    async def fake_default(agent, text, model_settings):
+        yield "SARVAM-FRAME"
+
+    async def fake_regional(state, text, conn):
+        yield "ELEVEN-FRAME"
+    monkeypatch.setattr(Agent.default, "tts_node", fake_default)
+    monkeypatch.setattr(sp, "speak_regional", fake_regional)
+    agent_mod.VoiceAgent.session = property(lambda self: SimpleNamespace(conn_options=SimpleNamespace(tts_conn_options=None)))
+
+    async def text():
+        yield "x"
     try:
         return [f async for f in va.tts_node(text(), None)]
     finally:
@@ -355,18 +428,15 @@ async def _speak(va, monkeypatch, chunks=("ni", "ce")):
 
 async def test_tts_node_uses_elevenlabs_only_in_an_elevenlabs_language(monkeypatch):
     monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
-    stream = _ElStream()
-    adapter = SimpleNamespace(stream=lambda *, conn_options: stream)
 
     def agent_for(language, voice):
         va = agent_mod.VoiceAgent(SimpleNamespace(), instructions="x", welcome_message="w",
                                   sarvam_state=sp.parse_meta(_el_meta(language, voice)))
-        va._sarvam.extra["eleven_adapter"] = adapter
+        va._sarvam.extra["eleven"] = object()
         return va
 
-    assert await _speak(agent_for("telugu", "ELTEFEMALE0001"), monkeypatch) == ["ELEVEN-FRAME"]
-    assert stream.pushed == ["ni", "ce"] and stream.ended
-    assert await _speak(agent_for("hindi", "ritu_hi_conversation"), monkeypatch) == ["SARVAM-FRAME"]
+    assert await _route(agent_for("telugu", "ELTEFEMALE0001"), monkeypatch) == ["ELEVEN-FRAME"]
+    assert await _route(agent_for("hindi", "ritu_hi_conversation"), monkeypatch) == ["SARVAM-FRAME"]
 
 
 async def test_book_next_step_returns_a_reference_and_is_reported():

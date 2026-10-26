@@ -17,13 +17,14 @@ Settings follow Sarvam's "LiveKit in Production" telephony guidance
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 
 import aiohttp
-from livekit.agents import TurnHandlingOptions, tts as lk_tts
+from livekit.agents import APIConnectOptions, TurnHandlingOptions, tts as lk_tts, utils
 from livekit.plugins import elevenlabs, sarvam
 
 from config import (
@@ -196,9 +197,9 @@ def build_tts(state: SarvamCallState):
 
 
 def build_eleven(state: SarvamCallState):
-    """ElevenLabs speech for the regional languages the owner assigned it to, with a
-    Sarvam voice behind it if it fails. None when no language needs it. The call's
-    session TTS stays Sarvam; VoiceAgent.tts_node routes by the current language."""
+    """ElevenLabs speech for the regional languages the owner assigned it to, plus a Sarvam
+    voice to fall back on. None when no language needs it. The call's session TTS stays
+    Sarvam; VoiceAgent.tts_node routes by the current language through speak_regional()."""
     langs = {k: v for k, v in state.languages.items() if v.get("engine") == "elevenlabs"}
     if not langs:
         return None
@@ -209,12 +210,6 @@ def build_eleven(state: SarvamCallState):
         api_key=ELEVENLABS_API_KEY, encoding=f"pcm_{SARVAM_PIPELINE_TTS_SAMPLE_RATE}",
     )
     stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(start["tts_model"], start["sarvam_voice"], start["tts"]))
-    adapter = lk_tts.FallbackAdapter([eleven, stock], max_retry_per_tts=1)
-
-    def _on_availability(ev) -> None:
-        if ev.tts is eleven and not ev.available and not state.extra.get("eleven_fallback"):
-            state.extra["eleven_fallback"] = True
-            logger.warning("eleven_fallback | voice=%s — speaking with the Sarvam voice", state.voice_id)
 
     def _on_error(ev) -> None:
         # The plugin wraps the real reason ("Could not synthesize"); its cause says what happened.
@@ -222,10 +217,111 @@ def build_eleven(state: SarvamCallState):
         cause = getattr(err, "__cause__", None) or getattr(err, "body", None)
         logger.warning("eleven_error | voice=%s error=%s cause=%r", state.voice_id, err, cause)
 
-    adapter.on("tts_availability_changed", _on_availability)
     eleven.on("error", _on_error)
-    state.extra.update(eleven=eleven, eleven_stock=stock, eleven_adapter=adapter)
-    return adapter
+    state.extra.update(eleven=eleven, eleven_stock=stock, eleven_failures=0)
+    return eleven
+
+
+# A silent ElevenLabs request is given up on after this long and the Sarvam voice takes over.
+ELEVEN_FIRST_AUDIO_TIMEOUT = 4.0
+# Consecutive failed utterances after which the rest of the call stays on the Sarvam voice.
+ELEVEN_MAX_FAILURES = 2
+
+
+class _TextTee:
+    """Lets two TTS engines read the same text stream, so a failed ElevenLabs request can be
+    re-spoken whole by Sarvam without losing what the LLM already produced."""
+
+    def __init__(self, source) -> None:
+        self.chunks: list[str] = []
+        self.done = False
+        self.error: BaseException | None = None
+        self._wake = asyncio.Event()
+        self._task = asyncio.create_task(self._pump(source))
+
+    async def _pump(self, source) -> None:
+        try:
+            async for chunk in source:
+                self.chunks.append(chunk)
+                self._notify()
+        except Exception as exc:  # re-raised to whoever is reading
+            self.error = exc
+        finally:
+            self.done = True
+            self._notify()
+
+    def _notify(self) -> None:
+        old, self._wake = self._wake, asyncio.Event()
+        old.set()
+
+    async def reader(self):
+        i = 0
+        while True:
+            wake = self._wake
+            while i < len(self.chunks):
+                yield self.chunks[i]
+                i += 1
+            if self.done:
+                if self.error:
+                    raise self.error
+                return
+            await wake.wait()
+
+    async def close(self) -> None:
+        await utils.aio.cancel_and_wait(self._task)
+
+
+async def _stream_frames(engine, text, conn_options, first_audio_timeout: float | None = None):
+    """Audio frames from one TTS engine for a text stream; raises if it fails or stays silent."""
+    stream = engine.stream(conn_options=conn_options)
+
+    async def _feed() -> None:
+        async for chunk in text:
+            stream.push_text(chunk)
+        stream.end_input()
+
+    feed = asyncio.create_task(_feed())
+    try:
+        async with stream:
+            frames = stream.__aiter__()
+            try:
+                first = await asyncio.wait_for(frames.__anext__(), first_audio_timeout)
+            except StopAsyncIteration:
+                return
+            yield first.frame
+            async for ev in frames:
+                yield ev.frame
+    finally:
+        await utils.aio.cancel_and_wait(feed)
+
+
+async def speak_regional(state: SarvamCallState, text, conn_options):
+    """Speak `text` in an ElevenLabs voice. One voice per utterance, always: if ElevenLabs fails
+    before any audio, Sarvam speaks the whole utterance; if it fails midway, the utterance just
+    ends (replaying it in a second voice made callers ask who else was talking)."""
+    eleven, stock = state.extra["eleven"], state.extra["eleven_stock"]
+    tee = _TextTee(text)
+    try:
+        if state.extra.get("eleven_failures", 0) < ELEVEN_MAX_FAILURES:
+            spoke = False
+            try:
+                # one attempt only: the plugin's own retry would re-speak what was already played
+                once = APIConnectOptions(max_retry=0, timeout=conn_options.timeout)
+                async for frame in _stream_frames(eleven, tee.reader(), once, ELEVEN_FIRST_AUDIO_TIMEOUT):
+                    spoke = True
+                    yield frame
+                state.extra["eleven_failures"] = 0
+                return
+            except Exception as exc:
+                state.extra["eleven_failures"] = state.extra.get("eleven_failures", 0) + 1
+                logger.warning("eleven_%s | voice=%s failures=%d error=%r",
+                               "cut_off" if spoke else "fallback", state.voice_id, state.extra["eleven_failures"], exc)
+                if spoke:
+                    return
+        async for frame in _stream_frames(stock, tee.reader(), conn_options):
+            yield frame
+    finally:
+        await tee.close()
 
 
 def eleven_voice_for(state: SarvamCallState, target: dict) -> str:
