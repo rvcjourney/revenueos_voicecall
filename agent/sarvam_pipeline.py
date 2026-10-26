@@ -117,13 +117,15 @@ def parse_meta(meta: dict) -> SarvamCallState:
     if language not in langs:
         raise ValueError(f"sarvam call config has no enabled language {language!r}")
     state = SarvamCallState(language=language, voice_id=cfg["voice_id"], cloned=bool(cfg.get("cloned")), languages=langs)
-    if not ELEVENLABS_API_KEY or state.cloned:
-        # No ElevenLabs key (or a Sarvam cloned voice): everything is spoken by Sarvam.
+    if state.cloned:
+        # A Sarvam cloned voice was chosen on purpose: the whole call is Sarvam.
         if state.lang.get("engine") == "elevenlabs":
-            logger.warning("elevenlabs_unavailable | language=%s — using the Sarvam voice", language)
             state.voice_id = state.lang["sarvam_voice"]
         for lang in langs.values():
             lang["engine"] = "sarvam"
+    elif not ELEVENLABS_API_KEY and any(l.get("engine") == "elevenlabs" for l in langs.values()):
+        # Never quietly swap in another voice: refuse the call so the missing key is noticed.
+        raise ValueError("a language uses ElevenLabs but ELEVENLABS_API_KEY is not set on the agent")
     return state
 
 
@@ -209,7 +211,6 @@ def build_eleven(state: SarvamCallState):
         voice_id=voice, model=start["eleven_model"], language=start["eleven_code"],
         api_key=ELEVENLABS_API_KEY, encoding=f"pcm_{SARVAM_PIPELINE_TTS_SAMPLE_RATE}",
     )
-    stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(start["tts_model"], start["sarvam_voice"], start["tts"]))
 
     def _on_error(ev) -> None:
         # The plugin wraps the real reason ("Could not synthesize"); its cause says what happened.
@@ -218,7 +219,7 @@ def build_eleven(state: SarvamCallState):
         logger.warning("eleven_error | voice=%s error=%s cause=%r", state.voice_id, err, cause)
 
     eleven.on("error", _on_error)
-    state.extra.update(eleven=eleven, eleven_stock=stock, eleven_failures=0)
+    state.extra.update(eleven=eleven)
     return eleven
 
 

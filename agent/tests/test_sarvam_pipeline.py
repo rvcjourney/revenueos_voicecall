@@ -299,10 +299,10 @@ def _el_meta(language="telugu", voice="ELTEFEMALE0001"):
     return {"sarvam": {"language": language, "voice_id": voice, "cloned": False, "languages": _el_langs()}}
 
 
-def test_without_an_elevenlabs_key_regional_languages_fall_back_to_sarvam(monkeypatch):
+def test_without_an_elevenlabs_key_the_call_is_refused_not_given_another_voice(monkeypatch):
     monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "")
-    s = sp.parse_meta(_el_meta())
-    assert s.voice_id == s.lang["sarvam_voice"] and all(l["engine"] == "sarvam" for l in s.languages.values())
+    with pytest.raises(ValueError, match="ELEVENLABS_API_KEY"):
+        sp.parse_meta(_el_meta())
 
 
 def test_with_a_key_the_regional_language_keeps_its_elevenlabs_voice(monkeypatch):
