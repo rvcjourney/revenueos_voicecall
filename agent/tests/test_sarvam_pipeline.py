@@ -272,6 +272,103 @@ async def test_switch_language_tool_retargets_engines():
     assert stt.calls[-1]["language"] == "ta-IN"
 
 
+# ── ElevenLabs voices for regional languages ──────────────────────────────────
+def _el_langs():
+    import copy
+    langs = copy.deepcopy(LANGS)
+    for l in langs.values():
+        l.update(engine="sarvam", eleven_model="eleven_v3", eleven_code=l["tts"].split("-")[0], sarvam_voice=l["voices"][0]["id"])
+    langs["telugu"].update(engine="elevenlabs", voices=[{"id": "ELTEFEMALE0001", "gender": "female"},
+                                                        {"id": "ELTEMALE000002", "gender": "male"}])
+    langs["tamil"].update(engine="elevenlabs", voices=[{"id": "ELTAFEMALE0001", "gender": "female"}])
+    return langs
+
+
+def _el_meta(language="telugu", voice="ELTEFEMALE0001"):
+    return {"sarvam": {"language": language, "voice_id": voice, "cloned": False, "languages": _el_langs()}}
+
+
+def test_without_an_elevenlabs_key_regional_languages_fall_back_to_sarvam(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "")
+    s = sp.parse_meta(_el_meta())
+    assert s.voice_id == s.lang["sarvam_voice"] and all(l["engine"] == "sarvam" for l in s.languages.values())
+
+
+def test_with_a_key_the_regional_language_keeps_its_elevenlabs_voice(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    s = sp.parse_meta(_el_meta())
+    assert s.voice_id == "ELTEFEMALE0001" and s.lang["engine"] == "elevenlabs"
+    # the call's own Sarvam TTS is built on the fallback voice, never the ElevenLabs id
+    assert sp._tts_kwargs("bulbul:v4-flash", s.lang["sarvam_voice"], "te-IN")["speaker"] == s.lang["sarvam_voice"]
+
+
+def test_switching_between_sarvam_and_elevenlabs_languages_retargets_the_right_engines(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    s = sp.parse_meta(_el_meta("hindi", "ritu_hi_conversation"))
+    tts, stt, eleven, stock = _Fake(), _Fake(), _Fake(), _Fake()
+    s.extra.update(eleven=eleven, eleven_stock=stock)
+    assert sp.switch_language(s, "telugu", tts, stt)
+    assert eleven.calls[-1] == {"voice_id": "ELTEFEMALE0001", "model": "eleven_v3", "language": "te"}
+    assert tts.calls[-1]["speaker"] == s.languages["telugu"]["sarvam_voice"] == stock.calls[-1]["speaker"]
+    assert s.voice_id == "ELTEFEMALE0001"
+    assert sp.switch_language(s, "hindi", tts, stt)  # back to a Sarvam voice of the same gender
+    assert s.voice_id in {v["id"] for v in LANGS["hindi"]["voices"] if v["gender"] == "female"}
+    assert len(eleven.calls) == 1  # ElevenLabs untouched on a Sarvam language
+
+
+class _ElStream:
+    def __init__(self):
+        self.pushed, self.ended = [], False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def push_text(self, chunk):
+        self.pushed.append(chunk)
+
+    def end_input(self):
+        self.ended = True
+
+    async def __aiter__(self):
+        while not self.ended:
+            await asyncio.sleep(0)
+        yield SimpleNamespace(frame="ELEVEN-FRAME")
+
+
+async def _speak(va, monkeypatch, chunks=("ni", "ce")):
+    async def fake_default(agent, text, model_settings):
+        yield "SARVAM-FRAME"
+    monkeypatch.setattr(Agent.default, "tts_node", fake_default)
+    agent_mod.VoiceAgent.session = property(lambda self: SimpleNamespace(conn_options=SimpleNamespace(tts_conn_options=None)))
+
+    async def text():
+        for c in chunks:
+            yield c
+    try:
+        return [f async for f in va.tts_node(text(), None)]
+    finally:
+        del agent_mod.VoiceAgent.session
+
+
+async def test_tts_node_uses_elevenlabs_only_in_an_elevenlabs_language(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    stream = _ElStream()
+    adapter = SimpleNamespace(stream=lambda *, conn_options: stream)
+
+    def agent_for(language, voice):
+        va = agent_mod.VoiceAgent(SimpleNamespace(), instructions="x", welcome_message="w",
+                                  sarvam_state=sp.parse_meta(_el_meta(language, voice)))
+        va._sarvam.extra["eleven_adapter"] = adapter
+        return va
+
+    assert await _speak(agent_for("telugu", "ELTEFEMALE0001"), monkeypatch) == ["ELEVEN-FRAME"]
+    assert stream.pushed == ["ni", "ce"] and stream.ended
+    assert await _speak(agent_for("hindi", "ritu_hi_conversation"), monkeypatch) == ["SARVAM-FRAME"]
+
+
 async def test_book_next_step_returns_a_reference_and_is_reported():
     va = _agent()
     out = await va.book_next_step(SimpleNamespace(), prospect_name="Ravi", company="Acme",

@@ -24,9 +24,10 @@ from dataclasses import dataclass, field
 
 import aiohttp
 from livekit.agents import TurnHandlingOptions, tts as lk_tts
-from livekit.plugins import sarvam
+from livekit.plugins import elevenlabs, sarvam
 
 from config import (
+    ELEVENLABS_API_KEY,
     SARVAM_API_KEY,
     SARVAM_PIPELINE_LLM_MAX_TOKENS,
     SARVAM_PIPELINE_LLM_MODEL,
@@ -114,7 +115,15 @@ def parse_meta(meta: dict) -> SarvamCallState:
     language = cfg.get("language")
     if language not in langs:
         raise ValueError(f"sarvam call config has no enabled language {language!r}")
-    return SarvamCallState(language=language, voice_id=cfg["voice_id"], cloned=bool(cfg.get("cloned")), languages=langs)
+    state = SarvamCallState(language=language, voice_id=cfg["voice_id"], cloned=bool(cfg.get("cloned")), languages=langs)
+    if not ELEVENLABS_API_KEY or state.cloned:
+        # No ElevenLabs key (or a Sarvam cloned voice): everything is spoken by Sarvam.
+        if state.lang.get("engine") == "elevenlabs":
+            logger.warning("elevenlabs_unavailable | language=%s — using the Sarvam voice", language)
+            state.voice_id = state.lang["sarvam_voice"]
+        for lang in langs.values():
+            lang["engine"] = "sarvam"
+    return state
 
 
 def build_stt(state: SarvamCallState, prompt: str | None = None) -> sarvam.STTRealtime:
@@ -166,7 +175,8 @@ def _tts_kwargs(model: str, speaker: str, language_code: str) -> dict:
 def build_tts(state: SarvamCallState):
     lang = state.lang
     if not state.cloned:
-        return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], state.voice_id, lang["tts"]))
+        voice = lang["sarvam_voice"] if lang.get("engine") == "elevenlabs" else state.voice_id
+        return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], voice, lang["tts"]))
     # Cloned voice first; if it fails to start or dies mid-call the adapter
     # moves the rest of the call to a stock Sarvam voice in the same language
     # (still Sarvam — not a cross-vendor fallback). Never silent.
@@ -183,6 +193,42 @@ def build_tts(state: SarvamCallState):
 
     adapter.on("tts_availability_changed", _on_availability)
     return adapter
+
+
+def build_eleven(state: SarvamCallState):
+    """ElevenLabs speech for the regional languages the owner assigned it to, with a
+    Sarvam voice behind it if it fails. None when no language needs it. The call's
+    session TTS stays Sarvam; VoiceAgent.tts_node routes by the current language."""
+    langs = {k: v for k, v in state.languages.items() if v.get("engine") == "elevenlabs"}
+    if not langs:
+        return None
+    start = state.lang if state.lang.get("engine") == "elevenlabs" else next(iter(langs.values()))
+    voice = state.voice_id if state.lang is start else start["voices"][0]["id"]
+    eleven = elevenlabs.TTS(
+        voice_id=voice, model=start["eleven_model"], language=start["eleven_code"],
+        api_key=ELEVENLABS_API_KEY, encoding=f"pcm_{SARVAM_PIPELINE_TTS_SAMPLE_RATE}",
+    )
+    stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(start["tts_model"], start["sarvam_voice"], start["tts"]))
+    adapter = lk_tts.FallbackAdapter([eleven, stock], max_retry_per_tts=1)
+
+    def _on_availability(ev) -> None:
+        if ev.tts is eleven and not ev.available and not state.extra.get("eleven_fallback"):
+            state.extra["eleven_fallback"] = True
+            logger.warning("eleven_fallback | voice=%s — speaking with the Sarvam voice", state.voice_id)
+
+    adapter.on("tts_availability_changed", _on_availability)
+    state.extra.update(eleven=eleven, eleven_stock=stock, eleven_adapter=adapter)
+    return adapter
+
+
+def eleven_voice_for(state: SarvamCallState, target: dict) -> str:
+    """Same-gender ElevenLabs voice in the target language (keeps the current one if it's offered there)."""
+    voices = target["voices"]
+    if any(v["id"] == state.voice_id for v in voices):
+        return state.voice_id
+    current = next((v for lang in state.languages.values() for v in lang["voices"] if v["id"] == state.voice_id), None)
+    gender = current["gender"] if current else None
+    return next((v["id"] for v in voices if v["gender"] == gender), voices[0]["id"])
 
 
 # ── Cloned voices (Sarvam Instant Voice Cloning, beta) ────────────────────────
@@ -279,17 +325,27 @@ def switch_language(state: SarvamCallState, target_key: str, tts, stt_engine) ->
         # fallback voice behind it follows the language too.
         clone, stock_tts = tts._tts_instances
         clone.update_options(target_language_code=target["clone"])
-    current = state.extra["fallback_voice"] if state.cloned else state.voice_id
-    voice = voice_for_language(state, target, current)
-    kw = _tts_kwargs(target["tts_model"], voice, target["tts"])
-    stock_tts.update_options(**{k: kw[k] for k in ("model", "speaker", "target_language_code")},
-                             **({"temperature": kw["temperature"]} if "temperature" in kw else {}))
+    eleven = state.extra.get("eleven")
+    if eleven is not None and target.get("engine") == "elevenlabs":
+        voice = eleven_voice_for(state, target)
+        eleven.update_options(voice_id=voice, model=target["eleven_model"], language=target["eleven_code"])
+        sarvam_voice = target["sarvam_voice"]
+    else:
+        current = state.extra["fallback_voice"] if state.cloned else state.voice_id
+        voice = voice_for_language(state, target, current)
+        sarvam_voice = voice
+    kw = _tts_kwargs(target["tts_model"], sarvam_voice, target["tts"])
+    # The Sarvam engines (the call's TTS, and the fallback behind ElevenLabs) follow the language too.
+    for engine in (stock_tts, state.extra.get("eleven_stock")):
+        if engine is not None:
+            engine.update_options(**{k: kw[k] for k in ("model", "speaker", "target_language_code")},
+                                  **({"temperature": kw["temperature"]} if "temperature" in kw else {}))
     if state.cloned:
         state.extra["fallback_voice"] = voice
     else:
         state.voice_id = voice
     state.language = target_key
-    logger.info("Language switched mid-call → %s (engine=sarvam voice=%s)", target_key, state.voice_id)
+    logger.info("Language switched mid-call → %s (engine=%s voice=%s)", target_key, target.get("engine", "sarvam"), state.voice_id)
     return True
 
 

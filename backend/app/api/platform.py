@@ -13,6 +13,7 @@ org boundaries on purpose; none of it goes through org-scoped query helpers.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -690,6 +691,9 @@ def _language_out(key: str, settings: "pipelines.OwnerSettings") -> EngineLangua
         tts_model=model, default_tts_model=lang.sarvam_tts_model,
         voices=[{"id": v.id, "name": v.name, "gender": v.gender} for v in all_voices],
         shortlist=list(((settings.language_overrides.get(key) or {}).get(pipelines.SARVAM) or {}).get("voices") or []),
+        regional=key not in pipelines.SARVAM_VOICE_ONLY,
+        engine=pipelines.tts_engine(key, settings),
+        eleven_voices=[{"id": v.id, "name": v.name, "gender": v.gender} for v in pipelines.elevenlabs_voices(key, settings)],
     )
 
 
@@ -751,6 +755,28 @@ async def engines_latency(
     return {"days": days, "items": sorted(out, key=lambda r: r["engine"] != pipelines.SARVAM)}
 
 
+_ELEVEN_VOICE_ID = re.compile(r"^[A-Za-z0-9]{12,40}$")
+
+
+def _clean_eleven_voices(items) -> list[dict]:
+    """[{"id","name","gender"}] from the owner, checked: a bad voice id would only fail on a live call."""
+    if not isinstance(items, list) or len(items) > 20:
+        raise AppValidationError("Add up to 20 ElevenLabs voices per language", errors=[])
+    out, seen = [], set()
+    for it in items:
+        vid = str((it or {}).get("id") or "").strip()
+        gender = (it or {}).get("gender")
+        if not _ELEVEN_VOICE_ID.match(vid):
+            raise AppValidationError(f"'{vid}' doesn't look like an ElevenLabs voice ID (letters and numbers only)", errors=[])
+        if gender not in ("male", "female"):
+            raise AppValidationError("Each voice needs a gender: male or female", errors=[])
+        if vid in seen:
+            continue
+        seen.add(vid)
+        out.append({"id": vid, "name": (str((it or {}).get("name") or "").strip() or vid)[:40], "gender": gender})
+    return out
+
+
 @router.patch("/engines", response_model=EnginesOverviewOut)
 async def update_engines(
     body: EnginesUpdateRequest,
@@ -781,6 +807,14 @@ async def update_engines(
                 if bad:
                     raise AppValidationError(f"Not valid for {lang} on {model}: {', '.join(bad)}", errors=[])
                 cell["voices"] = list(patch["voices"])
+            if "eleven_voices" in patch:
+                if lang in pipelines.SARVAM_VOICE_ONLY:
+                    raise AppValidationError("ElevenLabs voices are only for regional languages", errors=[])
+                el_cell = overrides[lang].setdefault(pipelines.ELEVENLABS, {})
+                el_before = list(el_cell.get("voices") or [])
+                el_cell["voices"] = _clean_eleven_voices(patch["eleven_voices"])
+                if el_cell["voices"] != el_before:
+                    changes[f"{lang}.elevenlabs"] = {"from": el_before, "to": el_cell["voices"]}
             if cell != before:
                 changes[lang] = {"from": before, "to": dict(cell)}
         row.language_overrides = overrides

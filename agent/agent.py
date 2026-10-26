@@ -26,7 +26,7 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, RunContext, StopResponse, function_tool, stt, tts
+from livekit.agents import AgentSession, Agent, JobProcess, RunContext, StopResponse, function_tool, stt, tts, utils
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 
@@ -415,6 +415,12 @@ class VoiceAgent(Agent):
             self.session.shutdown(drain=False)
         except Exception as e:
             logger.debug("session.shutdown: %s", e)
+        adapter = self._sarvam.extra.get("eleven_adapter")
+        if adapter is not None:
+            try:
+                await adapter.aclose()
+            except Exception as e:
+                logger.debug("elevenlabs close: %s", e)
         try:
             await self._room.disconnect()
             logger.info("Room disconnected ✓")
@@ -501,6 +507,28 @@ class VoiceAgent(Agent):
         # backchannel's transcript lands in.
         speech = self.session.current_speech
         return speech is not None and not speech.interrupted and not speech.done()
+
+    async def tts_node(self, text, model_settings):
+        """Speak with ElevenLabs while the call is in a language the owner gave it
+        (sarvam_pipeline.build_eleven); every other call and language uses the
+        session's Sarvam TTS unchanged."""
+        adapter = self._sarvam.extra.get("eleven_adapter")
+        if adapter is None or self._sarvam.cloned or self._sarvam.lang.get("engine") != "elevenlabs":
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                yield frame
+            return
+        async with adapter.stream(conn_options=self.session.conn_options.tts_conn_options) as stream:
+            async def _forward_input() -> None:
+                async for chunk in text:
+                    stream.push_text(chunk)
+                stream.end_input()
+
+            forward_task = asyncio.create_task(_forward_input())
+            try:
+                async for ev in stream:
+                    yield ev.frame
+            finally:
+                await utils.aio.cancel_and_wait(forward_task)
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         ctx = sarvam_pipeline.trim_to_budget(chat_ctx)
@@ -999,6 +1027,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 sarvam_state.lang["tts_model"], sarvam_state.voice_id, sarvam_state.lang["tts"])
     # Pre-open the TTS WebSocket now rather than on the agent's first spoken turn.
     tts_engine.prewarm()
+    eleven_adapter = sarvam_pipeline.build_eleven(sarvam_state)
+    if eleven_adapter is not None:
+        eleven_adapter.prewarm()
     stt_engine = sarvam_pipeline.build_stt(sarvam_state, sarvam_cfg.get("stt_prompt"))
 
     voice_agent = VoiceAgent(

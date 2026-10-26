@@ -4,6 +4,8 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -36,7 +38,7 @@ export default function PlatformEngines() {
     <div className="space-y-6">
       <PageHeader
         title="Languages & voices"
-        description="Every call runs on Sarvam: realtime STT, sarvam-105b-conversations and Bulbul. Changes apply to the next call; calls in progress finish unchanged."
+        description="Speech recognition and the AI always run on Sarvam. Hindi, Hinglish and English are spoken by Sarvam (Bulbul); a regional language is spoken by ElevenLabs once you add voices for it. Changes apply to the next call; calls in progress finish unchanged."
       />
 
       <Card>
@@ -56,6 +58,7 @@ export default function PlatformEngines() {
                   <TableHead>Enabled</TableHead>
                   <TableHead>Voice model</TableHead>
                   <TableHead>Voices</TableHead>
+                <TableHead>Speaks with</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -136,6 +139,54 @@ function LatencyCard() {
   );
 }
 
+/** Owner-managed ElevenLabs voices for a regional language: copy a voice ID from
+ * ElevenLabs, name it and tag its gender; customers pick from this list. Remove
+ * them all and the language goes back to Sarvam voices. */
+function ElevenVoices({ lang, disabled, onSave }: {
+  lang: EngineLanguage;
+  disabled: boolean;
+  onSave: (voices: { id: string; name: string; gender: string }[]) => void;
+}) {
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState("female");
+  const add = () => {
+    if (!id.trim()) return;
+    onSave([...lang.eleven_voices, { id: id.trim(), name: name.trim() || id.trim(), gender }]);
+    setId(""); setName("");
+  };
+  return (
+    <div className="mb-4 space-y-2 rounded-md border p-3">
+      <p className="text-sm font-medium">ElevenLabs voices for {lang.display}</p>
+      <p className="text-xs text-muted-foreground">
+        In ElevenLabs open Voices, add a voice that speaks {lang.display} to your library and copy its Voice ID. With no
+        voices here, {lang.display} stays on Sarvam voices.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {lang.eleven_voices.map((v) => (
+          <span key={v.id} className="inline-flex items-center gap-2 rounded-full border border-primary bg-primary/10 px-2.5 py-1 text-xs">
+            {v.name} ({v.gender}) <span className="text-muted-foreground">{v.id}</span>
+            <button type="button" disabled={disabled} aria-label={`Remove ${v.name}`}
+              onClick={() => onSave(lang.eleven_voices.filter((x) => x.id !== v.id))}>×</button>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input className="h-8 w-56" placeholder="Voice ID" value={id} onChange={(e) => setId(e.target.value)} />
+        <Input className="h-8 w-36" placeholder="Name shown to customers" value={name} onChange={(e) => setName(e.target.value)} />
+        <Select value={gender} onValueChange={setGender}>
+          <SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="female">Female</SelectItem>
+            <SelectItem value="male">Male</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button size="sm" disabled={disabled || !id.trim()} onClick={add}>Add voice</Button>
+      </div>
+    </div>
+  );
+}
+
 function LanguageRow({
   lang,
   disabled,
@@ -170,13 +221,20 @@ function LanguageRow({
         </TableCell>
         <TableCell>
           <button type="button" className="text-xs text-primary hover:underline" onClick={onEditVoices}>
-            {lang.shortlist.length ? `${lang.shortlist.length} of ${lang.voices.length}` : `all ${lang.voices.length}`}
+            {lang.engine === "elevenlabs"
+              ? `${lang.eleven_voices.length} added`
+              : lang.shortlist.length ? `${lang.shortlist.length} of ${lang.voices.length}` : `all ${lang.voices.length}`}
           </button>
         </TableCell>
+        <TableCell className="text-sm">{lang.engine === "elevenlabs" ? "ElevenLabs" : "Sarvam"}</TableCell>
       </TableRow>
       {editing && (
         <TableRow>
-          <TableCell colSpan={4}>
+          <TableCell colSpan={5}>
+            {lang.regional && (
+              <ElevenVoices lang={lang} disabled={disabled}
+                onSave={(voices) => onChange({ eleven_voices: voices }, `${lang.display} ElevenLabs voices updated`)} />
+            )}
             <p className="mb-2 text-xs text-muted-foreground">
               Voices customers can pick for {lang.display} ({lang.tts_model}). None ticked = all.
             </p>

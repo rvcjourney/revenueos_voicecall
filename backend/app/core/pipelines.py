@@ -11,6 +11,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from app.config import settings as app_settings
+
 SARVAM = "sarvam"  # Call.pipeline value for every call; older rows may say "standard"
 
 V4_FLASH = "bulbul:v4-flash"
@@ -104,6 +106,11 @@ LANGUAGES: dict[str, Language] = {
 
 DEFAULT_LANGUAGE = "hinglish"
 
+# Regional languages are voiced by ElevenLabs once the owner has added voices for them
+# (platform "Languages & voices"); Sarvam keeps STT and the LLM for every call.
+ELEVENLABS = "elevenlabs"
+SARVAM_VOICE_ONLY = ("hinglish", "hindi", "english")
+
 # Fixed lines the sarvam engine speaks itself (agent/sarvam_pipeline.py):
 # (empty-reply "please repeat", mid-call failure apology). Native script,
 # English words in Latin — needs a native-speaker check before customer rollout.
@@ -195,12 +202,42 @@ def sarvam_voices(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
     return voices
 
 
+def _el_override(settings: OwnerSettings, language: str) -> dict:
+    return (settings.language_overrides.get(language) or {}).get(ELEVENLABS) or {}
+
+
+def elevenlabs_voices(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
+    """The owner's ElevenLabs shortlist for a regional language ((), for Hindi/Hinglish/English)."""
+    if language in SARVAM_VOICE_ONLY or language not in LANGUAGES:
+        return ()
+    return tuple(Voice(str(v["id"]), str(v.get("name") or v["id"]), str(v.get("gender") or "female"))
+                 for v in _el_override(settings, language).get("voices") or [] if v.get("id"))
+
+
+def tts_engine(language: str, settings: OwnerSettings) -> str:
+    return ELEVENLABS if elevenlabs_voices(language, settings) else SARVAM
+
+
+def voices_for(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
+    """Voices a customer can pick for this language: ElevenLabs when it speaks it, else Sarvam stock."""
+    return elevenlabs_voices(language, settings) or sarvam_voices(language, settings)
+
+
 def all_sarvam_stock_voice_ids() -> set[str]:
     return {i for i, _ in V3_VOICES} | {v.id for lang in LANGUAGES.values() for v in lang.v4_voices}
 
 
 def default_sarvam_voice(language: str, settings: OwnerSettings, gender: str | None = None) -> str:
+    """Default for the language's *Sarvam* voice (also the fallback behind an ElevenLabs voice)."""
     voices = sarvam_voices(language, settings)
+    for v in voices:
+        if gender is None or v.gender == gender:
+            return v.id
+    return voices[0].id
+
+
+def default_voice(language: str, settings: OwnerSettings, gender: str | None = None) -> str:
+    voices = voices_for(language, settings)
     for v in voices:
         if gender is None or v.gender == gender:
             return v.id
@@ -221,7 +258,7 @@ def validate(language: str, voice_id: str | None, settings: OwnerSettings, *, cl
         if not LANGUAGES[language].clone_supported:
             raise PipelineValidationError("Cloned voices aren't available in this language yet.")
         return
-    if voice_id and voice_id not in {v.id for v in sarvam_voices(language, settings)}:
+    if voice_id and voice_id not in {v.id for v in voices_for(language, settings)}:
         raise PipelineValidationError("This voice isn't available in this language.")
 
 
@@ -233,20 +270,26 @@ def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSetti
     for key, lang in LANGUAGES.items():
         if not language_enabled(key, settings):
             continue
-        voices = sarvam_voices(key, settings)
+        voices = voices_for(key, settings)
         langs[key] = {
             "display": lang.display,
             "stt": lang.stt_code,
             "tts": lang.tts_code,
             "clone": lang.clone_code,
             "tts_model": sarvam_tts_model(key, settings),
+            # "elevenlabs": the agent speaks this language with an ElevenLabs voice from
+            # "voices"; the Sarvam voice named here is its fallback.
+            "engine": tts_engine(key, settings),
+            "eleven_model": app_settings.ELEVENLABS_TTS_MODEL,
+            "eleven_code": lang.tts_code.split("-")[0],
+            "sarvam_voice": default_sarvam_voice(key, settings),
             "voices": [{"id": v.id, "gender": v.gender} for v in voices],
             "repeat_line": SPOKEN_LINES[key][0],
             "failure_line": SPOKEN_LINES[key][1],
         }
     return {
         "language": language,
-        "voice_id": voice_id or default_sarvam_voice(language, settings),
+        "voice_id": voice_id or default_voice(language, settings),
         "cloned": cloned,
         "languages": langs,
     }
@@ -271,7 +314,7 @@ async def call_meta(db, *, org_id, language: str, voice_id: str | None) -> dict:
             ClonedVoice.deleted_at.is_(None),
         ))
     is_clone = cloned is not None and str(cloned.status) == "ready" and LANGUAGES[language].clone_supported
-    stock_ok = voice_id in {v.id for v in sarvam_voices(language, settings)}
+    stock_ok = voice_id in {v.id for v in voices_for(language, settings)}
     return {"sarvam": sarvam_call_config(language, voice_id if (is_clone or stock_ok) else None, settings, cloned=is_clone)}
 
 
@@ -280,7 +323,7 @@ def languages_for(settings: OwnerSettings) -> list[dict]:
     return [
         {
             "value": key, "label": lang.display, "native": lang.native, "cloned_voices": lang.clone_supported,
-            "voices": [{"id": v.id, "name": v.name, "gender": v.gender} for v in sarvam_voices(key, settings)],
+            "voices": [{"id": v.id, "name": v.name, "gender": v.gender} for v in voices_for(key, settings)],
         }
         for key, lang in LANGUAGES.items()
         if language_enabled(key, settings)

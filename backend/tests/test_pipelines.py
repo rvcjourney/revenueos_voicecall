@@ -74,6 +74,55 @@ def test_sarvam_call_config_carries_every_enabled_language():
     assert cfg["languages"]["tamil"]["tts_model"] == p.V3
 
 
+# ── ElevenLabs for regional languages ─────────────────────────────────────────
+EL = p.OwnerSettings(language_overrides={"gujarati": {"elevenlabs": {"voices": [
+    {"id": "9BWtsMINqrJLrRacOk9x", "name": "Aria", "gender": "female"}]}}})
+
+
+def test_regional_language_uses_elevenlabs_only_once_the_owner_adds_voices():
+    assert p.tts_engine("gujarati", ON) == p.SARVAM
+    assert p.tts_engine("gujarati", EL) == p.ELEVENLABS
+    assert p.tts_engine("tamil", EL) == p.SARVAM  # another language: untouched
+    assert [v.id for v in p.voices_for("gujarati", EL)] == ["9BWtsMINqrJLrRacOk9x"]
+
+
+def test_hindi_hinglish_english_never_use_elevenlabs():
+    only = {k: {"elevenlabs": {"voices": [{"id": "9BWtsMINqrJLrRacOk9x", "name": "x", "gender": "male"}]}}
+            for k in p.SARVAM_VOICE_ONLY}
+    s = p.OwnerSettings(language_overrides=only)
+    assert all(p.tts_engine(k, s) == p.SARVAM for k in p.SARVAM_VOICE_ONLY)
+
+
+def test_elevenlabs_voice_is_valid_for_its_language_only():
+    p.validate("gujarati", "9BWtsMINqrJLrRacOk9x", EL)
+    with pytest.raises(p.PipelineValidationError):
+        p.validate("gujarati", "ritu", EL)  # Sarvam stock voice is no longer offered there
+    with pytest.raises(p.PipelineValidationError):
+        p.validate("tamil", "9BWtsMINqrJLrRacOk9x", EL)
+
+
+def test_call_config_names_the_engine_and_a_sarvam_fallback_per_language():
+    cfg = p.sarvam_call_config("gujarati", None, EL, cloned=False)
+    assert cfg["voice_id"] == "9BWtsMINqrJLrRacOk9x"
+    guj, tam = cfg["languages"]["gujarati"], cfg["languages"]["tamil"]
+    assert guj["engine"] == "elevenlabs" and guj["eleven_code"] == "gu" and guj["eleven_model"]
+    assert guj["sarvam_voice"] in {v.id for v in p.sarvam_voices("gujarati", EL)}
+    assert tam["engine"] == "sarvam" and cfg["languages"]["hindi"]["engine"] == "sarvam"
+
+
+def test_owner_voice_list_is_checked_before_it_can_break_a_live_call():
+    from app.api.platform import _clean_eleven_voices
+    from app.core.exceptions import ValidationError as AppValidationError
+
+    ok = _clean_eleven_voices([{"id": "9BWtsMINqrJLrRacOk9x", "name": " Aria ", "gender": "female"},
+                               {"id": "9BWtsMINqrJLrRacOk9x", "name": "dup", "gender": "female"}])
+    assert ok == [{"id": "9BWtsMINqrJLrRacOk9x", "name": "Aria", "gender": "female"}]
+    for bad in ([{"id": "short", "gender": "male"}], [{"id": "9BWtsMINqrJLrRacOk9x", "gender": "robot"}],
+                [{"id": "has spaces and ! chars", "gender": "male"}]):
+        with pytest.raises(AppValidationError):
+            _clean_eleven_voices(bad)
+
+
 # ── Per-call config ───────────────────────────────────────────────────────────
 async def _org_admin(db):
     org = Organization(name="Org", slug=f"org-{uuid.uuid4().hex[:8]}")

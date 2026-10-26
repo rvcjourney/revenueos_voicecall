@@ -30,6 +30,10 @@ SARVAM_PIPELINE_TTS_CODEC       = os.getenv("SARVAM_PIPELINE_TTS_CODEC", "linear
 SARVAM_CLASSIFY_MODEL = os.getenv("SARVAM_CLASSIFY_MODEL", "sarvam-105b")
 SARVAM_CHAT_URL       = os.getenv("SARVAM_CHAT_URL", "https://api.sarvam.ai/v2/chat/completions")
 
+# ── ElevenLabs (TTS only, regional languages; STT and the LLM stay on Sarvam) ──
+# Unset -> those languages fall back to Sarvam voices.
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+
 # ── Agent behaviour ───────────────────────────────────────────────────────────
 # Fallback only — the real instructions come from the agent template in each call's metadata.
 AGENT_SYSTEM_PROMPT   = os.getenv("AGENT_SYSTEM_PROMPT",   "You are a helpful voice assistant.")

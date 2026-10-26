@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     # ── OpenAI ("Customise with AI" only: app/services/agent_builder.py) ──────
     # sarvam-105b reasoned ~17k tokens per rewrite and overran on big edits (2026-10-23).
     OPENAI_API_KEY: str = ""
+    # Regional-language voices (everything but Hindi/Hinglish/English) are spoken by
+    # ElevenLabs; the agent holds the key (agent/.env), the backend only names the model.
+    # eleven_v3_conversational / eleven_v4_turbo started speaking faster in a 2026-10-26 test.
+    ELEVENLABS_TTS_MODEL: str = "eleven_v3"
     OPENAI_BUILDER_MODEL: str = "gpt-5.6-terra"
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────

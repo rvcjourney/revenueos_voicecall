@@ -110,6 +110,9 @@ export interface EngineLanguage {
   default_tts_model: string;
   voices: { id: string; name: string; gender: string }[];
   shortlist: string[];
+  regional: boolean;
+  engine: "sarvam" | "elevenlabs";
+  eleven_voices: { id: string; name: string; gender: string }[];
 }
 
 export interface EnginesOverview {
@@ -125,7 +128,12 @@ export interface EngineLatency {
 }
 
 export interface EnginesUpdate {
-  languages?: Record<string, { enabled?: boolean; tts_model?: string; voices?: string[] }>;
+  languages?: Record<string, {
+    enabled?: boolean;
+    tts_model?: string;
+    voices?: string[];
+    eleven_voices?: { id: string; name: string; gender: string }[];
+  }>;
 }
 
 export interface PlatformListResponse<T> {
