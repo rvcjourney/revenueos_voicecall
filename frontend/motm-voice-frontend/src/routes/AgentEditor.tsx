@@ -61,6 +61,7 @@ const NEW_AGENT: Required<AgentCreate> = {
   variables: {},
   voice_id: "",
   llm_temperature: 0.7,
+  speech_pace: 1,
   max_call_duration_seconds: 600,
 };
 
@@ -91,7 +92,7 @@ export default function AgentEditor() {
     const loaded = {
       name: a.name, description: a.description ?? "", language: a.language,
       welcome_message: a.welcome_message, system_prompt: a.system_prompt, variables: a.variables ?? {},
-      voice_id: a.voice_id ?? "", llm_temperature: a.llm_temperature, max_call_duration_seconds: a.max_call_duration_seconds,
+      voice_id: a.voice_id ?? "", llm_temperature: a.llm_temperature, speech_pace: a.speech_pace, max_call_duration_seconds: a.max_call_duration_seconds,
     };
     setForm(loaded);
     setSaved(loaded);
@@ -249,6 +250,11 @@ export default function AgentEditor() {
                 <Label>Creativity: {form.llm_temperature.toFixed(1)}</Label>
                 <Slider min={0} max={1.2} step={0.1} value={[form.llm_temperature]} onValueChange={([v]) => update("llm_temperature", v)} disabled={!canEdit} />
                 <p className="text-xs text-muted-foreground">Lower = sticks closely to the script. Higher = more varied wording.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Speaking speed: {form.speech_pace.toFixed(2)}x</Label>
+                <Slider min={0.7} max={1.5} step={0.05} value={[form.speech_pace]} onValueChange={([v]) => update("speech_pace", v)} disabled={!canEdit} />
+                <p className="text-xs text-muted-foreground">1.0 is normal. Raise it if the voice sounds slow.</p>
               </div>
               <div className="space-y-1.5">
                 <Label>Maximum call length (minutes)</Label>

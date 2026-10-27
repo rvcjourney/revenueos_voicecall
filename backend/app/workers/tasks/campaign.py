@@ -343,6 +343,7 @@ async def _place_call(
     system_prompt: str = "",
     welcome_message: str = "",
     llm_temperature: float = 0.7,
+    speech_pace: float = 1.0,
     max_duration: int = 600,
     extra_meta: dict | None = None,
 ) -> str:
@@ -364,6 +365,7 @@ async def _place_call(
             "system_prompt": system_prompt,
             "welcome_message": welcome_message,
             "llm_temperature": llm_temperature,
+            "speech_pace": speech_pace,
             "max_duration": max_duration,
             **(extra_meta or {}),  # {"sarvam": {...}} from pipelines.call_meta
         }
@@ -717,6 +719,7 @@ async def _run_one_call_body(
     system_prompt: str,
     welcome_message: str,
     llm_temperature: float,
+    speech_pace: float,
     org_max_concurrent: int,
     extra_meta: dict | None = None,
 ) -> None:
@@ -812,6 +815,7 @@ async def _run_one_call_body(
                 system_prompt=system_prompt,
                 welcome_message=welcome_message,
                 llm_temperature=llm_temperature,
+                speech_pace=speech_pace,
                 max_duration=max_duration,
                 extra_meta=extra_meta,
             )
@@ -1024,6 +1028,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                         agent_template_id=campaign.agent_template_id,
                         max_duration=tmpl.max_call_duration_seconds if tmpl else 600,
                         llm_temperature=tmpl.llm_temperature if tmpl else 0.7,
+                        speech_pace=tmpl.speech_pace if tmpl else 1.0,
                         # Campaign's voice/language win over the agent's own
                         extra_meta=await pipelines.call_meta(
                             session, org_id=campaign.org_id, language=language,
@@ -1317,6 +1322,7 @@ async def _run_test_call_body(
             system_prompt=system_prompt,
             welcome_message=welcome_msg,
             llm_temperature=float(agent.llm_temperature or 0.7),
+            speech_pace=float(agent.speech_pace or 1.0),
             max_duration=agent.max_call_duration_seconds,
             extra_meta=extra_meta,
         )

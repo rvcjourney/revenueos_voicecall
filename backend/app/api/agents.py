@@ -36,6 +36,7 @@ def _to_out(a: AgentTemplate) -> AgentOut:
         variables=a.variables or {},
         voice_id=a.voice_id,
         llm_temperature=a.llm_temperature,
+        speech_pace=a.speech_pace,
         max_call_duration_seconds=a.max_call_duration_seconds,
         created_at=a.created_at,
     )

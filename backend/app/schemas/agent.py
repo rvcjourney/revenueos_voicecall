@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentOut(BaseModel):
@@ -14,6 +14,7 @@ class AgentOut(BaseModel):
     variables: dict[str, str] = {}
     voice_id: str
     llm_temperature: float
+    speech_pace: float
     max_call_duration_seconds: int
     created_at: datetime
     # access_status: "approved" (admin / access granted), "pending" (requested), "locked" (not requested)
@@ -68,6 +69,7 @@ class AgentCreate(BaseModel):
     variables: dict[str, str] = {}
     voice_id: str = ""  # "" = the language's default voice
     llm_temperature: float = 0.7
+    speech_pace: float = Field(1.0, ge=0.7, le=1.5)
     max_call_duration_seconds: int = 600
 
     @field_validator("language")
@@ -85,4 +87,5 @@ class AgentUpdate(BaseModel):
     variables: dict[str, str] | None = None
     voice_id: str | None = None
     llm_temperature: float | None = None
+    speech_pace: float | None = Field(None, ge=0.7, le=1.5)
     max_call_duration_seconds: int | None = None

@@ -101,6 +101,7 @@ class SarvamCallState:
     voice_id: str
     cloned: bool
     languages: dict
+    pace: float = TTS_PACE
     empty_replies: int = 0
     romanised_replies: int = 0
     extra: dict = field(default_factory=dict)
@@ -116,7 +117,8 @@ def parse_meta(meta: dict) -> SarvamCallState:
     language = cfg.get("language")
     if language not in langs:
         raise ValueError(f"sarvam call config has no enabled language {language!r}")
-    state = SarvamCallState(language=language, voice_id=cfg["voice_id"], cloned=bool(cfg.get("cloned")), languages=langs)
+    state = SarvamCallState(language=language, voice_id=cfg["voice_id"], cloned=bool(cfg.get("cloned")), languages=langs,
+                           pace=min(1.5, max(0.7, float(meta.get("speech_pace") or TTS_PACE))))
     if state.cloned:
         # A Sarvam cloned voice was chosen on purpose: the whole call is Sarvam.
         if state.lang.get("engine") == "elevenlabs":
@@ -157,14 +159,14 @@ def build_llm(creativity: float) -> sarvam.LLM:
     )
 
 
-def _tts_kwargs(model: str, speaker: str, language_code: str) -> dict:
+def _tts_kwargs(model: str, speaker: str, language_code: str, pace: float = TTS_PACE) -> dict:
     kw = dict(
         model=model,  # always explicit: omitting it routes to v3
         speaker=speaker,
         target_language_code=language_code,
         speech_sample_rate=SARVAM_PIPELINE_TTS_SAMPLE_RATE,
         output_audio_codec=SARVAM_PIPELINE_TTS_CODEC,
-        pace=TTS_PACE,
+        pace=pace,
         enable_preprocessing=True,
         min_buffer_size=TTS_MIN_BUFFER,
         max_chunk_length=TTS_MAX_CHUNK,
@@ -179,13 +181,13 @@ def build_tts(state: SarvamCallState):
     lang = state.lang
     if not state.cloned:
         voice = lang["sarvam_voice"] if lang.get("engine") == "elevenlabs" else state.voice_id
-        return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], voice, lang["tts"]))
+        return sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], voice, lang["tts"], state.pace))
     # Cloned voice first; if it fails to start or dies mid-call the adapter
     # moves the rest of the call to a stock Sarvam voice in the same language
     # (still Sarvam — not a cross-vendor fallback). Never silent.
     fallback_voice = state.extra.setdefault("fallback_voice", lang["voices"][0]["id"])
     clone = SarvamCloneTTS(voice_id=state.voice_id, target_language_code=lang["clone"])
-    stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], fallback_voice, lang["tts"]))
+    stock = sarvam.TTS(api_key=SARVAM_API_KEY, **_tts_kwargs(lang["tts_model"], fallback_voice, lang["tts"], state.pace))
     adapter = lk_tts.FallbackAdapter([clone, stock], max_retry_per_tts=1)
 
     def _on_availability(ev) -> None:

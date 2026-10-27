@@ -105,6 +105,7 @@ export interface AgentTemplate {
   variables: Record<string, string>;
   voice_id: string;
   llm_temperature: number;
+  speech_pace: number;
   max_call_duration_seconds: number;
   created_at: string;
   access_status: AgentAccessStatus;
@@ -121,6 +122,7 @@ export interface AgentCreate {
   variables?: Record<string, string>;
   voice_id?: string;
   llm_temperature?: number;
+  speech_pace?: number;
   max_call_duration_seconds?: number;
 }
 

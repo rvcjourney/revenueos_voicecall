@@ -591,3 +591,11 @@ async def _no_sleep(_s):
 def test_instructions_get_only_the_call_language_added():
     out = agent_mod.build_instructions("## Persona" + chr(10) + "Ananya", _state("tamil", "ritu"))
     assert out.endswith("Ananya" + chr(10) * 2 + "# Call language" + chr(10) + "This call is in Tamil.")
+
+
+def test_agent_speaking_speed_reaches_the_voice_and_is_kept_in_a_safe_range():
+    base = {"sarvam": {"language": "hindi", "voice_id": "ritu", "languages": {"hindi": {}}}}
+    assert sp.parse_meta(base).pace == 1.0
+    assert sp.parse_meta({**base, "speech_pace": 1.2}).pace == 1.2
+    assert sp.parse_meta({**base, "speech_pace": 9}).pace == 1.5
+    assert sp._tts_kwargs("bulbul:v3", "ritu", "hi-IN", 1.2)["pace"] == 1.2

@@ -296,7 +296,7 @@ async def test_campaign_dispatch_sends_cloned_voice_and_filled_placeholders(db, 
         livekit_trunk_id="ST_test_trunk",
         sip_caller_id="+910000000000",
         max_duration=600,
-        system_prompt=prompt, welcome_message=welcome, llm_temperature=0.7,
+        system_prompt=prompt, welcome_message=welcome, llm_temperature=0.7, speech_pace=1.0,
         extra_meta=extra_meta,
         org_max_concurrent=5,
     )
