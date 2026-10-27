@@ -67,6 +67,7 @@ async def _find_call_by_phone(
     since_minutes: int = 60,
     *,
     sip_trunk_id: UUID | None = None,
+    without_recording: bool = False,
 ) -> Call | None:
     """
     Look up the most recent Call to `to_number` within the last `since_minutes`.
@@ -89,6 +90,8 @@ async def _find_call_by_phone(
     )
     if sip_trunk_id is not None:
         q = q.where(Call.sip_trunk_id == sip_trunk_id)
+    if without_recording:
+        q = q.where(Call.recording_url.is_(None))
 
     result = await db.execute(q.order_by(Call.started_at.desc()).limit(1))
     return result.scalar_one_or_none()
@@ -131,7 +134,17 @@ async def _apply_recording_event(db: AsyncSession, form, trunk_id: UUID | None) 
         return True
 
     to_number = str(form.get("To") or form.get("to") or "")
-    call = await _find_call_by_phone(db, to_number, sip_trunk_id=trunk_id) if to_number else None
+    # CallUUID names the exact call; matching by phone alone gave a later call to the same
+    # number the earlier call's recording (repeat test calls all showed the same audio).
+    call_uuid = str(form.get("CallUUID") or form.get("call_uuid") or "")
+    call = None
+    if call_uuid:
+        q = select(Call).where(Call.sip_call_id == call_uuid)
+        if trunk_id is not None:
+            q = q.where(Call.sip_trunk_id == trunk_id)
+        call = (await db.execute(q.limit(1))).scalar_one_or_none()
+    if call is None and to_number:
+        call = await _find_call_by_phone(db, to_number, sip_trunk_id=trunk_id, without_recording=True)
     if call and not call.recording_url:
         await db.execute(update(Call).where(Call.id == call.id).values(recording_url=record_url))
         await db.commit()

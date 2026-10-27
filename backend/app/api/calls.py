@@ -305,18 +305,20 @@ async def fetch_recording(
     if not call:
         raise NotFoundError("Call not found")
 
-    from app.core.vobiz import fetch_recording_for_call, resolve_vobiz_credentials
+    from app.core.vobiz import fetch_recording_for_call, recording_hints, resolve_vobiz_credentials
 
     vobiz_creds = await resolve_vobiz_credentials(db, org_id=call.org_id, campaign_id=call.campaign_id)
     if not vobiz_creds:
         raise HTTPException(status_code=503, detail="Vobiz credentials not configured")
     vobiz_auth_id, vobiz_auth_token = vobiz_creds
 
-    # Use a wide window (2 hours before call start) to avoid timezone/clock-skew issues
-    called_after = (call.started_at - timedelta(hours=2)) if call.started_at else None
+    # 30 min before call start: wide enough for clock skew, and the call's own midpoint plus the
+    # recordings other calls already hold pick the right one (it used to hand back the same one every time)
+    called_after = (call.started_at - timedelta(minutes=30)) if call.started_at else None
     if not called_after:
         raise HTTPException(status_code=422, detail="Call has no start time")
 
+    near, taken = await recording_hints(db, call.id)
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
             url = await fetch_recording_for_call(
@@ -327,6 +329,8 @@ async def fetch_recording(
                 called_after=called_after.replace(tzinfo=timezone.utc) if called_after.tzinfo is None else called_after,
                 retries=2,
                 retry_delay=2.0,
+                near=near,
+                exclude_urls=taken,
             )
     except Exception:
         raise HTTPException(status_code=503, detail="Could not reach Vobiz — try again in a moment")

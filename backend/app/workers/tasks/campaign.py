@@ -58,7 +58,7 @@ from app.core.concurrency import (
     resolve_org_max_concurrent,
 )
 from app.core.credits import has_credits_remaining, record_call_credits
-from app.core.vobiz import fetch_recording_for_call, resolve_vobiz_credentials
+from app.core.vobiz import fetch_recording_for_call, recording_hints, resolve_vobiz_credentials
 from app.database import make_worker_session_factory
 
 # NullPool: fresh DB connection per session, no reuse across asyncio.run() calls.
@@ -618,6 +618,8 @@ async def _save_recording_async(
             if attempt > 0:
                 await asyncio.sleep(attempt_interval)
             try:
+                async with AsyncSessionLocal() as session:
+                    near, taken = await recording_hints(session, call_id)
                 url = await fetch_recording_for_call(
                     http,
                     auth_id=auth_id,
@@ -626,6 +628,8 @@ async def _save_recording_async(
                     called_after=called_after,
                     retries=1,
                     retry_delay=0,
+                    near=near,
+                    exclude_urls=taken,
                 )
                 if url:
                     async with AsyncSessionLocal() as session:

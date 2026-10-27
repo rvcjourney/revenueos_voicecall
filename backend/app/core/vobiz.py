@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -316,6 +317,23 @@ async def resolve_vobiz_credentials_by_recording_url(
     return None
 
 
+async def recording_hints(session, call_id) -> tuple[datetime | None, set[str]]:
+    """(call midpoint, recordings other calls to this number already hold) for fetch_recording_for_call."""
+    from sqlalchemy import select
+
+    from app.models.call import Call
+
+    call = await session.get(Call, call_id)
+    if not call:
+        return None, set()
+    start = call.answered_at or call.started_at
+    end = call.ended_at or start
+    near = start + (end - start) / 2 if start and end else None
+    taken = await session.scalars(select(Call.recording_url).where(
+        Call.phone_number == call.phone_number, Call.id != call.id, Call.recording_url.isnot(None)))
+    return near, set(taken)
+
+
 async def fetch_recording_for_call(
     http: aiohttp.ClientSession,
     *,
@@ -325,11 +343,17 @@ async def fetch_recording_for_call(
     called_after: datetime,
     retries: int = 3,
     retry_delay: float = 5.0,
+    near: datetime | None = None,
+    exclude_urls: Collection[str] = (),
 ) -> str | None:
     """
     Query Vobiz Recording API directly by to_number.
     Recordings appear ~1-2 min after the call — call this from a background
     task with an initial delay rather than immediately after the call ends.
+
+    Vobiz can't filter by call, so repeated calls to one number all match. `exclude_urls` are
+    recordings already attached to other calls; of the rest, the one closest to `near` (the
+    call's midpoint) wins, instead of whichever Vobiz happens to list first.
     """
     hdrs = _headers(auth_id, auth_token)
     norm_to = to_number.lstrip("+")
@@ -367,12 +391,17 @@ async def fetch_recording_for_call(
                 last_page, _ = await _fetch_page(max(0, total_count - _LIMIT))
                 recordings = recordings + last_page
 
+            best: tuple[float, str] | None = None
             for rec in recordings:
                 rec_to = (rec.get("to_number") or "").lstrip("+")
                 if not rec_to or not (norm_to in rec_to or rec_to in norm_to):
                     continue
+                url = rec.get("recording_url") or rec.get("record_url") or rec.get("url")
+                if not url or url in exclude_urls:
+                    continue
 
                 # Confirm this recording is from our call (not an older one)
+                add_time_utc = None
                 add_time_str = rec.get("add_time") or ""
                 if add_time_str:
                     try:
@@ -385,10 +414,13 @@ async def fetch_recording_for_call(
                     except ValueError:
                         pass
 
-                url = rec.get("recording_url") or rec.get("record_url") or rec.get("url")
-                if url:
-                    log.info("vobiz_recording_found", to=to_number, attempt=attempt)
-                    return url
+                gap = abs((add_time_utc - near).total_seconds()) if (add_time_utc and near) else 0.0
+                if best is None or gap < best[0]:
+                    best = (gap, url)
+
+            if best:
+                log.info("vobiz_recording_found", to=to_number, attempt=attempt, gap_s=round(best[0]))
+                return best[1]
 
             log.debug("vobiz_recording_not_ready_yet", to=to_number, attempt=attempt)
 
