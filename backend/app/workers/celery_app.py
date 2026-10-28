@@ -18,7 +18,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.campaign", "app.workers.tasks.billing",
         "app.workers.tasks.backup", "app.workers.tasks.retention",
-        "app.workers.tasks.sarvam_probe",
+        "app.workers.tasks.sarvam_probe", "app.workers.tasks.webhook",
     ],
 )
 

@@ -331,6 +331,10 @@ export const sipTrunksApi = {
 export const adminApi = {
   org: () => api.get<OrgInfo>("/api/admin/org"),
   stats: () => api.get<OrgStats>("/api/admin/stats"),
+  webhook: () => api.get<{ url: string | null; has_secret: boolean }>("/api/admin/webhook"),
+  setWebhook: (data: { url: string | null; regenerate_secret?: boolean }) =>
+    api.put<{ url: string | null; has_secret: boolean; secret: string | null }>("/api/admin/webhook", data),
+  testWebhook: () => api.post<{ ok: boolean; detail: string }>("/api/admin/webhook/test"),
   users: () => api.get<AdminUser[]>("/api/admin/users"),
   createUser: (data: { full_name: string; email: string; password: string; role: string }) =>
     api.post<AdminUser>("/api/admin/users", data),

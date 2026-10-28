@@ -21,6 +21,7 @@ from app.core.exceptions import NotFoundError
 from app.database import get_db
 from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
 from app.models.dnc import DNCReason, DoNotCallEntry
+from app.models.user import Organization
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
 
 log = structlog.get_logger(__name__)
@@ -269,6 +270,19 @@ async def agent_report(
             db.add(CallTranscript(call_id=call_id, segments=segments, full_text=full_text))
 
     await db.commit()
+
+    # After commit so the worker sees the saved report; already_reported keeps
+    # a retried report from firing the customer's webhook twice.
+    if not already_reported and call_row:
+        org_has_webhook = await db.scalar(
+            select(Organization.webhook_url).where(Organization.id == call_row.org_id)
+        )
+        if org_has_webhook:
+            try:
+                from app.workers.tasks.webhook import deliver_webhook
+                deliver_webhook.delay(str(call_id))
+            except Exception as exc:  # broker down must not fail the agent's report
+                log.error("webhook_enqueue_failed", call_id=str(call_id), error=str(exc))
 
 
 @router.get("/{call_id}", response_model=CallDetail)

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Bell, Loader2, Phone, User as UserIcon, Users as UsersIcon, type LucideIcon } from "lucide-react";
+import { Bell, Loader2, Phone, User as UserIcon, Users as UsersIcon, Webhook, type LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,13 +12,14 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 import { useMyTrunks } from "@/lib/hooks";
-import { authApi, apiErrorMessage } from "@/lib/api";
+import { adminApi, authApi, apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const tabs = [
   { value: "profile", label: "Profile", icon: UserIcon },
   { value: "team", label: "Team", icon: UsersIcon },
   { value: "phone-numbers", label: "Phone Numbers", icon: Phone },
+  { value: "integrations", label: "Integrations", icon: Webhook },
   { value: "notifications", label: "Notifications", icon: Bell },
 ];
 
@@ -44,6 +45,7 @@ export default function Settings() {
           <TabsContent value="profile"><ProfileTab /></TabsContent>
           <TabsContent value="team"><TeamTab /></TabsContent>
           <TabsContent value="phone-numbers"><PhoneNumbersTab /></TabsContent>
+          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
           <TabsContent value="notifications"><ComingSoon icon={Bell} title="Notification preferences" /></TabsContent>
         </div>
       </Tabs>
@@ -161,6 +163,101 @@ function PhoneNumbersTab() {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">No phone numbers assigned to your account yet.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function IntegrationsTab() {
+  const { isAdmin } = useAuth();
+  const [url, setUrl] = useState("");
+  const [hasSecret, setHasSecret] = useState(false);
+  const [secret, setSecret] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    adminApi.webhook()
+      .then(({ data }) => { setUrl(data.url ?? ""); setHasSecret(data.has_secret); })
+      .catch(() => toast.error("Couldn't load webhook settings"))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardContent className="pt-6 text-sm text-muted-foreground">
+          Ask your organization admin to set up integrations.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  async function save(regenerate = false) {
+    setBusy(true);
+    try {
+      const { data } = await adminApi.setWebhook({ url: url.trim() || null, regenerate_secret: regenerate });
+      setHasSecret(data.has_secret);
+      setSecret(data.secret);
+      toast.success(data.url ? "Webhook saved" : "Webhook turned off");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't save webhook"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTest() {
+    setBusy(true);
+    try {
+      const { data } = await adminApi.testWebhook();
+      (data.ok ? toast.success : toast.error)(data.detail);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Test failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="max-w-xl space-y-5 pt-6">
+        <div>
+          <p className="font-medium">Webhook</p>
+          <p className="text-sm text-muted-foreground">
+            After every call we send the outcome, summary, extracted data and transcript to this URL. Connect it to
+            Zapier, Make or your CRM.
+          </p>
+        </div>
+        {loading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              <Label>Webhook URL (https)</Label>
+              <Input placeholder="https://hooks.zapier.com/..." value={url} onChange={(e) => setUrl(e.target.value)} />
+              <p className="text-xs text-muted-foreground">Leave blank and save to turn it off.</p>
+            </div>
+            {secret && (
+              <div className="space-y-1.5 rounded-lg border border-border p-3">
+                <Label>Signing secret — copy it now, it won't be shown again</Label>
+                <p className="break-all font-mono text-xs">{secret}</p>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="gradient" onClick={() => save(false)} disabled={busy}>
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />} Save
+              </Button>
+              {hasSecret && (
+                <>
+                  <Button variant="outline" onClick={sendTest} disabled={busy}>Send test</Button>
+                  <Button variant="outline" onClick={() => save(true)} disabled={busy}>New secret</Button>
+                </>
+              )}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

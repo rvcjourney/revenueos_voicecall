@@ -98,6 +98,10 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     # Owner-set in /ops: may this org request cloned voices?
     sarvam_cloning_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
 
+    # Call-completed webhook (app/core/webhook_delivery.py). Secret is Fernet-encrypted.
+    webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    webhook_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     # ── GST tax-invoice billing details ─────────────────────────────────────
     # Collected via PUT /billing/address (app/api/billing.py) before checkout
     # is allowed — billing_state is what app/core/invoicing.py uses to decide

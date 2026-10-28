@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.config import settings
+from app.core import webhook_delivery as wd
+from app.core.crypto import decrypt_value, encrypt_value
 from app.core.deps import TokenPayload, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
 from app.core.security import hash_password
@@ -77,6 +80,69 @@ async def get_org_info(
         "calls_used_this_period": org.calls_used_this_period,
         "invite_code": org_id_hex[:8].upper(),  # share this with team members
     }
+
+
+class WebhookIn(BaseModel):
+    url: str | None = None          # None/"" turns the webhook off
+    regenerate_secret: bool = False
+
+
+@router.get("/webhook")
+async def get_webhook(token: TokenPayload = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+    return {"url": org.webhook_url, "has_secret": bool(org.webhook_secret)}
+
+
+@router.put("/webhook")
+async def set_webhook(
+    body: WebhookIn,
+    token: TokenPayload = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save the call-completed webhook URL. The signing secret is returned only
+    when newly generated (first save or regenerate) — it can't be read back."""
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+    url = (body.url or "").strip()
+    if not url:
+        org.webhook_url = org.webhook_secret = None
+        await db.commit()
+        return {"url": None, "has_secret": False, "secret": None}
+    wd.assert_public_https_url(url)
+    secret = None
+    if body.regenerate_secret or not org.webhook_secret:
+        secret = wd.new_secret()
+        org.webhook_secret = encrypt_value(secret)
+    org.webhook_url = url
+    await db.commit()
+    return {"url": url, "has_secret": True, "secret": secret}
+
+
+@router.post("/webhook/test")
+async def test_webhook(token: TokenPayload = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Send a sample event to the saved URL so the customer can check their setup."""
+    org = await db.get(Organization, token.org_id)
+    if not org or not org.webhook_url or not org.webhook_secret:
+        raise AppValidationError("Save a webhook URL first")
+    wd.assert_public_https_url(org.webhook_url)
+    body_bytes = wd.encode({
+        "event": "call.test", "call_id": "00000000-0000-0000-0000-000000000000",
+        "phone_number": "+910000000000", "outcome": "interested",
+        "summary": "This is a test event from MOTMVoice.", "extracted_data": {}, "transcript": [],
+    })
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            resp = await client.post(
+                org.webhook_url, content=body_bytes,
+                headers={"Content-Type": "application/json",
+                         "X-MOTM-Signature": wd.sign(decrypt_value(org.webhook_secret), body_bytes)},
+            )
+    except httpx.HTTPError as exc:
+        return {"ok": False, "detail": f"Could not reach your URL: {type(exc).__name__}"}
+    return {"ok": resp.is_success, "detail": f"Your server answered {resp.status_code}"}
 
 
 @router.get("/stats")
