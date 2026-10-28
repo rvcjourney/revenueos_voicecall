@@ -10,7 +10,6 @@ app/api/calendar.py — Google Calendar per agent.
 from __future__ import annotations
 
 import html
-import re
 from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -34,12 +33,11 @@ from app.models.agent import AgentTemplate
 from app.models.call import Call
 from app.models.campaign import CampaignContact
 from app.models.lead import Lead
-from app.services.brochure import agent_for_call
+from app.services.brochure import agent_for_call, pick_email
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
 
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", re.IGNORECASE)
 _SEARCH_DAYS = 14  # how far ahead the agent looks for a free day
 
 
@@ -164,10 +162,17 @@ async def google_callback(
 
 # ── agent side (mid-call) ────────────────────────────────────────────────────
 
-async def _call_agent(db: AsyncSession, call_id: UUID) -> tuple[Call | None, AgentTemplate | None]:
+async def _call_agent(db: AsyncSession, call_id: UUID, agent_id: str = "") -> tuple[Call | None, AgentTemplate | None]:
     call = await db.get(Call, call_id)
     agent = await agent_for_call(db, call) if call else None
-    return call, (agent if agent and agent.gcal_refresh_token else None)
+    if call and agent is None and agent_id:  # test calls have no campaign; the agent names itself
+        try:
+            agent = await db.get(AgentTemplate, UUID(agent_id))
+        except ValueError:
+            agent = None
+        if agent and agent.org_id != call.org_id:
+            agent = None
+    return call, (agent if agent and agent.gcal_refresh_token and not agent.deleted_at else None)
 
 
 async def _free_day(refresh_token: str, cfg: dict, wanted: date, now: datetime) -> tuple[date, list[datetime]] | None:
@@ -198,11 +203,12 @@ def _offer(day: date, slots: list[datetime], cfg: dict) -> dict:
 
 class SlotsIn(BaseModel):
     date: str = ""  # YYYY-MM-DD; blank = soonest
+    agent_id: str = ""
 
 
 @router.post("/calls/{call_id}/slots", dependencies=[Depends(require_agent_webhook_signature)])
 async def calendar_slots(call_id: UUID, body: SlotsIn, db: AsyncSession = Depends(get_db)):
-    call, agent = await _call_agent(db, call_id)
+    call, agent = await _call_agent(db, call_id, body.agent_id)
     if agent is None:
         return {"status": "unavailable", "message": "No calendar is connected. Note the time the customer prefers instead."}
     cfg = gcal.merged_settings(agent.gcal_settings)
@@ -231,11 +237,12 @@ class BookIn(BaseModel):
     attendees: str = ""
     email: str = ""
     event_id: str = ""  # set when moving a meeting already booked on this call
+    agent_id: str = ""
 
 
 @router.post("/calls/{call_id}/book", dependencies=[Depends(require_agent_webhook_signature)])
 async def calendar_book(call_id: UUID, body: BookIn, db: AsyncSession = Depends(get_db)):
-    call, agent = await _call_agent(db, call_id)
+    call, agent = await _call_agent(db, call_id, body.agent_id)
     if call is None or agent is None:
         return {"status": "unavailable", "message": "No calendar is connected."}
     cfg = gcal.merged_settings(agent.gcal_settings)
@@ -264,8 +271,7 @@ async def calendar_book(call_id: UUID, body: BookIn, db: AsyncSession = Depends(
             select(Lead).where(Lead.org_id == call.org_id, Lead.phone == call.phone_number)
         )).scalar_one_or_none()
         spoken_email = body.email.strip().lower().replace(" ", "")
-        to = next((e for e in (spoken_email, lead.email if lead else "", contact.email if contact else "")
-                   if e and _EMAIL_RE.fullmatch(e)), "")
+        to = pick_email(spoken_email, lead.email if lead else None, contact.email if contact else None)
         who = body.prospect_name or (lead.name if lead else "") or (contact.name if contact else "") or call.phone_number
         title = f"{(body.next_step_type or 'Meeting').strip().title()} with {who}"
         description = "\n".join(filter(None, [

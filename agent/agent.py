@@ -339,6 +339,7 @@ class VoiceAgent(Agent):
         self._tts_engine = None  # set by entrypoint(); switch_language retargets them
         self._stt_engine = None
 
+        self._calendar_agent_id = str((calendar or {}).get("agent_id") or "")
         tools = [self._switch_language_tool()]
         if (calendar or {}).get("available"):
             tools += [self._check_calendar_tool(), self._calendar_booking_tool(bool(calendar.get("email_on_file")))]
@@ -417,7 +418,7 @@ class VoiceAgent(Agent):
         the LLM gets a status it can act on and the call carries on."""
         import httpx
 
-        body = json.dumps(payload).encode()
+        body = json.dumps({**payload, "agent_id": self._calendar_agent_id}).encode()
         try:
             async with httpx.AsyncClient(timeout=15.0) as http:
                 resp = await http.post(

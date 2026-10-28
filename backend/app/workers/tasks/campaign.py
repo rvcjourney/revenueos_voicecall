@@ -1096,7 +1096,8 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                                 **base_extra_meta,
                                 "brochure": {"available": brochure_on, "email_on_file": bool(contact.email)},
                                 # Linked Google Calendar → book_next_step checks and books real slots.
-                                "calendar": {"available": calendar_on, "email_on_file": bool(contact.email)},
+                                "calendar": {"available": calendar_on, "email_on_file": bool(contact.email),
+                                             "agent_id": str(tmpl.id) if tmpl else ""},
                             },
                         ))
 
@@ -1316,6 +1317,8 @@ async def _run_test_call_body(
         extra_meta = await pipelines.call_meta(
             session, org_id=_UUID(org_id), language=str(agent.language), voice_id=agent.voice_id,
         )
+        # A test call books into the agent's calendar too, so it can be tried before a campaign.
+        extra_meta["calendar"] = {"available": bool(agent.gcal_refresh_token), "email_on_file": False, "agent_id": agent_id}
         call_row.pipeline = pipelines.SARVAM
         await session.commit()
 

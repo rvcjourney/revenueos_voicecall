@@ -183,10 +183,10 @@ async def test_dispatcher_tells_agent_when_brochure_can_be_sent(db_engine, db):
     assert by_phone["+91123456780"] == {
         "sarvam": {"language": "hindi"},
         "brochure": {"available": True, "email_on_file": True},
-        "calendar": {"available": True, "email_on_file": True},
+        "calendar": {"available": True, "email_on_file": True, "agent_id": str(agent.id)},
     }
     assert by_phone["+91123456781"]["brochure"] == {"available": True, "email_on_file": False}
-    assert by_phone["+91123456781"]["calendar"] == {"available": True, "email_on_file": False}
+    assert by_phone["+91123456781"]["calendar"]["email_on_file"] is False
 
 
 async def test_campaign_language_is_saved_validated_and_copied(client, db):

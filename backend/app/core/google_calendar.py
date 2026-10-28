@@ -101,6 +101,18 @@ async def revoke(refresh_token: str) -> None:
         pass  # disconnecting locally still stops us using it
 
 
+def _google_reason(resp: httpx.Response) -> str:
+    """Google's own explanation, e.g. 'Calendar API has not been used in project … or it is disabled'."""
+    try:
+        err = resp.json().get("error", {})
+        reason = (err.get("errors") or [{}])[0].get("reason", "")
+        if reason == "accessNotConfigured" or "has not been used" in err.get("message", ""):
+            return "the Google Calendar API is not enabled in the Google Cloud project (APIs & Services → Library)"
+        return f"{resp.status_code} {reason} {err.get('message', '')}".strip()[:300]
+    except ValueError:
+        return str(resp.status_code)
+
+
 # ── availability ──────────────────────────────────────────────────────────────
 
 Busy = list[tuple[datetime, datetime]]
@@ -152,7 +164,7 @@ async def busy_times(refresh_token: str, start: datetime, end: datetime, tz_name
             "singleEvents": "true", "orderBy": "startTime", "maxResults": 250,
         })
     if resp.status_code != 200:
-        raise CalendarError(f"Couldn't read the calendar ({resp.status_code})")
+        raise CalendarError(f"Couldn't read the calendar: {_google_reason(resp)}")
     tz = ZoneInfo(tz_name)
     busy: Busy = []
     for ev in resp.json().get("items", []):
@@ -201,7 +213,7 @@ async def create_or_move_event(
         else:
             resp = await http.post(EVENTS_URL, params=params, json=body, headers={"Authorization": f"Bearer {token}"})
     if resp.status_code not in (200, 201):
-        raise CalendarError(f"Google Calendar refused the booking ({resp.status_code})")
+        raise CalendarError(f"Google Calendar refused the booking: {_google_reason(resp)}")
     ev = resp.json()
     return Booked(event_id=ev["id"], html_link=ev.get("htmlLink", ""), meet_link=ev.get("hangoutLink", ""))
 

@@ -495,6 +495,11 @@ def trim_to_budget(chat_ctx, budget: int = CONTEXT_TOKEN_BUDGET):
     """Copy of chat_ctx with the oldest user/assistant turns dropped until it
     fits. The system script is never trimmed."""
     ctx = chat_ctx.copy()
+    # Sarvam rejects the whole request (400 "tool.content … at least 1 character") when a
+    # tool returned nothing, e.g. end_interaction, and the call then went silent.
+    for it in ctx.items:
+        if getattr(it, "type", None) == "function_call_output" and not (it.output or "").strip():
+            it.output = "done"
     while estimate_tokens(ctx) > budget:
         idx = next((i for i, it in enumerate(ctx.items) if getattr(it, "role", None) in ("user", "assistant")), None)
         if idx is None:

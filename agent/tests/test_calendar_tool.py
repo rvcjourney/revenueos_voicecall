@@ -53,7 +53,7 @@ def test_with_calendar_both_tools_and_one_book_next_step():
 
 
 async def test_booking_confirmed_is_reported_and_a_rebook_moves_the_event():
-    va = _make_agent({"available": True, "email_on_file": True})
+    va = _make_agent({"available": True, "email_on_file": True, "agent_id": "agent-9"})
     seen: list = []
     confirmed = {"status": "confirmed", "reference": "NS-ABC123", "date_time": "Thursday 30 October, 3:00 PM",
                  "event_id": "evt1", "calendar_link": "https://cal/evt1", "meet_link": "https://meet/x",
@@ -66,7 +66,7 @@ async def test_booking_confirmed_is_reported_and_a_rebook_moves_the_event():
         await book(MagicMock(), prospect_name="Ravi", company="Acme", next_step_type="demo", date_time="2026-10-31 11:00")
     path, body, sig = seen[0]
     assert path == "/api/calendar/calls/call-123/book" and sig
-    assert body["email"] == "ravi@acme.in" and body["event_id"] == ""
+    assert body["email"] == "ravi@acme.in" and body["event_id"] == "" and body["agent_id"] == "agent-9"
     assert seen[1][1]["event_id"] == "evt1"  # second booking moves the first
     assert va._booking["meet_link"] == "https://meet/x" and va._booking["date_time"].startswith("Friday")
 

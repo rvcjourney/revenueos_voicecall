@@ -8,6 +8,7 @@ Every attempt, sent or not, lands on the lead's timeline with the reason.
 """
 from __future__ import annotations
 
+import difflib
 import re
 from datetime import datetime, timezone
 
@@ -28,6 +29,18 @@ DEFAULT_SUBJECT = "Brochure as discussed"
 DEFAULT_BODY = "Hi {name},\n\nThank you for your time on the call. As discussed, please find our brochure attached.\n\nRegards"
 
 
+def pick_email(spoken: str, *on_file: str | None) -> str:
+    """The address to send to. What the customer said on the call wins, unless it's a
+    near-miss of one we already have: speech-to-text drops or swaps a letter
+    (heard chinmaypo8483@gmail.com for chinmaypol8483@gmail.com), and then the file is right."""
+    known = [e for e in on_file if e and _EMAIL_RE.fullmatch(e)]
+    heard = spoken if spoken and _EMAIL_RE.fullmatch(spoken) else ""
+    if not heard:
+        return known[0] if known else ""
+    close = next((k for k in known if difflib.SequenceMatcher(None, heard.lower(), k.lower()).ratio() >= 0.85), None)
+    return close or heard
+
+
 async def agent_for_call(db: AsyncSession, call: Call) -> AgentTemplate | None:
     campaign = await db.get(Campaign, call.campaign_id) if call.campaign_id else None
     return await db.get(AgentTemplate, campaign.agent_template_id) if campaign and campaign.agent_template_id else None
@@ -40,8 +53,7 @@ async def deliver_brochure(
     """Send it, record the attempt on the lead, and return (ok, detail). Commits."""
     org = await db.get(Organization, lead.org_id)
     contact = await db.get(CampaignContact, call.contact_id) if call and call.contact_id else None
-    # An address the customer just gave on the call wins over the one on file.
-    to = (spoken_email if _EMAIL_RE.fullmatch(spoken_email or "") else "") or lead.email or (contact.email if contact else "") or ""
+    to = pick_email(spoken_email, lead.email, contact.email if contact else None)
 
     message_id = None
     subject = fill_lead_placeholders((agent.brochure_email_subject if agent else None) or DEFAULT_SUBJECT, lead)

@@ -108,6 +108,16 @@ def test_trim_keeps_system_script_and_drops_oldest_turns():
     assert len(ctx.items) == 21  # original untouched
 
 
+def test_empty_tool_result_is_never_sent_to_sarvam():
+    """Sarvam 400s the whole turn on an empty tool message (end_interaction returns None)."""
+    ctx = lk_llm.ChatContext()
+    ctx.add_message(role="user", content="haan")
+    ctx.items.append(lk_llm.FunctionCall(call_id="c1", name="end_interaction", arguments="{}"))
+    ctx.items.append(lk_llm.FunctionCallOutput(call_id="c1", name="end_interaction", output="", is_error=False))
+    out = sp.trim_to_budget(ctx)
+    assert [it.output for it in out.items if it.type == "function_call_output"] == ["done"]
+
+
 def test_voice_keeps_persona_family_then_gender():
     s = _state("hindi", "ritu_hi_conversation")
     assert sp.voice_for_language(s, LANGS["tamil"]) == "ritu"                    # v3 has "ritu"

@@ -210,6 +210,47 @@ async def test_book_spoken_email_wins_and_bad_format_is_rejected(client, db):
     assert r["invite_sent_to"] == "ravi.k@gmail.com"
 
 
+async def test_test_call_without_campaign_uses_the_agent_it_names(client, db):
+    agent, call, _ = await _setup(db)
+    call.campaign_id = None
+    other_agent, _, _ = await _setup(db)  # another org's agent must not be usable
+    await db.commit()
+    with patch.object(gcal, "busy_times", AsyncMock(return_value=[])), patch.object(gcal, "utcnow", return_value=NOW):
+        mine = (await _agent_post(client, f"/api/calendar/calls/{call.id}/slots", {"agent_id": str(agent.id)})).json()
+        theirs = (await _agent_post(client, f"/api/calendar/calls/{call.id}/slots", {"agent_id": str(other_agent.id)})).json()
+        bogus = (await _agent_post(client, f"/api/calendar/calls/{call.id}/slots", {"agent_id": "not-a-uuid"})).json()
+    assert mine["status"] == "ok"
+    assert theirs["status"] == "unavailable" and bogus["status"] == "unavailable"
+
+
+def test_misheard_email_falls_back_to_the_one_on_file():
+    from app.services.brochure import pick_email
+    on_file = "chinmaypol8483@gmail.com"
+    assert pick_email("chinmaypo8483@gmail.com", None, on_file) == on_file  # real case: STT dropped the "l"
+    assert pick_email("rahul.k@outlook.com", on_file) == "rahul.k@outlook.com"  # really a different address
+    assert pick_email("", on_file) == on_file
+    assert pick_email("not an email", None) == ""
+
+
+async def test_book_uses_file_email_when_spoken_one_is_a_near_miss(client, db):
+    _, call, _ = await _setup(db, contact_email="chinmaypol8483@gmail.com")
+    create = AsyncMock(return_value=gcal.Booked("e1", "", ""))
+    with patch.object(gcal, "busy_times", AsyncMock(return_value=[])), patch.object(gcal, "utcnow", return_value=NOW), \
+            patch.object(gcal, "create_or_move_event", create):
+        r = (await _agent_post(client, f"/api/calendar/calls/{call.id}/book",
+                               {"date_time": "2026-10-29 15:00", "email": "chinmaypo8483@gmail.com"})).json()
+    assert r["invite_sent_to"] == "chinmaypol8483@gmail.com"
+
+
+def test_disabled_calendar_api_gets_a_plain_reason():
+    import httpx
+    resp = httpx.Response(403, json={"error": {"code": 403, "message": "Google Calendar API has not been used in project 123 before or it is disabled.",
+                                               "errors": [{"reason": "accessNotConfigured"}]}})
+    assert "not enabled" in gcal._google_reason(resp)
+    other = httpx.Response(403, json={"error": {"message": "Insufficient Permission", "errors": [{"reason": "insufficientPermissions"}]}})
+    assert "insufficientPermissions" in gcal._google_reason(other)
+
+
 async def test_google_failure_is_a_soft_error(client, db):
     _, call, _ = await _setup(db)
     with patch.object(gcal, "busy_times", AsyncMock(side_effect=gcal.CalendarError("revoked"))):
