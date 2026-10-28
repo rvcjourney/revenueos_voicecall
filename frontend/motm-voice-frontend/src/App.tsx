@@ -22,6 +22,8 @@ const CampaignNew = lazy(() => import("@/routes/CampaignNew"));
 const CampaignDetail = lazy(() => import("@/routes/CampaignDetail"));
 const CallsList = lazy(() => import("@/routes/CallsList"));
 const CallDetail = lazy(() => import("@/routes/CallDetail"));
+const Leads = lazy(() => import("@/routes/Leads"));
+const LeadDetail = lazy(() => import("@/routes/LeadDetail"));
 const Agents = lazy(() => import("@/routes/Agents"));
 const AgentEditor = lazy(() => import("@/routes/AgentEditor"));
 const VoiceCloning = lazy(() => import("@/routes/VoiceCloning"));
@@ -80,6 +82,8 @@ export default function App() {
                       <Route path="/prime-calling/*" element={<Navigate to="/campaigns" replace />} />
                       <Route path="/calls" element={<CallsList />} />
                       <Route path="/calls/:id" element={<CallDetail />} />
+                      <Route path="/leads" element={<Leads />} />
+                      <Route path="/leads/:id" element={<LeadDetail />} />
                       <Route path="/agents" element={<Agents />} />
                       <Route path="/agents/:id" element={<AgentEditor />} />
                       <Route path="/voice-cloning" element={<VoiceCloning />} />

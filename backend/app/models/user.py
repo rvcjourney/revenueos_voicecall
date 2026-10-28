@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SAEnum,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -44,6 +45,11 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
         # Named to match the hand-written 0001 migration, which created this as a
         # separate object from the ix_organizations_slug unique index below.
         UniqueConstraint("slug", name="uq_organizations_slug"),
+        # One mailbox can serve only one customer (migration 0048).
+        Index(
+            "uq_organizations_smtp_from_email", text("lower(smtp_from_email)"),
+            unique=True, postgresql_where=text("smtp_from_email IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
@@ -101,6 +107,20 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     # Call-completed webhook (app/core/webhook_delivery.py). Secret is Fernet-encrypted.
     webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # The org's own mailbox for lead emails (app/core/email_sender.py). smtp_security
+    # is "ssl" (port 465) or "starttls" (587); the sender email is also the login;
+    # the password is Fernet-encrypted. One mailbox per org (unique index, 0048).
+    smtp_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    smtp_security: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    smtp_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    smtp_from_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_from_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Optional: read replies from the same mailbox (app/workers/tasks/email_replies.py).
+    imap_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    imap_last_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)  # last INBOX UID already checked
 
     # ── GST tax-invoice billing details ─────────────────────────────────────
     # Collected via PUT /billing/address (app/api/billing.py) before checkout

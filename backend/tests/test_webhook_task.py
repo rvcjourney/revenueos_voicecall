@@ -56,7 +56,8 @@ def setup(monkeypatch):
         call = SimpleNamespace(
             id=uuid4(), org_id=uuid4(), campaign_id=None, contact_id=uuid4(), phone_number="+911234567890",
             direction="outbound", status="completed", outcome="interested", summary="ok", duration_seconds=42,
-            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc), ended_at=None, recording_url=None,
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc), ended_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+            recording_url=None,
             extracted_data={"budget": "5L"},
         )
         org = SimpleNamespace(webhook_url=f"https://127.0.0.1:{srv.server_port}/h", webhook_secret=encrypt_value("whsec_t"))
@@ -82,6 +83,14 @@ async def test_delivers_signed_payload(setup):
     assert data["extracted_data"] == {"budget": "5L"}
     assert data["contact"]["custom_fields"] == {"city": "Pune"}
     assert data["transcript"] == [{"speaker": "user", "text": "hi"}]
+
+
+async def test_waits_until_call_is_finalized_then_sends_anyway_after_cap(setup):
+    call, seen = setup(200)
+    call.ended_at = None  # agent reported before the dispatcher finalized the call
+    assert await task._send_async(str(call.id), wait_attempt=0) is False and not seen
+    assert await task._send_async(str(call.id), wait_attempt=task.MAX_WAIT_ATTEMPTS) is True
+    assert len(seen) == 1  # never finalized: sent after the cap rather than dropped
 
 
 async def test_non_2xx_raises_so_celery_retries(setup):

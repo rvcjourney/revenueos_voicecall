@@ -9,13 +9,14 @@ import {
   campaignsApi,
   foldersApi,
   languagesApi,
+  leadsApi,
   plansApi,
   sipTrunksApi,
   unwrapList,
   usageApi,
   voiceCloningApi,
 } from "./api";
-import type { AgentCreate, BillingAddress, CampaignCreate } from "./types";
+import type { AgentCreate, BillingAddress, CampaignCreate, Lead, LeadFilters } from "./types";
 
 // ── Dashboard / analytics / usage ───────────────────────────────────────
 export function useDashboard() {
@@ -250,6 +251,11 @@ export function useAgent(id: string | undefined) {
   });
 }
 
+export function useAgentCalendar(id: string) {
+  // Refetches when the admin comes back from the Google sign-in tab.
+  return useQuery({ queryKey: ["agent-calendar", id], queryFn: () => agentsApi.getCalendar(id).then((r) => r.data), refetchOnWindowFocus: true });
+}
+
 export function useCustomizeAgent() {
   return useMutation({
     mutationFn: (data: { greeting: string; instructions: string; request: string }) =>
@@ -402,4 +408,37 @@ export function useActivity() {
 
 export function useDncList(q?: string) {
   return useQuery({ queryKey: ["dnc", q], queryFn: () => adminApi.dnc(q).then((r) => r.data) });
+}
+
+// ── Leads ────────────────────────────────────────────────────────────────
+export function useLeads(params: LeadFilters) {
+  return useQuery({
+    queryKey: ["leads", params],
+    queryFn: () => leadsApi.list(params).then((r) => r.data),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useLead(id: string | undefined) {
+  return useQuery({
+    queryKey: ["lead", id],
+    queryFn: () => leadsApi.get(id!).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useLeadsMeta() {
+  return useQuery({ queryKey: ["leads-meta"], queryFn: () => leadsApi.meta().then((r) => r.data), staleTime: 60_000 });
+}
+
+export function useUpdateLead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Omit<Lead, "id" | "phone" | "owner_name">> }) =>
+      leadsApi.update(id, data).then((r) => r.data),
+    onSuccess: (lead) => {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["lead", lead.id] });
+    },
+  });
 }

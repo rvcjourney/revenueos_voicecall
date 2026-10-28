@@ -454,8 +454,9 @@ async def test_tts_node_uses_elevenlabs_only_in_an_elevenlabs_language(monkeypat
 
 async def test_book_next_step_returns_a_reference_and_is_reported():
     va = _agent()
-    out = await va.book_next_step(SimpleNamespace(), prospect_name="Ravi", company="Acme",
-                                  next_step_type="demo", date_time="Tuesday 11am")
+    tool = next(t for t in va.tools if t.info.name == "book_next_step")
+    out = await tool(SimpleNamespace(), prospect_name="Ravi", company="Acme",
+                     next_step_type="demo", date_time="Tuesday 11am")
     assert out["status"] == "confirmed" and out["reference"].startswith("NS-")
     assert va._booking["reference"] == out["reference"]
 

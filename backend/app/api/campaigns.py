@@ -5,13 +5,13 @@ import io
 from datetime import datetime, timezone
 from uuid import UUID
 
-import pandas as pd
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.concurrency import get_current_usage
+from app.core.contacts_file import parse_contacts_file
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import (
     NotFoundError,
@@ -273,26 +273,6 @@ async def list_contacts(
     }
 
 
-# Header names (after lowercase + spaces→"_") recognised as the contact's name
-_NAME_COLUMNS = ("name", "full_name", "contact_name", "first_name", "customer_name", "client_name",
-                 "person_name", "contact_person", "contact_person_name", "person", "owner_name",
-                 "prospect_name", "lead_name")
-# Otherwise any header containing "name" is the person's name — unless it names something else
-_NOT_PERSON_NAME = ("company", "business", "firm", "organisation", "organization", "brand", "file",
-                    "user", "product", "shop", "store", "city", "industry")
-
-
-def find_name_column(columns) -> str | None:
-    return next((c for c in columns if c in _NAME_COLUMNS), None) or next(
-        (c for c in columns if "name" in c and not any(w in c for w in _NOT_PERSON_NAME)), None
-    )
-# Recognised as the phone column only when no header contains "phone"
-_PHONE_FALLBACK_COLUMNS = (
-    "contact", "contact_no", "contact_number", "mobile", "mobile_no", "mobile_number",
-    "number", "cell", "whatsapp", "whatsapp_number",
-)
-
-
 @router.post("/{campaign_id}/contacts", status_code=201)
 async def upload_contacts(
     campaign_id: UUID,
@@ -304,75 +284,20 @@ async def upload_contacts(
     if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
         raise NotFoundError("Campaign not found")
 
-    contents = await file.read()
-    fname = (file.filename or "").lower()
-    try:
-        if fname.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            df = pd.read_csv(io.BytesIO(contents))
-    except Exception:
-        raise AppValidationError(
-            "Could not parse the uploaded file — ensure it is a valid CSV or Excel (.xlsx) file",
-            errors=[],
-        )
-
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
-
-    name_col = find_name_column(df.columns)
-    phone_col = next((c for c in df.columns if "phone" in c), None) or next(
-        (c for c in df.columns if c in _PHONE_FALLBACK_COLUMNS and c != name_col), None
-    )
-    if not phone_col:
-        raise AppValidationError(
-            "File must have a phone column (e.g. 'phone', 'mobile' or 'contact')", errors=[]
-        )
-
-    email_col = next((c for c in df.columns if "email" in c), None)
-    company_col = next((c for c in df.columns if "company" in c), None)
-
-    # Every column but phone stays in custom_fields: agent placeholders like
-    # {userName} / {companyName} are filled from these by column name.
-    skip_cols = {phone_col}
-
-    contacts = []
-    for _, row in df.iterrows():
-        phone_val = row[phone_col]
-        if pd.isna(phone_val) if isinstance(phone_val, float) else phone_val is None:
-            continue
-        # Pandas reads numeric columns as float — convert to int to strip ".0"
-        if isinstance(phone_val, float):
-            raw_phone = str(int(phone_val))
-        else:
-            raw_phone = str(phone_val).strip()
-        if not raw_phone or raw_phone in ("nan", "None", ""):
-            continue
-
-        # Normalise to E.164: strip spaces/dashes, add +91 if no country code
-        phone = raw_phone.replace(" ", "").replace("-", "")
-        if not phone.startswith("+"):
-            phone = "+91" + phone.lstrip("0")
-
-        name = str(row[name_col]).strip() if name_col and pd.notna(row.get(name_col)) else "Contact"
-        email = str(row[email_col]).strip() if email_col and pd.notna(row.get(email_col)) else None
-        company = str(row[company_col]).strip() if company_col and pd.notna(row.get(company_col)) else None
-
-        custom = {
-            c: str(row[c])
-            for c in df.columns
-            if c not in skip_cols and pd.notna(row.get(c))
-        }
-
-        contacts.append(CampaignContact(
+    rows = parse_contacts_file(await file.read(), file.filename or "")
+    contacts = [
+        CampaignContact(
             org_id=campaign.org_id,
             campaign_id=campaign.id,
-            name=name,
-            phone=phone,
-            email=email,
-            company=company,
-            custom_fields=custom,
+            name=r["name"] or "Contact",
+            phone=r["phone"],
+            email=r["email"],
+            company=r["company"],
+            custom_fields=r["custom_fields"],
             status=ContactStatus.PENDING,
-        ))
+        )
+        for r in rows
+    ]
 
     if not contacts:
         raise AppValidationError("No valid contacts found in file", errors=[])

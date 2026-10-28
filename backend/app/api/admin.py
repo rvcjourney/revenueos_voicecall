@@ -5,20 +5,27 @@ All routes require role=admin.  Admins manage users within their own org.
 """
 from __future__ import annotations
 
+import asyncio
+import re
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core import webhook_delivery as wd
 from app.core.crypto import decrypt_value, encrypt_value
 from app.core.deps import TokenPayload, require_admin
+from app.core.email_sender import PORT_FOR_SECURITY, EmailSendError, org_smtp_config, send_email, smtp_configured
+from app.core.mail_inbox import IMAP_PORT, InboxError, fetch_new_messages
+from app.core.net_guard import assert_public_host
+from app.core.rate_limit import enforce_rate_limit
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
 from app.core.security import hash_password
 from app.database import get_db
@@ -143,6 +150,122 @@ async def test_webhook(token: TokenPayload = Depends(require_admin), db: AsyncSe
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"Could not reach your URL: {type(exc).__name__}"}
     return {"ok": resp.is_success, "detail": f"Your server answered {resp.status_code}"}
+
+
+class SmtpIn(BaseModel):
+    sender_name: str = Field("", max_length=255)    # what prospects see in their inbox
+    sender_email: str = Field("", max_length=255)   # the mailbox emails go out from; also the login
+    host: str = Field("", max_length=255)           # "" turns email sending off
+    security: Literal["ssl", "starttls"] = "starttls"
+    password: str | None = Field(None, max_length=255)  # None/"" keeps the saved password
+    imap_host: str = Field("", max_length=255)      # optional: read replies
+
+
+_HOST_RE = re.compile(r"[a-z0-9.-]+\.[a-z]{2,}")
+
+
+def _clean_host(raw: str, label: str) -> str:
+    host = raw.strip().lower()
+    if not _HOST_RE.fullmatch(host):
+        raise AppValidationError(f"Enter just the {label} name, e.g. smtp.gmail.com")
+    return host
+
+
+async def _account_email(db: AsyncSession, org_id) -> str | None:
+    """The customer's account login (their first admin), shown above the form."""
+    return await db.scalar(
+        select(User.email).where(User.org_id == org_id, User.role == UserRole.ADMIN, User.deleted_at.is_(None))
+        .order_by(User.created_at).limit(1)
+    )
+
+
+async def _smtp_out(db: AsyncSession, org: Organization) -> dict:
+    return {
+        "account_email": await _account_email(db, org.id),
+        "sender_name": org.smtp_from_name, "sender_email": org.smtp_from_email,
+        "host": org.smtp_host, "security": org.smtp_security, "imap_host": org.imap_host,
+        "has_password": bool(org.smtp_password), "configured": smtp_configured(org),
+    }
+
+
+@router.get("/smtp")
+async def get_smtp(token: TokenPayload = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+    return await _smtp_out(db, org)  # the password is never sent back
+
+
+@router.put("/smtp")
+async def set_smtp(body: SmtpIn, token: TokenPayload = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Save this org's own mailbox; lead and brochure emails are sent through it."""
+    org = await db.get(Organization, token.org_id)
+    if not org:
+        raise NotFoundError("Organization not found")
+    if not body.host.strip():
+        org.smtp_host = org.smtp_port = org.smtp_security = org.smtp_username = None
+        org.smtp_password = org.smtp_from_email = org.smtp_from_name = None
+        org.imap_host = org.imap_last_uid = None
+        await db.commit()
+        return await _smtp_out(db, org)
+
+    host = _clean_host(body.host, "SMTP host")
+    imap_host = _clean_host(body.imap_host, "IMAP host") if body.imap_host.strip() else None
+    sender_email = body.sender_email.strip()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", sender_email):
+        raise AppValidationError("Enter a valid sender email")
+    if any(c in body.sender_name for c in "\r\n"):
+        raise AppValidationError("Sender name can't contain line breaks")
+    if not body.password and not org.smtp_password:
+        raise AppValidationError("Enter the mailbox password")
+    taken = await db.scalar(
+        select(Organization.id).where(
+            func.lower(Organization.smtp_from_email) == sender_email.lower(), Organization.id != org.id,
+        )
+    )
+    if taken:
+        raise ConflictError("This mailbox is already connected to another account. One mailbox can serve only one customer.")
+    port = PORT_FOR_SECURITY[body.security]
+    await asyncio.to_thread(assert_public_host, host, port, "SMTP host")
+    if imap_host:
+        await asyncio.to_thread(assert_public_host, imap_host, IMAP_PORT, "IMAP host")
+
+    if (sender_email.lower(), imap_host) != ((org.smtp_from_email or "").lower(), org.imap_host):
+        org.imap_last_uid = None  # different mailbox: start reading replies afresh
+    org.smtp_host, org.smtp_port, org.smtp_security = host, port, body.security
+    org.smtp_from_email = org.smtp_username = sender_email
+    org.smtp_from_name = body.sender_name.strip() or None
+    org.imap_host = imap_host
+    if body.password:
+        org.smtp_password = encrypt_value(body.password)
+    await db.commit()
+    return await _smtp_out(db, org)
+
+
+@router.post("/smtp/test")
+async def test_smtp(token: TokenPayload = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Send a test email to the admin's own address, and check the IMAP login if set."""
+    org = await db.get(Organization, token.org_id)
+    cfg = org_smtp_config(org) if org else None
+    if cfg is None:
+        raise AppValidationError("Save your mailbox first")
+    await enforce_rate_limit("smtp_test", str(token.org_id), limit=10, window_seconds=3600)
+    admin_user = await db.get(User, token.user_id)
+    try:
+        await send_email(
+            cfg, to=admin_user.email, subject="QuickHowl test email",
+            body="Your mailbox is connected. Emails to your leads will be sent from this address.",
+        )
+    except EmailSendError as exc:
+        return {"ok": False, "detail": str(exc)}
+    detail = f"Test email sent to {admin_user.email}."
+    if org.imap_host:
+        try:
+            await asyncio.to_thread(fetch_new_messages, org.imap_host, cfg.username, cfg.password, 2**31)
+            detail += " Replies can be read too."
+        except (InboxError, AppValidationError) as exc:
+            return {"ok": False, "detail": f"{detail} But reading replies failed: {exc}"}
+    return {"ok": True, "detail": detail}
 
 
 @router.get("/stats")

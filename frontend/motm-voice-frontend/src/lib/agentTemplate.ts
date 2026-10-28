@@ -118,7 +118,7 @@ export const DEFAULT_INSTRUCTIONS = `## Persona
 export const SYSTEM_VARIABLES = ["current_date", "time_greeting"];
 
 /** Tools the agent can call; shown highlighted in the editor. */
-export const AGENT_TOOLS = ["end_interaction", "book_next_step", "switch_language"];
+export const AGENT_TOOLS = ["end_interaction", "check_calendar", "book_next_step", "switch_language", "send_brochure"];
 
 const VAR_RE = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 

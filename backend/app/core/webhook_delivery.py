@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import secrets
-import socket
 import time
 from urllib.parse import urlparse
 
 from app.core.exceptions import ValidationError
+from app.core.net_guard import assert_public_host
 
 
 def new_secret() -> str:
@@ -28,18 +27,11 @@ def sign(secret: str, body: bytes, ts: int | None = None) -> str:
 
 
 def assert_public_https_url(url: str) -> None:
-    """SSRF guard: https only, and every resolved address must be public.
-    shortcut: resolved at check time only (DNS rebinding between check and send), upgrade if untrusted tenants matter."""
+    """SSRF guard: https only, and every resolved address must be public."""
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValidationError("Webhook URL must start with https://")
-    try:
-        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        raise ValidationError("Webhook URL host could not be resolved")
-    for info in infos:
-        if not ipaddress.ip_address(info[4][0]).is_global:
-            raise ValidationError("Webhook URL must point to a public address")
+    assert_public_host(parsed.hostname, parsed.port or 443, "Webhook URL")
 
 
 def build_payload(call, contact, transcript_segments: list) -> dict:

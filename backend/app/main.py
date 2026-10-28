@@ -294,6 +294,8 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.voice_cloning import router as voice_cloning_router
     from app.api.plans import router as plans_router
     from app.api.billing import router as billing_router
+    from app.api.leads import router as leads_router
+    from app.api.calendar import router as calendar_router
 
     app.include_router(auth_router,        prefix="/api/auth",        tags=["auth"])
     app.include_router(admin_router,       prefix="/api/admin",       tags=["admin"])
@@ -305,6 +307,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(folders_router,     prefix="/api/folders",     tags=["folders"])
     app.include_router(languages_router,   prefix="/api/languages",   tags=["languages"])
     app.include_router(calls_router,       prefix="/api/calls",       tags=["calls"])
+    app.include_router(leads_router,       prefix="/api/leads",       tags=["leads"])
+    app.include_router(calendar_router,    prefix="/api/calendar",    tags=["calendar"])
     app.include_router(analytics_router,   prefix="/api/analytics",   tags=["analytics"])
     app.include_router(webhooks_router,    prefix="/webhooks",        tags=["webhooks"])
     app.include_router(sip_trunks_router,  prefix="/api/sip-trunks",  tags=["sip-trunks"])

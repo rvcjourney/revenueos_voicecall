@@ -133,6 +133,62 @@ async def test_campaign_with_only_no_answer_contacts_completes(db_engine, db):
         assert (await s.get(Campaign, campaign.id)).status == CampaignStatus.COMPLETED
 
 
+async def test_dispatcher_tells_agent_when_brochure_can_be_sent(db_engine, db):
+    """The agent only offers the brochure when the agent has one AND the org has a
+    mailbox; and it knows per contact whether an email is already on file."""
+    import asyncio
+    from datetime import time as dt_time
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.core.crypto import encrypt_value
+    from app.models.campaign import ContactStatus
+    from app.workers.tasks import campaign as campaign_task
+
+    org, _, campaign = await _make_campaign_with_contacts(db, contact_count=2)
+    campaign.status = CampaignStatus.RUNNING
+    campaign.calling_window_start, campaign.calling_window_end = dt_time(0, 0), dt_time(23, 59)
+    campaign.calling_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    agent = await db.get(AgentTemplate, campaign.agent_template_id)
+    agent.brochure_key, agent.brochure_filename = "brochures/x.pdf", "x.pdf"
+    agent.gcal_refresh_token = encrypt_value("refresh")
+    org.smtp_host, org.smtp_port, org.smtp_security = "smtp.acme.in", 587, "starttls"
+    org.smtp_from_email = org.smtp_username = "sales@acme.in"
+    org.smtp_password = encrypt_value("pw")
+    contacts = (await db.execute(select(CampaignContact).order_by(CampaignContact.phone))).scalars().all()
+    contacts[0].email = "c0@x.in"
+    await db.commit()
+
+    factory = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    placed = []
+
+    async def fake_call(*_args, **kw):
+        placed.append(kw)
+        async with factory() as s:  # finish the contact so the dispatcher can complete
+            await s.execute(
+                CampaignContact.__table__.update().where(CampaignContact.id == kw["contact_id"])
+                .values(status=ContactStatus.COMPLETED)
+            )
+            await s.commit()
+
+    with patch.object(campaign_task, "AsyncSessionLocal", factory), \
+            patch.object(campaign_task, "has_credits_remaining", new=AsyncMock(return_value=True)), \
+            patch.object(campaign_task, "_resolve_trunk", new=AsyncMock(return_value=("trunk", "+911234567890"))), \
+            patch.object(campaign_task.pipelines, "call_meta", new=AsyncMock(return_value={"sarvam": {"language": "hindi"}})), \
+            patch.object(campaign_task, "_run_one_call", new=fake_call):
+        await asyncio.wait_for(campaign_task._dispatch_loop(None, str(campaign.id)), timeout=15)
+
+    by_phone = {kw["contact_phone"]: kw["extra_meta"] for kw in placed}
+    assert by_phone["+91123456780"] == {
+        "sarvam": {"language": "hindi"},
+        "brochure": {"available": True, "email_on_file": True},
+        "calendar": {"available": True, "email_on_file": True},
+    }
+    assert by_phone["+91123456781"]["brochure"] == {"available": True, "email_on_file": False}
+    assert by_phone["+91123456781"]["calendar"] == {"available": True, "email_on_file": False}
+
+
 async def test_campaign_language_is_saved_validated_and_copied(client, db):
     """A campaign can run its agent in another language (Tamil campaign, Hindi agent)."""
     org, user, campaign = await _make_campaign_with_contacts(db, contact_count=1)

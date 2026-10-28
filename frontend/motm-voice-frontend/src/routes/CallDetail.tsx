@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Bot, Download, FileText, ListTree, Loader2, MessageSquare, RefreshCw, User } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -106,6 +106,11 @@ export default function CallDetail() {
             <CallOutcomeBadge outcome={c.outcome} status={c.status} />
             <CallStatusBadge status={c.status} />
             {c.sentiment && <SentimentBadge sentiment={c.sentiment} />}
+            {c.campaign_id && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/leads?q=${encodeURIComponent(c.phone_number)}`}><User className="h-3.5 w-3.5" /> Open lead</Link>
+              </Button>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             {formatDateTime(c.started_at)} · {formatDuration(callDurationSeconds(c))}

@@ -23,6 +23,7 @@ from app.models.call import Call, CallOutcome, CallStatus, CallTranscript
 from app.models.dnc import DNCReason, DoNotCallEntry
 from app.models.user import Organization
 from app.schemas.call import CallDetail, CallListResponse, CallOut, TranscriptSegment
+from app.services.leads import upsert_from_call as upsert_lead_from_call
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
@@ -269,6 +270,11 @@ async def agent_report(
         else:
             db.add(CallTranscript(call_id=call_id, segments=segments, full_text=full_text))
 
+    # Same transaction as the report, once per call (a retried report must not
+    # add a second timeline entry).
+    if not already_reported and call_row:
+        await upsert_lead_from_call(db, call_row, outcome, body.summary, body.extracted_data)
+
     await db.commit()
 
     # After commit so the worker sees the saved report; already_reported keeps
@@ -283,6 +289,14 @@ async def agent_report(
                 deliver_webhook.delay(str(call_id))
             except Exception as exc:  # broker down must not fail the agent's report
                 log.error("webhook_enqueue_failed", call_id=str(call_id), error=str(exc))
+
+    # The customer agreed to receive the agent's brochure on the call.
+    if not already_reported and call_row and isinstance((body.extracted_data or {}).get("brochure_request"), dict):
+        try:
+            from app.workers.tasks.brochure import send_brochure
+            send_brochure.delay(str(call_id))
+        except Exception as exc:
+            log.error("brochure_enqueue_failed", call_id=str(call_id), error=str(exc))
 
 
 @router.get("/{call_id}", response_model=CallDetail)

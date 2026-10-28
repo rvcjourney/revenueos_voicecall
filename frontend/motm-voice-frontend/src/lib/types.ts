@@ -111,6 +111,27 @@ export interface AgentTemplate {
   access_status: AgentAccessStatus;
   access_request_id: string | null;
   can_edit: boolean;
+  /** Brochure emailed when a customer agrees on a call; null = none uploaded. */
+  brochure_filename: string | null;
+  brochure_email_subject: string | null;
+  brochure_email_body: string | null;
+}
+
+/** Google Calendar the agent books meetings into during calls. days: Monday=0 … Sunday=6. */
+export interface CalendarSettings {
+  duration_minutes: number;
+  day_start: string;
+  day_end: string;
+  days: number[];
+  timezone: string;
+}
+
+export interface AgentCalendar {
+  /** Google sign-in is set up on this server. */
+  available: boolean;
+  connected: boolean;
+  email: string | null;
+  settings: CalendarSettings;
 }
 
 export interface AgentCreate {
@@ -508,4 +529,109 @@ export interface ActivityEvent {
 export interface ListResponse<T> {
   items: T[];
   total: number;
+}
+
+// ── Leads (internal CRM) ─────────────────────────────────────────────────
+export type LeadStatus =
+  | "new" | "contacted" | "interested" | "meeting_scheduled" | "qualified" | "won" | "lost" | "do_not_call";
+// Pipeline order, used for the status chips and dropdowns.
+export const LEAD_STATUSES: LeadStatus[] = [
+  "new", "contacted", "interested", "meeting_scheduled", "qualified", "won", "lost", "do_not_call",
+];
+export type LeadEmailStatus = "none" | "captured" | "sent" | "failed" | "replied";
+export type LeadMeetingStatus = "none" | "scheduled" | "done" | "cancelled";
+
+export interface Lead {
+  id: string;
+  phone: string;
+  name: string | null;
+  email: string | null;
+  company: string | null;
+  status: LeadStatus;
+  owner_id: string | null;
+  owner_name: string | null;
+  tags: string[];
+  custom_fields: Record<string, string>;
+  last_call_id: string | null;
+  last_outcome: string | null;
+  last_summary: string | null;
+  last_called_at: string | null;
+  email_status: LeadEmailStatus;
+  email_sent_at: string | null;
+  meeting_status: LeadMeetingStatus;
+  meeting_at_text: string | null;
+  meeting_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeadListResponse {
+  items: Lead[];
+  total: number;
+  status_counts: Partial<Record<LeadStatus, number>>;
+}
+
+export interface LeadActivity {
+  id: string;
+  type: "call" | "note" | "status_change" | "email" | "email_reply" | "meeting" | "edit" | "import";
+  payload: Record<string, unknown>;
+  created_at: string;
+  user_name: string | null;
+}
+
+export interface LeadCall {
+  id: string;
+  campaign_id: string | null;
+  started_at: string | null;
+  status: string;
+  outcome: string;
+  summary: string | null;
+  duration_seconds: number | null;
+  has_recording: boolean;
+}
+
+export interface LeadDetail extends Lead {
+  activities: LeadActivity[];
+  calls: LeadCall[];
+}
+
+export interface LeadsMeta {
+  members: { id: string; name: string }[];
+  email_enabled: boolean;
+}
+
+export interface LeadFilters {
+  status?: LeadStatus;
+  owner?: string;
+  q?: string;
+  email_status?: LeadEmailStatus;
+  meeting_status?: LeadMeetingStatus;
+  limit?: number;
+  offset?: number;
+}
+
+// ── Org email (SMTP) settings ────────────────────────────────────────────
+export type SmtpSecurity = "ssl" | "starttls";
+
+export interface SmtpSettings {
+  /** The customer's account login (first admin), shown above the form. */
+  account_email: string | null;
+  sender_name: string | null;
+  /** The mailbox emails go out from; also the SMTP login. */
+  sender_email: string | null;
+  host: string | null;
+  security: SmtpSecurity | null;
+  /** Optional: read replies from the same mailbox. */
+  imap_host: string | null;
+  has_password: boolean;
+  configured: boolean;
+}
+
+export interface SmtpSettingsInput {
+  sender_name: string;
+  sender_email: string;
+  host: string;
+  security: SmtpSecurity;
+  password?: string;
+  imap_host: string;
 }

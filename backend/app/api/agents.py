@@ -39,6 +39,9 @@ def _to_out(a: AgentTemplate) -> AgentOut:
         speech_pace=a.speech_pace,
         max_call_duration_seconds=a.max_call_duration_seconds,
         created_at=a.created_at,
+        brochure_filename=a.brochure_filename if a.brochure_key else None,
+        brochure_email_subject=a.brochure_email_subject,
+        brochure_email_body=a.brochure_email_body,
     )
 
 
@@ -261,13 +264,7 @@ async def get_agent(
     return _to_out(agent)
 
 
-@router.patch("/{agent_id}", response_model=AgentOut)
-async def update_agent(
-    agent_id: UUID,
-    body: AgentUpdate,
-    token: TokenPayload = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def _editable_agent(db: AsyncSession, agent_id: UUID, token: TokenPayload) -> AgentTemplate:
     agent = await db.get(AgentTemplate, agent_id)
     if not agent or agent.org_id != token.org_id or agent.deleted_at:
         raise NotFoundError("Agent template not found")
@@ -284,6 +281,107 @@ async def update_agent(
         )
         if not access:
             raise PermissionDeniedError("You do not have edit permission for this agent")
+    return agent
+
+
+# Brochure files: checked by content, not just the name, since they're emailed to customers.
+_BROCHURE_TYPES = {
+    b"%PDF": ("application/pdf", ".pdf"),
+    b"\x89PNG": ("image/png", ".png"),
+    b"\xff\xd8\xff": ("image/jpeg", ".jpg"),
+}
+_BROCHURE_MAX_BYTES = 10 * 1024 * 1024
+
+
+@router.post("/{agent_id}/brochure", response_model=AgentOut)
+async def upload_brochure(
+    agent_id: UUID,
+    file: UploadFile = File(...),
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The brochure this agent emails when a customer agrees to receive it on a call."""
+    agent = await _editable_agent(db, agent_id, token)
+    data = await file.read()
+    if len(data) > _BROCHURE_MAX_BYTES:
+        raise AppValidationError("Brochure must be under 10 MB", errors=[])
+    kind = next((v for sig, v in _BROCHURE_TYPES.items() if data.startswith(sig)), None)
+    if kind is None:
+        raise AppValidationError("Upload a PDF, PNG or JPG file", errors=[])
+    content_type, ext = kind
+    stem = "".join(c for c in (file.filename or "brochure").rsplit(".", 1)[0] if c.isalnum() or c in " -_")[:80].strip()
+    filename = f"{stem or 'brochure'}{ext}"
+
+    from app.storage.backend import get_storage
+    storage = get_storage()
+    key = f"brochures/{token.org_id}/{agent.id}/{_uuid_module.uuid4().hex}{ext}"
+    await storage.upload(settings.BUCKET_EXPORTS, key, data, content_type=content_type)
+    old_key = agent.brochure_key
+    agent.brochure_key, agent.brochure_filename, agent.brochure_content_type = key, filename, content_type
+    if not agent.brochure_email_subject:
+        agent.brochure_email_subject = "Brochure as discussed"
+    if not agent.brochure_email_body:
+        agent.brochure_email_body = (
+            "Hi {name},\n\nThank you for your time on the call. As discussed, please find our brochure attached.\n\n"
+            "Regards"
+        )
+    await db.commit()
+    if old_key:
+        try:
+            await storage.delete(settings.BUCKET_EXPORTS, old_key)
+        except Exception:
+            pass  # an orphaned old file is harmless; the agent already points at the new one
+    await db.refresh(agent)
+    return _to_out(agent)
+
+
+@router.get("/{agent_id}/brochure")
+async def download_brochure(
+    agent_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await db.get(AgentTemplate, agent_id)
+    if not agent or agent.org_id != token.org_id or agent.deleted_at or not agent.brochure_key:
+        raise NotFoundError("No brochure uploaded")
+    from fastapi.responses import Response
+    from app.storage.backend import get_storage
+    data = await get_storage().download(settings.BUCKET_EXPORTS, agent.brochure_key)
+    return Response(
+        content=data, media_type=agent.brochure_content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{agent.brochure_filename or "brochure"}"'},
+    )
+
+
+@router.delete("/{agent_id}/brochure", response_model=AgentOut)
+async def remove_brochure(
+    agent_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the brochure; the agent stops offering it on calls."""
+    agent = await _editable_agent(db, agent_id, token)
+    old_key = agent.brochure_key
+    agent.brochure_key = agent.brochure_filename = agent.brochure_content_type = None
+    await db.commit()
+    if old_key:
+        from app.storage.backend import get_storage
+        try:
+            await get_storage().delete(settings.BUCKET_EXPORTS, old_key)
+        except Exception:
+            pass
+    await db.refresh(agent)
+    return _to_out(agent)
+
+
+@router.patch("/{agent_id}", response_model=AgentOut)
+async def update_agent(
+    agent_id: UUID,
+    body: AgentUpdate,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await _editable_agent(db, agent_id, token)
 
     if body.voice_id is not None or body.language is not None:
         await check_voice_choice(

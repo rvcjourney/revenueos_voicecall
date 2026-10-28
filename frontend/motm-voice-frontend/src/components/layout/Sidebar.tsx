@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Megaphone,
+  Contact,
   Phone,
   BarChart3,
   Headset,
@@ -28,6 +29,7 @@ const mainNav = [
   { to: "/agents", label: "AI Agents", icon: Headset },
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
+  { to: "/leads", label: "Leads", icon: Contact },
   { to: "/calls", label: "Call History", icon: Phone },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
 ];

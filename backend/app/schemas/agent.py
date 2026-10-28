@@ -17,6 +17,10 @@ class AgentOut(BaseModel):
     speech_pace: float
     max_call_duration_seconds: int
     created_at: datetime
+    # Brochure emailed when a customer agrees on a call (None = no brochure uploaded).
+    brochure_filename: str | None = None
+    brochure_email_subject: str | None = None
+    brochure_email_body: str | None = None
     # access_status: "approved" (admin / access granted), "pending" (requested), "locked" (not requested)
     access_status: str = "approved"
     access_request_id: str | None = None  # used by admin to approve/reject
@@ -89,3 +93,5 @@ class AgentUpdate(BaseModel):
     llm_temperature: float | None = None
     speech_pace: float | None = Field(None, ge=0.7, le=1.5)
     max_call_duration_seconds: int | None = None
+    brochure_email_subject: str | None = Field(None, max_length=255)
+    brochure_email_body: str | None = Field(None, max_length=20_000)

@@ -58,6 +58,7 @@ from app.core.concurrency import (
     resolve_org_max_concurrent,
 )
 from app.core.credits import has_credits_remaining, record_call_credits
+from app.core.email_sender import smtp_configured
 from app.core.vobiz import fetch_recording_for_call, recording_hints, resolve_vobiz_credentials
 from app.database import make_worker_session_factory
 
@@ -1038,6 +1039,13 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                     greeting = (tmpl.welcome_message or "") if tmpl else ""
                     instructions = (tmpl.system_prompt or "") if tmpl else ""
                     defaults = (tmpl.variables or {}) if tmpl else {}
+                    # The agent only offers the brochure when it can actually be emailed:
+                    # the agent has one and this org has connected its mailbox.
+                    brochure_on = bool(tmpl and tmpl.brochure_key) and smtp_configured(
+                        await session.get(Organization, campaign.org_id)
+                    )
+                    calendar_on = bool(tmpl and tmpl.gcal_refresh_token)
+                    base_extra_meta = tmpl_kwargs.pop("extra_meta")
 
                     for contact in contacts:
                         # DNC check
@@ -1084,6 +1092,12 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                             room_name=room_name,
                             system_prompt=prompt,
                             welcome_message=welcome,
+                            extra_meta={
+                                **base_extra_meta,
+                                "brochure": {"available": brochure_on, "email_on_file": bool(contact.email)},
+                                # Linked Google Calendar → book_next_step checks and books real slots.
+                                "calendar": {"available": calendar_on, "email_on_file": bool(contact.email)},
+                            },
                         ))
 
         if needs_retry_wait:

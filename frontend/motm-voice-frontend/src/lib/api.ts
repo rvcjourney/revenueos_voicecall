@@ -3,6 +3,7 @@ import type {
   ActivityEvent,
   AdminUser,
   AgentAccessRequest,
+  AgentCalendar,
   AgentCreate,
   AgentCreationRequest,
   AgentCreationRequestAdmin,
@@ -38,6 +39,14 @@ import type {
   TaxInvoiceList,
   TrunkCapacity,
   User,
+  Lead,
+  LeadDetail,
+  LeadFilters,
+  LeadListResponse,
+  LeadsMeta,
+  SmtpSettings,
+  SmtpSettingsInput,
+  CalendarSettings,
 } from "./types";
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -188,8 +197,22 @@ export const agentsApi = {
   list: () => api.get<ListResponse<AgentTemplate> | AgentTemplate[]>("/api/agents"),
   get: (id: string) => api.get<AgentTemplate>(`/api/agents/${id}`),
   create: (data: AgentCreate) => api.post<AgentTemplate>("/api/agents", data),
-  update: (id: string, data: Partial<AgentCreate>) => api.patch<AgentTemplate>(`/api/agents/${id}`, data),
+  update: (id: string, data: Partial<AgentCreate> & { brochure_email_subject?: string; brochure_email_body?: string }) =>
+    api.patch<AgentTemplate>(`/api/agents/${id}`, data),
   remove: (id: string) => api.delete(`/api/agents/${id}`),
+  uploadBrochure: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<AgentTemplate>(`/api/agents/${id}/brochure`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  removeBrochure: (id: string) => api.delete<AgentTemplate>(`/api/agents/${id}/brochure`),
+  downloadBrochure: (id: string, filename: string) => downloadBlob(`/api/agents/${id}/brochure`, filename),
+  getCalendar: (id: string) => api.get<AgentCalendar>(`/api/calendar/agents/${id}`),
+  connectCalendar: (id: string) => api.post<{ url: string }>(`/api/calendar/agents/${id}/connect`),
+  saveCalendar: (id: string, settings: CalendarSettings) => api.put<AgentCalendar>(`/api/calendar/agents/${id}`, settings),
+  disconnectCalendar: (id: string) => api.delete<AgentCalendar>(`/api/calendar/agents/${id}`),
   requestAccess: (id: string) => api.post<{ message: string }>(`/api/agents/${id}/request-access`),
   testCall: (id: string, phone_number: string, trunk_id?: string) =>
     api.post<{ call_id: string; status: string }>(`/api/agents/${id}/test-call`, { phone_number, trunk_id }),
@@ -255,6 +278,35 @@ export const callsApi = {
     api.post<{ found: boolean; recording_url?: string }>(`/api/calls/${id}/fetch-recording`),
   recordingUrl: (id: string, download = false) =>
     `${API_BASE_URL}/api/calls/${id}/recording${download ? "?download=true" : ""}`,
+};
+
+// ── Leads (internal CRM) ─────────────────────────────────────────────────
+export const leadsApi = {
+  list: (params?: LeadFilters) => api.get<LeadListResponse>("/api/leads", { params }),
+  meta: () => api.get<LeadsMeta>("/api/leads/meta"),
+  get: (id: string) => api.get<LeadDetail>(`/api/leads/${id}`),
+  create: (data: { phone: string; name?: string; email?: string; company?: string }) =>
+    api.post<Lead>("/api/leads", data),
+  update: (id: string, data: Partial<Omit<Lead, "id" | "phone" | "owner_name">>) =>
+    api.patch<Lead>(`/api/leads/${id}`, data),
+  addNote: (id: string, text: string) => api.post(`/api/leads/${id}/notes`, { text }),
+  sendBrochure: (id: string) => api.post<{ ok: boolean; detail: string }>(`/api/leads/${id}/brochure`),
+  sendEmail: (id: string, data: { subject: string; body: string; to?: string }) =>
+    api.post<{ ok: boolean; detail: string }>(`/api/leads/${id}/email`, data),
+  remove: (id: string) => api.delete(`/api/leads/${id}`),
+  importFile: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<{ created: number; updated: number }>("/api/leads/import", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  exportCsv: (params: LeadFilters) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v != null && v !== "") as [string, string][]
+    ).toString();
+    return downloadBlob(`/api/leads/export.csv${qs ? `?${qs}` : ""}`, "leads.csv");
+  },
 };
 
 // ── Analytics & usage ────────────────────────────────────────────────────
@@ -335,6 +387,9 @@ export const adminApi = {
   setWebhook: (data: { url: string | null; regenerate_secret?: boolean }) =>
     api.put<{ url: string | null; has_secret: boolean; secret: string | null }>("/api/admin/webhook", data),
   testWebhook: () => api.post<{ ok: boolean; detail: string }>("/api/admin/webhook/test"),
+  smtp: () => api.get<SmtpSettings>("/api/admin/smtp"),
+  setSmtp: (data: SmtpSettingsInput) => api.put<SmtpSettings>("/api/admin/smtp", data),
+  testSmtp: () => api.post<{ ok: boolean; detail: string }>("/api/admin/smtp/test"),
   users: () => api.get<AdminUser[]>("/api/admin/users"),
   createUser: (data: { full_name: string; email: string; password: string; role: string }) =>
     api.post<AdminUser>("/api/admin/users", data),

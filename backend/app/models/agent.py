@@ -69,6 +69,18 @@ class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     llm_temperature: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.7")
     # How fast the voice talks (Sarvam pace; 1.0 = normal)
     speech_pace: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
+    # Brochure emailed automatically when a customer agrees to receive it on a call
+    # (agent tool send_brochure → app/workers/tasks/brochure.py). File lives in BUCKET_EXPORTS.
+    brochure_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    brochure_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    brochure_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    brochure_email_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    brochure_email_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Google Calendar the agent books meetings into live on a call (app/core/google_calendar.py).
+    # Refresh token is Fernet-encrypted; settings = working hours, meeting length, timezone.
+    gcal_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gcal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gcal_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}", default=dict)
     # Hard limit; agent auto-hangs up after this many seconds regardless of conversation state
     max_call_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="600"

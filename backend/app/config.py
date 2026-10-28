@@ -23,7 +23,7 @@ _SECRET_FIELDS = frozenset({
     "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
-    "OPENAI_API_KEY",
+    "OPENAI_API_KEY", "GOOGLE_CLIENT_SECRET",
 })
 
 
@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     # again. The owner's saved ElevenLabs voices are kept; set true to use them again.
     ELEVENLABS_REGIONAL_ENABLED: bool = False
     OPENAI_BUILDER_MODEL: str = "gpt-5.6-terra"
+
+    # ── Google Calendar (agents book meetings live on a call: app/core/google_calendar.py) ──
+    # OAuth "Web application" client from Google Cloud Console. Authorized redirect URI:
+    # {PUBLIC_BASE_URL}/api/calendar/google/callback. Blank hides the Calendar connect button.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
 
     # ── Payments (Razorpay) ───────────────────────────────────────────────────
     RAZORPAY_KEY_ID: str = ""

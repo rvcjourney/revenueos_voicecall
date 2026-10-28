@@ -1,18 +1,24 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowLeft,
   Braces,
+  CalendarDays,
   Check,
+  Download,
   FileText,
   Loader2,
+  Paperclip,
   Pencil,
   Phone,
   Save,
   Settings2,
   Sparkles,
+  Trash2,
   Undo2,
+  Upload,
   Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,8 +30,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { LanguageSelect, VoiceSelect } from "@/components/shared/VoiceFields";
 import { useAuth } from "@/lib/auth";
-import { useAgent, useCreateAgent, useCustomizeAgent, useUpdateAgent } from "@/lib/hooks";
-import { apiErrorMessage } from "@/lib/api";
+import { useAgent, useAgentCalendar, useCreateAgent, useCustomizeAgent, useLeadsMeta, useUpdateAgent } from "@/lib/hooks";
+import { agentsApi, apiErrorMessage } from "@/lib/api";
 import {
   AGENT_TOOLS,
   DEFAULT_GREETING,
@@ -34,22 +40,29 @@ import {
   findVariables,
 } from "@/lib/agentTemplate";
 import { cn } from "@/lib/utils";
-import type { AgentCreate } from "@/lib/types";
+import type { AgentCreate, AgentTemplate, CalendarSettings } from "@/lib/types";
 import { TestCallDialog } from "./Agents";
 
-type Tab = "instructions" | "variables" | "tools" | "settings";
+type Tab = "instructions" | "variables" | "tools" | "brochure" | "calendar" | "settings";
 
 const TABS: { key: Tab; label: string; icon: typeof FileText }[] = [
   { key: "instructions", label: "Instructions", icon: FileText },
   { key: "variables", label: "Variables", icon: Braces },
   { key: "tools", label: "Tools", icon: Wrench },
+  { key: "brochure", label: "Brochure", icon: Paperclip },
+  { key: "calendar", label: "Calendar", icon: CalendarDays },
   { key: "settings", label: "Settings", icon: Settings2 },
 ];
 
 const TOOL_HELP: Record<string, string> = {
   end_interaction: "Ends the call once the conversation is over. If the agent hasn't said goodbye yet, it says one first.",
-  book_next_step: "Books the demo, meeting or follow-up the prospect agreed to and returns a reference. The booking shows on the call's details.",
+  book_next_step:
+    "Books the demo, meeting or follow-up the prospect agreed to and returns a reference. With a Google Calendar connected (Calendar tab) it creates a real event with a Meet link and invites the customer; otherwise it notes the agreed time. Shows on the call and the lead.",
+  check_calendar:
+    "Looks up free times in the connected Google Calendar so the agent only offers slots that are really open. Only on calls where this agent has a calendar connected (Calendar tab).",
   switch_language: "Switches the spoken language mid-call when the caller asks for one of your enabled languages.",
+  send_brochure:
+    "When the customer agrees to receive the brochure, it is emailed to them right after the call. Only on calls where this agent has a brochure (Brochure tab) and your mailbox is connected.",
 };
 
 const NEW_AGENT: Required<AgentCreate> = {
@@ -231,6 +244,20 @@ export default function AgentEditor() {
             </div>
           )}
 
+          {tab === "brochure" &&
+            (isNew || !agent.data ? (
+              <p className="text-sm text-muted-foreground">Create the agent first, then add its brochure here.</p>
+            ) : (
+              <BrochureTab agent={agent.data} canEdit={canEdit} blocked={dirty} />
+            ))}
+
+          {tab === "calendar" &&
+            (isNew || !agent.data ? (
+              <p className="text-sm text-muted-foreground">Create the agent first, then connect its calendar here.</p>
+            ) : (
+              <CalendarTab agentId={agent.data.id} canEdit={canEdit} />
+            ))}
+
           {tab === "settings" && (
             <div className="max-w-md space-y-5">
               <div className="space-y-1.5">
@@ -281,6 +308,240 @@ export default function AgentEditor() {
 
       {!isNew && agent.data && (
         <TestCallDialog agent={testCallOpen ? agent.data : null} onOpenChange={() => setTestCallOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+/** The file the agent emails when a customer agrees to receive it on a call. */
+function BrochureTab({ agent, canEdit, blocked }: { agent: AgentTemplate; canEdit: boolean; blocked: boolean }) {
+  const qc = useQueryClient();
+  const meta = useLeadsMeta();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [subject, setSubject] = useState(agent.brochure_email_subject ?? "");
+  const [body, setBody] = useState(agent.brochure_email_body ?? "");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setSubject(agent.brochure_email_subject ?? "");
+    setBody(agent.brochure_email_body ?? "");
+  }, [agent.brochure_email_subject, agent.brochure_email_body]);
+
+  // Brochure changes reload the agent, which would wipe unsaved script edits.
+  const disabled = !canEdit || blocked || busy;
+  const textDirty = subject !== (agent.brochure_email_subject ?? "") || body !== (agent.brochure_email_body ?? "");
+
+  async function run(action: () => Promise<unknown>, ok: string) {
+    setBusy(true);
+    try {
+      await action();
+      await qc.invalidateQueries({ queryKey: ["agents"] });
+      toast.success(ok);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't update the brochure"));
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="max-w-xl space-y-5">
+      <p className="text-sm text-muted-foreground">
+        When a customer agrees on the call to receive your brochure, the agent notes it and the brochure is emailed to
+        them from your company mailbox right after the call. It shows on the lead's timeline.
+      </p>
+
+      {meta.data && !meta.data.email_enabled && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+          Your mailbox isn't connected yet, so the agent won't offer the brochure. An admin can connect it in{" "}
+          <Link to="/settings" className="underline">Settings → Integrations</Link>.
+        </p>
+      )}
+      {blocked && <p className="text-sm text-muted-foreground">Save your script changes first.</p>}
+
+      <div className="space-y-1.5">
+        <Label>Brochure file</Label>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) run(() => agentsApi.uploadBrochure(agent.id, f), "Brochure uploaded");
+          }}
+        />
+        {agent.brochure_filename ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+            <Paperclip className="h-4 w-4 text-muted-foreground" />
+            <span className="mr-auto font-medium">{agent.brochure_filename}</span>
+            <Button size="sm" variant="ghost" onClick={() => agentsApi.downloadBrochure(agent.id, agent.brochure_filename!).catch(() => toast.error("Download failed"))}>
+              <Download className="h-4 w-4" /> Download
+            </Button>
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => fileRef.current?.click()}>Replace</Button>
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => run(() => agentsApi.removeBrochure(agent.id), "Brochure removed")}>
+              <Trash2 className="h-4 w-4" /> Remove
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <Button variant="outline" disabled={disabled} onClick={() => fileRef.current?.click()}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload brochure
+            </Button>
+            <p className="mt-1.5 text-xs text-muted-foreground">PDF, PNG or JPG, up to 10 MB.</p>
+          </div>
+        )}
+      </div>
+
+      {agent.brochure_filename && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="brochure-subject">Email subject</Label>
+            <Input id="brochure-subject" value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!canEdit} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="brochure-body">Email message</Label>
+            <Textarea id="brochure-body" rows={7} value={body} onChange={(e) => setBody(e.target.value)} disabled={!canEdit} />
+            <p className="text-xs text-muted-foreground">{"{name}"} and {"{company}"} are filled in for each customer.</p>
+          </div>
+          <Button
+            variant="gradient"
+            disabled={disabled || !textDirty || !subject.trim() || !body.trim()}
+            onClick={() => run(() => agentsApi.update(agent.id, { brochure_email_subject: subject, brochure_email_body: body }), "Email saved")}
+          >
+            Save email
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** The Google Calendar this agent checks and books meetings into, live on the call. */
+function CalendarTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const cal = useAgentCalendar(agentId);
+  const [settings, setSettings] = useState<CalendarSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (cal.data) setSettings(cal.data.settings);
+  }, [cal.data]);
+
+  async function run(action: () => Promise<unknown>, ok: string) {
+    setBusy(true);
+    try {
+      await action();
+      await qc.invalidateQueries({ queryKey: ["agent-calendar", agentId] });
+      toast.success(ok);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't update the calendar"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connect() {
+    // Open the tab now: browsers block pop-ups opened after an await.
+    const tab = window.open("", "_blank");
+    setBusy(true);
+    try {
+      const { data } = await agentsApi.connectCalendar(agentId);
+      if (tab) tab.location.href = data.url;
+      else window.location.href = data.url;
+    } catch (err) {
+      tab?.close();
+      toast.error(apiErrorMessage(err, "Couldn't start Google sign-in"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (cal.isLoading || !settings) return <Skeleton className="h-40 max-w-xl" />;
+  if (cal.isError || !cal.data) return <ErrorBanner error={cal.error} onRetry={() => cal.refetch()} />;
+  const data = cal.data;
+  const dirty = JSON.stringify(settings) !== JSON.stringify(data.settings);
+  const set = <K extends keyof CalendarSettings>(k: K, v: CalendarSettings[K]) => setSettings((s) => s && { ...s, [k]: v });
+
+  return (
+    <div className="max-w-xl space-y-5">
+      <p className="text-sm text-muted-foreground">
+        When a customer agrees to a meeting, the agent checks this Google Calendar for free times, offers them, and books
+        the one they pick, with a Google Meet link. Google emails the invite to the customer when we have their email.
+        The meeting shows on the lead.
+      </p>
+
+      {!data.available ? (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+          Google Calendar isn't switched on for this platform yet. Without it the agent just notes the time the customer
+          asked for.
+        </p>
+      ) : data.connected ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+          <CalendarDays className="h-4 w-4 text-primary" />
+          <span className="mr-auto">
+            Connected to <span className="font-medium">{data.email ?? "Google Calendar"}</span>
+          </span>
+          <Button size="sm" variant="outline" disabled={!canEdit || busy} onClick={connect}>Reconnect</Button>
+          <Button size="sm" variant="outline" disabled={!canEdit || busy} onClick={() => run(() => agentsApi.disconnectCalendar(agentId), "Calendar disconnected")}>
+            Disconnect
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button variant="outline" disabled={!canEdit || busy} onClick={connect}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />} Connect Google Calendar
+          </Button>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Sign in with the Google account whose calendar should get the meetings, then come back to this tab.
+          </p>
+        </div>
+      )}
+
+      {data.available && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="cal-len">Meeting length (min)</Label>
+              <Input id="cal-len" type="number" min={15} max={240} step={15} value={settings.duration_minutes}
+                onChange={(e) => set("duration_minutes", Number(e.target.value) || 30)} disabled={!canEdit} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cal-start">Day starts</Label>
+              <Input id="cal-start" type="time" value={settings.day_start} onChange={(e) => set("day_start", e.target.value)} disabled={!canEdit} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cal-end">Day ends</Label>
+              <Input id="cal-end" type="time" value={settings.day_end} onChange={(e) => set("day_end", e.target.value)} disabled={!canEdit} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Working days</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map((d, i) => {
+                const on = settings.days.includes(i);
+                return (
+                  <Button key={d} size="sm" variant={on ? "default" : "outline"} aria-pressed={on} disabled={!canEdit}
+                    onClick={() => set("days", on ? settings.days.filter((x) => x !== i) : [...settings.days, i].sort())}>
+                    {d}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cal-tz">Timezone</Label>
+            <Input id="cal-tz" value={settings.timezone} onChange={(e) => set("timezone", e.target.value)} disabled={!canEdit} />
+            <p className="text-xs text-muted-foreground">The agent never offers a slot less than 1 hour away.</p>
+          </div>
+          <Button variant="gradient" disabled={!canEdit || busy || !dirty || settings.days.length === 0}
+            onClick={() => run(() => agentsApi.saveCalendar(agentId, settings), "Calendar settings saved")}>
+            Save
+          </Button>
+        </>
       )}
     </div>
   );

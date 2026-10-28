@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.workers.tasks.campaign", "app.workers.tasks.billing",
         "app.workers.tasks.backup", "app.workers.tasks.retention",
         "app.workers.tasks.sarvam_probe", "app.workers.tasks.webhook",
+        "app.workers.tasks.brochure", "app.workers.tasks.email_replies",
     ],
 )
 
@@ -87,6 +88,12 @@ celery_app.conf.update(
         # (agent-report never arrived) so it doesn't go unnoticed indefinitely.
         "flag-stale-pending-calls": {
             "task": "app.workers.tasks.campaign.flag_stale_pending_calls",
+            "schedule": 300.0,
+        },
+        # Every 5 min: read new mail headers for orgs that set an IMAP host and
+        # mark leads who replied (see app/workers/tasks/email_replies.py).
+        "check-email-replies": {
+            "task": "app.workers.tasks.email_replies.check_email_replies",
             "schedule": 300.0,
         },
         # Daily at 02:17 UTC (quiet hour, avoids the top-of-hour pile-up with

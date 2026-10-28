@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Bell, Loader2, Phone, User as UserIcon, Users as UsersIcon, Webhook, type LucideIcon } from "lucide-react";
+import { Bell, CheckCircle2, Loader2, Mail, Phone, User as UserIcon, Users as UsersIcon, Webhook, type LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -13,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 import { useMyTrunks } from "@/lib/hooks";
 import { adminApi, authApi, apiErrorMessage } from "@/lib/api";
+import type { SmtpSecurity, SmtpSettings, SmtpSettingsInput } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const tabs = [
@@ -45,7 +47,12 @@ export default function Settings() {
           <TabsContent value="profile"><ProfileTab /></TabsContent>
           <TabsContent value="team"><TeamTab /></TabsContent>
           <TabsContent value="phone-numbers"><PhoneNumbersTab /></TabsContent>
-          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
+          <TabsContent value="integrations">
+            <div className="space-y-6">
+              <IntegrationsTab />
+              <EmailSmtpCard />
+            </div>
+          </TabsContent>
           <TabsContent value="notifications"><ComingSoon icon={Bell} title="Notification preferences" /></TabsContent>
         </div>
       </Tabs>
@@ -254,6 +261,198 @@ function IntegrationsTab() {
                 <>
                   <Button variant="outline" onClick={sendTest} disabled={busy}>Send test</Button>
                   <Button variant="outline" onClick={() => save(true)} disabled={busy}>New secret</Button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Common providers, so non-technical admins only need their address and app password.
+const SMTP_PRESETS: { label: string; host: string; imap: string; security: SmtpSecurity }[] = [
+  { label: "Gmail / Google Workspace", host: "smtp.gmail.com", imap: "imap.gmail.com", security: "starttls" },
+  { label: "Outlook / Microsoft 365", host: "smtp.office365.com", imap: "outlook.office365.com", security: "starttls" },
+  { label: "Zoho Mail (India)", host: "smtp.zoho.in", imap: "imap.zoho.in", security: "ssl" },
+  { label: "Hostinger", host: "smtp.hostinger.com", imap: "imap.hostinger.com", security: "ssl" },
+];
+
+const EMPTY_SMTP: SmtpSettingsInput = {
+  sender_name: "", sender_email: "", host: "", security: "starttls", password: "", imap_host: "",
+};
+
+function Hint({ children }: { children: ReactNode }) {
+  return <p className="text-xs text-muted-foreground">{children}</p>;
+}
+
+function EmailSmtpCard() {
+  const { isAdmin } = useAuth();
+  const [form, setForm] = useState<SmtpSettingsInput>(EMPTY_SMTP);
+  const [current, setCurrent] = useState<SmtpSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    adminApi.smtp()
+      .then(({ data }) => apply(data))
+      .catch(() => toast.error("Couldn't load email settings"))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  if (!isAdmin) return null;
+
+  function apply(data: SmtpSettings) {
+    setCurrent(data);
+    setForm({
+      sender_name: data.sender_name ?? "", sender_email: data.sender_email ?? "", host: data.host ?? "",
+      security: data.security ?? "starttls", password: "", imap_host: data.imap_host ?? "",
+    });
+  }
+
+  function set<K extends keyof SmtpSettingsInput>(key: K, value: SmtpSettingsInput[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  async function save(turnOff = false) {
+    setBusy(true);
+    try {
+      const { data } = await adminApi.setSmtp(turnOff ? EMPTY_SMTP : { ...form, password: form.password || undefined });
+      apply(data);
+      toast.success(turnOff ? "Email sending turned off" : "Email settings saved");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't save email settings"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTest() {
+    setBusy(true);
+    try {
+      const { data } = await adminApi.testSmtp();
+      (data.ok ? toast.success : toast.error)(data.detail);
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Test failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const configured = !!current?.configured;
+
+  return (
+    <Card>
+      <CardContent className="space-y-5 pt-6">
+        <div className="flex items-start gap-3 border-b border-border pb-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+            <Mail className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="font-medium">Sender account</p>
+            {configured ? (
+              <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <span className="font-medium text-foreground">{current?.sender_email}</span>
+                {current?.sender_name && <span>· &ldquo;{current.sender_name}&rdquo;</span>}
+                {current?.account_email && <span>· account login {current.account_email}</span>}
+                {current?.imap_host && <span>· replies counted</span>}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Connect your company mailbox. Brochures and emails to your leads go out from it.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {loading ? (
+          <Skeleton className="h-72 w-full" />
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              <Label>Quick setup</Label>
+              <div className="flex flex-wrap gap-2">
+                {SMTP_PRESETS.map((p) => (
+                  <Button
+                    key={p.label}
+                    type="button"
+                    size="sm"
+                    variant={form.host === p.host ? "default" : "outline"}
+                    onClick={() => setForm((f) => ({ ...f, host: p.host, security: p.security, imap_host: p.imap }))}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="smtp-account">Customer email</Label>
+              <Input id="smtp-account" value={current?.account_email ?? ""} disabled className="sm:max-w-sm" />
+              <Hint>Your account login. Shown so you know which account this mailbox belongs to.</Hint>
+            </div>
+
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="smtp-sender-name">Sender name</Label>
+                <Input id="smtp-sender-name" placeholder="e.g. Durel Sales Team" value={form.sender_name} onChange={(e) => set("sender_name", e.target.value)} />
+                <Hint>What prospects see in their inbox.</Hint>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="smtp-sender-email">Sender email</Label>
+                <Input id="smtp-sender-email" placeholder="sales@yourcompany.com" autoComplete="off" value={form.sender_email} onChange={(e) => set("sender_email", e.target.value)} />
+                <Hint>The mailbox emails go out from (also its login). One mailbox can serve only one customer.</Hint>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="smtp-host">SMTP host</Label>
+                <Input id="smtp-host" placeholder="smtp.gmail.com" value={form.host} onChange={(e) => set("host", e.target.value)} />
+                <Hint>For example smtp.gmail.com or smtp.office365.com.</Hint>
+              </div>
+              <div className="space-y-1.5">
+                <Label>SMTP security</Label>
+                <Select value={form.security} onValueChange={(v) => set("security", v as SmtpSecurity)}>
+                  <SelectTrigger aria-label="SMTP security"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="starttls">STARTTLS (port 587)</SelectItem>
+                    <SelectItem value="ssl">SSL/TLS (port 465)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Hint>Most mailboxes use STARTTLS on port 587.</Hint>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="smtp-password">SMTP password</Label>
+                <Input
+                  id="smtp-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={current?.has_password ? "••••••••" : "App password"}
+                  value={form.password ?? ""}
+                  onChange={(e) => set("password", e.target.value)}
+                />
+                <Hint>
+                  {current?.has_password
+                    ? "Saved. Leave empty to keep it, or type a new one."
+                    : "Gmail and Outlook need an app password, not your normal password."}
+                </Hint>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imap-host">IMAP host (optional)</Label>
+                <Input id="imap-host" placeholder="imap.gmail.com" value={form.imap_host} onChange={(e) => set("imap_host", e.target.value)} />
+                <Hint>Needed to count replies. Leave empty to send without reading replies.</Hint>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="gradient" onClick={() => save()} disabled={busy || !form.host.trim() || !form.sender_email.trim()}>
+                {busy && <Loader2 className="h-4 w-4 animate-spin" />} Save email settings
+              </Button>
+              {configured && (
+                <>
+                  <Button variant="outline" onClick={sendTest} disabled={busy}>Send test email</Button>
+                  <Button variant="outline" onClick={() => save(true)} disabled={busy}>Turn off</Button>
                 </>
               )}
             </div>

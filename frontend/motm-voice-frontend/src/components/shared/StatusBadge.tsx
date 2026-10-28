@@ -69,6 +69,17 @@ const sentimentToneMap: Record<string, Tone> = {
   negative: "destructive",
 };
 
+const leadStatusToneMap: Record<string, Tone> = {
+  new: "muted",
+  contacted: "secondary",
+  interested: "info",
+  meeting_scheduled: "default",
+  qualified: "warning",
+  won: "success",
+  lost: "destructive",
+  do_not_call: "muted",
+};
+
 function Pill({ label, tone, className, ...props }: { label: string; tone: Tone } & Omit<BadgeProps, "variant">) {
   return (
     <span
@@ -122,6 +133,10 @@ export function AgentAccessBadge({ status, className }: { status: string; classN
 
 export function RoleBadge({ role, className }: { role: string; className?: string }) {
   return <Pill label={titleCase(role)} tone={role === "admin" ? "default" : "muted"} className={className} />;
+}
+
+export function LeadStatusBadge({ status, className }: { status: string; className?: string }) {
+  return <Pill label={titleCase(status)} tone={leadStatusToneMap[status] ?? "muted"} className={className} />;
 }
 
 export function SentimentBadge({ sentiment, className }: { sentiment: string; className?: string }) {

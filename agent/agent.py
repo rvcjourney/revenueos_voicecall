@@ -294,8 +294,9 @@ def prewarm(proc: JobProcess) -> None:
 # AGENT
 # =============================================================================
 class VoiceAgent(Agent):
-    """One phone call: greeting, the agent's instructions, three tools
-    (end_interaction, switch_language, book_next_step), voicemail/IVR/silence
+    """One phone call: greeting, the agent's instructions, tools
+    (end_interaction, switch_language, book_next_step; check_calendar and
+    send_brochure when the backend says they're set up), voicemail/IVR/silence
     handling, an empty-reply guard, history trimmed to the model's window, and a
     signed post-call report."""
 
@@ -311,6 +312,8 @@ class VoiceAgent(Agent):
         backend_url: str = "",
         webhook_secret: str = "",
         max_duration: int = 600,
+        brochure: dict | None = None,
+        calendar: dict | None = None,
     ) -> None:
         self._room            = room
         self._ending          = False
@@ -329,13 +332,21 @@ class VoiceAgent(Agent):
         self._speaking_done = asyncio.Event()
         self._speaking_done.set()  # not speaking initially
         self._booking: dict | None = None
+        self._brochure_request: dict | None = None
         self._last_reply_text = ""  # words the LLM spoke in its latest step (end_interaction checks it)
         self._false_interruptions = 0
         self._recoverable_errors = 0
         self._tts_engine = None  # set by entrypoint(); switch_language retargets them
         self._stt_engine = None
 
-        super().__init__(instructions=instructions, tools=[self._switch_language_tool()])
+        tools = [self._switch_language_tool()]
+        if (calendar or {}).get("available"):
+            tools += [self._check_calendar_tool(), self._calendar_booking_tool(bool(calendar.get("email_on_file")))]
+        else:
+            tools.append(self._note_booking_tool())
+        if (brochure or {}).get("available"):
+            tools.append(self._send_brochure_tool(bool(brochure.get("email_on_file"))))
+        super().__init__(instructions=instructions, tools=tools)
 
     # ── Tools ─────────────────────────────────────────────────────────────────
     @function_tool
@@ -372,32 +383,119 @@ class VoiceAgent(Agent):
         await self._post_call_report()
         await self._disconnect()
 
-    @function_tool
-    async def book_next_step(
-        self,
-        ctx: RunContext,
-        prospect_name: str,
-        company: str,
-        next_step_type: str,
-        date_time: str,
-        attendees: str = "",
-    ) -> dict:
-        """Book the next step (demo, meeting or follow-up) the prospect just agreed to.
+    def _note_booking_tool(self):
+        """No calendar linked: book_next_step only notes what was agreed (shown on the call and lead)."""
+        async def book_next_step(
+            ctx: RunContext,
+            prospect_name: str,
+            company: str,
+            next_step_type: str,
+            date_time: str,
+            attendees: str = "",
+        ) -> dict:
+            """Book the next step (demo, meeting or follow-up) the prospect just agreed to.
 
-        Args:
-            prospect_name: The prospect's name.
-            company: The prospect's company.
-            next_step_type: What was agreed, e.g. "demo" or "discovery follow-up".
-            date_time: The confirmed date and time, in natural language.
-            attendees: Anyone else the prospect named to join, comma-separated.
-        """
-        reference = f"NS-{uuid.uuid4().hex[:6].upper()}"
-        self._booking = {
-            "prospect_name": prospect_name, "company": company, "next_step_type": next_step_type,
-            "date_time": date_time, "attendees": attendees, "reference": reference,
-        }
-        logger.info("book_next_step | call=%s reference=%s when=%s", self._call_id, reference, date_time)
-        return {"status": "confirmed", "reference": reference, "date_time": date_time}
+            Args:
+                prospect_name: The prospect's name.
+                company: The prospect's company.
+                next_step_type: What was agreed, e.g. "demo" or "discovery follow-up".
+                date_time: The confirmed date and time, in natural language.
+                attendees: Anyone else the prospect named to join, comma-separated.
+            """
+            reference = f"NS-{uuid.uuid4().hex[:6].upper()}"
+            self._booking = {
+                "prospect_name": prospect_name, "company": company, "next_step_type": next_step_type,
+                "date_time": date_time, "attendees": attendees, "reference": reference,
+            }
+            logger.info("book_next_step | call=%s reference=%s when=%s", self._call_id, reference, date_time)
+            return {"status": "confirmed", "reference": reference, "date_time": date_time}
+
+        return function_tool(book_next_step)
+
+    async def _calendar_request(self, action: str, payload: dict) -> dict:
+        """Signed POST to the backend's calendar endpoints (app/api/calendar.py). Never raises:
+        the LLM gets a status it can act on and the call carries on."""
+        import httpx
+
+        body = json.dumps(payload).encode()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http:
+                resp = await http.post(
+                    f"{self._backend_url}/api/calendar/calls/{self._call_id}/{action}", content=body,
+                    headers={"Content-Type": "application/json", "X-Webhook-Signature": _sign_webhook_body(body)},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:
+            logger.warning("calendar_%s_failed | call=%s error=%s", action, self._call_id, exc)
+            return {"status": "error", "message": "The calendar can't be reached right now."}
+
+    def _check_calendar_tool(self):
+        async def check_calendar(ctx: RunContext, date: str = "") -> dict:
+            """Look up free meeting times in our Google Calendar. Call this before proposing any time, and offer only the times it returns (two or three at once, not the whole list).
+
+            Args:
+                date: The day the customer prefers, as YYYY-MM-DD (work it out from today's date when they say "Thursday" or "next week"). Empty for the soonest free day.
+            """
+            result = await self._calendar_request("slots", {"date": date.strip()})
+            logger.info("check_calendar | call=%s date=%s status=%s", self._call_id, date, result.get("status"))
+            return result
+
+        return function_tool(check_calendar)
+
+    def _calendar_booking_tool(self, email_on_file: bool):
+        """Calendar linked: book_next_step creates a real Google Calendar event with a Meet link,
+        and Google emails the customer the invite. A second booking on the same call moves the first."""
+        async def book_next_step(
+            ctx: RunContext,
+            prospect_name: str,
+            company: str,
+            next_step_type: str,
+            date_time: str,
+            attendees: str = "",
+            email: str = "",
+        ) -> dict:
+            """Book the agreed next step into our Google Calendar.
+
+            Args:
+                prospect_name: The prospect's name.
+                company: The prospect's company.
+                next_step_type: What was agreed, e.g. "demo" or "discovery follow-up".
+                date_time: The confirmed start time, exactly "YYYY-MM-DD HH:MM" in 24-hour time, e.g. "2026-10-30 15:00".
+                attendees: Anyone else the prospect named to join, comma-separated.
+                email: The customer's email address for the invite, spelled out (e.g. "rahul.k@gmail.com"), or empty.
+            """
+            result = await self._calendar_request("book", {
+                "prospect_name": prospect_name, "company": company, "next_step_type": next_step_type,
+                "date_time": date_time, "attendees": attendees, "email": email.strip().lower().replace(" ", ""),
+                "event_id": (self._booking or {}).get("event_id", ""),
+            })
+            if result.get("status") == "confirmed":
+                self._booking = {
+                    "prospect_name": prospect_name, "company": company, "next_step_type": next_step_type,
+                    "attendees": attendees, "calendar": "google",
+                    **{k: result.get(k, "") for k in (
+                        "date_time", "reference", "event_id", "calendar_link", "meet_link", "invite_sent_to")},
+                }
+            logger.info("book_next_step | call=%s calendar status=%s", self._call_id, result.get("status"))
+            return result
+
+        if email_on_file:
+            email_rule = ("We already have the customer's email for the invite: don't ask for it; pass email only "
+                          "if they want it sent somewhere else (read it back to confirm first).")
+        else:
+            email_rule = ("We don't have the customer's email: ask for it for the calendar invite, read it back "
+                          "letter by letter to confirm, then pass it in email. If they won't share it, book anyway.")
+        return function_tool(
+            book_next_step,
+            name="book_next_step",
+            description=(
+                "Book the demo, meeting or follow-up the prospect agreed to, as a real Google Calendar event "
+                "with a Google Meet link. Use a time check_calendar returned. If the result is not "
+                "\"confirmed\", do not say it is booked: offer the alternative times it returns. "
+                f"{email_rule}"
+            ),
+        )
 
     def _switch_language_tool(self):
         keys = tuple(self._sarvam.languages)
@@ -420,6 +518,33 @@ class VoiceAgent(Agent):
             switch_language,
             name="switch_language",
             description=f"Switch the spoken language when the caller asks to talk in another language. Available: {names}.",
+        )
+
+    def _send_brochure_tool(self, email_on_file: bool):
+        """Only offered when the backend says a brochure can actually be emailed
+        (the agent has one and the org connected its mailbox). Sending happens
+        after the call, from the backend (app/workers/tasks/brochure.py)."""
+        async def send_brochure(ctx: RunContext, email: str = "") -> str:
+            """Email our brochure to the customer after the call.
+
+            Args:
+                email: The email address the customer just gave, spelled out (e.g. "rahul.k@gmail.com"). Empty to use the email we already have.
+            """
+            spoken = email.strip().lower().replace(" ", "")
+            self._brochure_request = {"email": spoken if "@" in spoken else ""}
+            logger.info("send_brochure | call=%s email_given=%s", self._call_id, bool(self._brochure_request["email"]))
+            return "Noted. The brochure will be emailed right after this call. Tell the customer, then continue."
+
+        if email_on_file:
+            when = ("We already have the customer's email. Don't ask for it; pass email only if they "
+                    "ask for it to go to a different address (read it back to confirm first).")
+        else:
+            when = ("We don't have the customer's email: ask for it, read it back letter by letter to "
+                    "confirm, then pass it in email.")
+        return function_tool(
+            send_brochure,
+            name="send_brochure",
+            description=f"Call this when the customer agrees to receive our brochure by email. {when}",
         )
 
     def attach_engines(self, tts_engine, stt_engine) -> None:
@@ -808,6 +933,8 @@ class VoiceAgent(Agent):
     async def _send_report(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
         full_transcript = self._transcript()
         extra = {"next_step_booking": self._booking} if self._booking else {}
+        if self._brochure_request is not None:
+            extra["brochure_request"] = self._brochure_request
 
         if not full_transcript and not outcome_override:
             if abrupt_disconnect:
@@ -843,7 +970,8 @@ class VoiceAgent(Agent):
         customer_word_count = sum(
             len(m.get("text", "").split()) for m in full_transcript if m.get("role") == "user"
         )
-        if customer_word_count < 8 and not self._booking:
+        # A booking or a brochure request is a real signal even from a short "haan, bhej do".
+        if customer_word_count < 8 and not self._booking and self._brochure_request is None:
             if abrupt_disconnect:
                 outcome = "call_dropped"
                 summary = "Call disconnected before a real conversation happened."
@@ -881,6 +1009,8 @@ class VoiceAgent(Agent):
             "A next step was booked on this call (see NEXT STEP BOOKED below) — that is clear interest.\n\n"
             if self._booking else ""
         )
+        if self._brochure_request is not None:
+            booked_rule += "The customer agreed to receive our brochure by email on this call — that is clear interest.\n\n"
         system = (
             "You classify sales call outcomes strictly from the CUSTOMER's words in the transcript. "
             "Ignore speech-recognition errors — judge intent, not exact wording. "
@@ -1067,6 +1197,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         backend_url=BACKEND_INTERNAL_URL,
         webhook_secret=AGENT_WEBHOOK_SECRET,
         max_duration=int(meta.get("max_duration") or 600),
+        brochure=meta.get("brochure"),
+        calendar=meta.get("calendar"),
     )
     voice_agent.attach_engines(tts_engine, stt_engine)
 
