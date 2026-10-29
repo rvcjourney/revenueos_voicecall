@@ -26,7 +26,7 @@ os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, JobProcess, RunContext, StopResponse, function_tool, stt, tts, utils
+from livekit.agents import AgentSession, Agent, AudioConfig, BackgroundAudioPlayer, BuiltinAudioClip, JobProcess, RunContext, StopResponse, function_tool, stt, tts, utils
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 
@@ -1281,6 +1281,15 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ),
         )
         logger.info("Agent session started ✓")
+        # Quiet office hum + typing while the agent "thinks", so the call sounds like a real desk.
+        try:
+            background = BackgroundAudioPlayer(
+                ambient_sound  = AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.3),
+                thinking_sound = [AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.5)],
+            )
+            await background.start(room=ctx.room, agent_session=session)
+        except Exception:
+            logger.warning("Background audio failed to start; continuing without it", exc_info=True)
     except Exception:
         logger.exception("Session start failed")
         warmup_task.cancel()
