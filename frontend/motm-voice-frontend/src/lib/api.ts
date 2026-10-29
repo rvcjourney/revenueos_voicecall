@@ -186,6 +186,21 @@ export const authApi = {
   // No session yet either — same as register(), POST /verify-otp logs them in.
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) =>
     api.post<{ email: string; message: string }>("/api/auth/register-member", data),
+  googleUrl: (origin: string, nonce: string) =>
+    api.get<{ url: string }>("/api/auth/google/url", { params: { origin, nonce } }),
+  // Existing account → a session; unknown email → a token for googleComplete.
+  googleSignIn: (code: string, state: string, nonce: string) =>
+    api.post<
+      | ({ status: "ok" } & LoginResponse)
+      | { status: "signup"; signup_token: string; email: string; full_name: string }
+    >("/api/auth/google/signin", { code, state, nonce }),
+  googleComplete: (data: {
+    signup_token: string;
+    full_name: string;
+    company_name?: string;
+    phone?: string;
+    org_code?: string;
+  }) => api.post<LoginResponse>("/api/auth/google/complete", data),
   logout: () => api.post("/api/auth/logout").catch(() => undefined),
   me: () => api.get<User>("/api/auth/me"),
   updateProfile: (data: { full_name?: string; password?: string }) =>

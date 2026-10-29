@@ -145,6 +145,7 @@ class Settings(BaseSettings):
     # ── Google Calendar (agents book meetings live on a call: app/core/google_calendar.py) ──
     # OAuth "Web application" client from Google Cloud Console. Authorized redirect URI:
     # {PUBLIC_BASE_URL}/api/calendar/google/callback. Blank hides the Calendar connect button.
+    # Also used by "Sign in with Google" (app/core/google_signin.py): redirect URI <frontend>/auth/google.
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
 

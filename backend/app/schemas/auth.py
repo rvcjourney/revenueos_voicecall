@@ -55,6 +55,27 @@ class MemberRegisterRequest(BaseModel):
     org_code: str   # first 8 chars of org_id shown on admin Users page
 
 
+class GoogleSignInRequest(BaseModel):
+    code: str
+    state: str
+    nonce: str
+
+
+class GoogleCompleteRequest(BaseModel):
+    """First Google sign-in for an unknown email: either new org (company_name + phone)
+    or join one (org_code). Email comes from the signed signup_token, not the client."""
+    signup_token: str
+    full_name: str
+    company_name: str | None = None
+    phone: str | None = None
+    org_code: str | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, v: str | None) -> str | None:
+        return None if v is None else RegisterRequest.normalize_phone(v)
+
+
 class ProfileUpdateRequest(BaseModel):
     full_name: str | None = None
     password: str | None = None   # if provided, must be >= 6 chars

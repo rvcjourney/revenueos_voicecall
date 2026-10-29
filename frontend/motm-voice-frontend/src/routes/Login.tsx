@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OtpEntry } from "@/components/auth/OtpEntry";
+import { GoogleButton } from "@/components/auth/GoogleButton";
 import { useAuth } from "@/lib/auth";
 import { apiErrorMessage } from "@/lib/api";
 
@@ -67,6 +68,7 @@ export default function Login() {
   return (
     <AuthLayout title="Welcome back" subtitle="Log in to your QuickHowl account to keep your campaigns running.">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <GoogleButton />
         {serverError && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {serverError}

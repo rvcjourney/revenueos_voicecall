@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import axios from "axios";
@@ -15,8 +15,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanPicker } from "@/components/billing/PlanPicker";
 import { BillingAddressForm } from "@/components/billing/BillingAddressForm";
 import { OtpEntry } from "@/components/auth/OtpEntry";
+import { GoogleButton } from "@/components/auth/GoogleButton";
 import { useAuth } from "@/lib/auth";
-import { apiErrorMessage } from "@/lib/api";
+import { apiErrorMessage, authApi } from "@/lib/api";
 import { useBillingAddress, useCheckout, useVerifyPayment } from "@/lib/hooks";
 import { openRazorpayCheckout } from "@/lib/razorpayCheckout";
 import type { PublicPlan } from "@/lib/types";
@@ -38,11 +39,23 @@ const orgSchema = z.object({
 });
 type OrgValues = z.infer<typeof orgSchema>;
 
+/** Set by routes/GoogleCallback when a Google account has no QuickHowl account yet. */
+type GoogleSignup = { signup_token: string; email: string; full_name: string };
+
 export default function Signup() {
   const [tab, setTab] = useState("join");
+  const google = (useLocation().state as { google?: GoogleSignup } | null)?.google;
 
   return (
     <AuthLayout title="Create your account" subtitle="Get your AI voice agents making calls in minutes.">
+      {google ? (
+        <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+          Signing up with Google as <span className="font-medium">{google.email}</span>. Just a few details to
+          finish.
+        </p>
+      ) : (
+        <GoogleButton label="Sign up with Google" />
+      )}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="w-full">
           <TabsTrigger value="join" className="flex-1">
@@ -57,14 +70,14 @@ export default function Signup() {
           <p className="mb-4 text-xs text-muted-foreground">
             Have an 8-character invite code from your admin? Join their existing QuickHowl workspace.
           </p>
-          <JoinTeamForm />
+          <JoinTeamForm google={google} />
         </TabsContent>
 
         <TabsContent value="org">
           <p className="mb-4 text-xs text-muted-foreground">
             Setting up QuickHowl for your company for the first time? Create a new organization.
           </p>
-          <CreateOrgForm />
+          <CreateOrgForm google={google} />
         </TabsContent>
       </Tabs>
 
@@ -78,8 +91,8 @@ export default function Signup() {
   );
 }
 
-function JoinTeamForm() {
-  const { registerMember, verifyOtp } = useAuth();
+function JoinTeamForm({ google }: { google?: GoogleSignup }) {
+  const { registerMember, verifyOtp, setSession } = useAuth();
   const navigate = useNavigate();
 
   const [serverError, setServerError] = useState<string | null>(null);
@@ -90,12 +103,29 @@ function JoinTeamForm() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<MemberValues>({ resolver: zodResolver(memberSchema) });
+  } = useForm<MemberValues>({
+    // Google already gave us a verified email, so no email/password fields.
+    resolver: (google
+      ? zodResolver(memberSchema.omit({ email: true, password: true }))
+      : zodResolver(memberSchema)) as Resolver<MemberValues>,
+    defaultValues: { full_name: google?.full_name ?? "" },
+  });
 
   async function onSubmit(values: MemberValues) {
     setServerError(null);
     const normalized = { ...values, org_code: values.org_code.toUpperCase() };
     try {
+      if (google) {
+        const res = await authApi.googleComplete({
+          signup_token: google.signup_token,
+          full_name: normalized.full_name,
+          org_code: normalized.org_code,
+        });
+        setSession(res.data);
+        toast.success(`Welcome, ${normalized.full_name}!`);
+        navigate("/dashboard");
+        return;
+      }
       await registerMember(normalized);
       setMemberValues(normalized);
       setStep("otp");
@@ -126,16 +156,20 @@ function JoinTeamForm() {
         <Input id="join-name" placeholder="Priya Mehta" {...register("full_name")} />
         {errors.full_name && <p className="text-xs text-destructive">{errors.full_name.message}</p>}
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="join-email">Email address</Label>
-        <Input id="join-email" type="email" placeholder="you@company.com" {...register("email")} />
-        {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="join-password">Password</Label>
-        <Input id="join-password" type="password" placeholder="Min. 6 characters" {...register("password")} />
-        {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-      </div>
+      {!google && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="join-email">Email address</Label>
+            <Input id="join-email" type="email" placeholder="you@company.com" {...register("email")} />
+            {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="join-password">Password</Label>
+            <Input id="join-password" type="password" placeholder="Min. 6 characters" {...register("password")} />
+            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+          </div>
+        </>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="join-code">Team invite code</Label>
         <Input id="join-code" placeholder="A1B2C3D4" maxLength={8} className="uppercase tracking-widest" {...register("org_code")} />
@@ -150,8 +184,8 @@ function JoinTeamForm() {
   );
 }
 
-function CreateOrgForm() {
-  const { registerOrg, verifyOtp } = useAuth();
+function CreateOrgForm({ google }: { google?: GoogleSignup }) {
+  const { registerOrg, verifyOtp, setSession } = useAuth();
   const navigate = useNavigate();
   const checkout = useCheckout();
   const verifyPayment = useVerifyPayment();
@@ -169,12 +203,31 @@ function CreateOrgForm() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<OrgValues>({ resolver: zodResolver(orgSchema) });
+  } = useForm<OrgValues>({
+    resolver: (google
+      ? zodResolver(orgSchema.omit({ email: true, password: true }))
+      : zodResolver(orgSchema)) as Resolver<OrgValues>,
+    defaultValues: { full_name: google?.full_name ?? "" },
+  });
 
   async function onSubmit(values: OrgValues) {
     setServerError(null);
     setEmailTaken(false);
     try {
+      if (google) {
+        // Google verified the email, so straight to picking a plan (no OTP).
+        const res = await authApi.googleComplete({
+          signup_token: google.signup_token,
+          full_name: values.full_name,
+          company_name: values.company_name,
+          phone: values.phone,
+        });
+        setSession(res.data);
+        setOrgValues({ ...values, email: google.email });
+        setStep("plan");
+        toast.success(`Welcome, ${values.full_name}! Pick a plan to activate ${values.company_name}.`);
+        return;
+      }
       await registerOrg(values);
       setOrgValues(values);
       setStep("otp");
@@ -297,16 +350,20 @@ function CreateOrgForm() {
         <Input id="org-company" placeholder="Acme Sales Pvt Ltd" {...register("company_name")} />
         {errors.company_name && <p className="text-xs text-destructive">{errors.company_name.message}</p>}
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="org-email">Email address</Label>
-        <Input id="org-email" type="email" placeholder="you@company.com" {...register("email")} />
-        {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="org-password">Password</Label>
-        <Input id="org-password" type="password" placeholder="Min. 6 characters" {...register("password")} />
-        {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-      </div>
+      {!google && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="org-email">Email address</Label>
+            <Input id="org-email" type="email" placeholder="you@company.com" {...register("email")} />
+            {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="org-password">Password</Label>
+            <Input id="org-password" type="password" placeholder="Min. 6 characters" {...register("password")} />
+            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+          </div>
+        </>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="org-phone">Phone</Label>
         <Input id="org-phone" placeholder="+91 98765 43210" {...register("phone")} />

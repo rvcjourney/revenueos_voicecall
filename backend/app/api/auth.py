@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import jwt as pyjwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core import google_signin
 from app.core.deps import TokenPayload, get_current_user
 from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError as AppValidationError
 from app.core.rate_limit import client_ip, enforce_rate_limit
@@ -30,6 +32,8 @@ from app.models.user import Organization, User, UserRole
 from app.schemas.auth import (
     AccessTokenResponse,
     ForgotPasswordRequest,
+    GoogleCompleteRequest,
+    GoogleSignInRequest,
     LoginRequest,
     MemberRegisterRequest,
     ProfileUpdateRequest,
@@ -47,6 +51,65 @@ router = APIRouter()
 _bearer_optional = HTTPBearer(auto_error=False)
 
 
+async def _new_org(db: AsyncSession, company_name: str, phone: str) -> Organization:
+    slug = re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-") or "org"
+    if await db.scalar(select(Organization.id).where(Organization.slug == slug)):
+        slug = f"{slug}-{uuid4().hex[:6]}"
+
+    org = Organization(
+        name=company_name,
+        slug=slug,
+        phone=phone,
+        sip_caller_id=settings.DEFAULT_SIP_CALLER_ID,
+        # Self-serve orgs start suspended until a Razorpay subscription
+        # payment succeeds — the webhook (POST /webhooks/razorpay:
+        # subscription.activated/charged) flips this true. Orgs a superadmin
+        # creates directly (app/api/platform.py) are unaffected by this and
+        # keep the column's normal default of active.
+        is_active=False,
+    )
+    db.add(org)
+    await db.flush()
+    return org
+
+
+async def _org_by_code(db: AsyncSession, org_code: str) -> Organization:
+    # Find org by code prefix (first 8 hex chars of org UUID without dashes)
+    code = org_code.strip().lower().replace("-", "")
+    if len(code) < 8:
+        raise AppValidationError("Invalid org code", errors=[])
+
+    # Fetch all orgs and match by the first 8 chars of their id (hex, no dashes)
+    org = await db.scalar(
+        select(Organization).where(
+            Organization.deleted_at.is_(None),
+        ).where(
+            # cast uuid to text, strip dashes, check prefix
+            text("replace(cast(id as text), '-', '') LIKE :pattern"),
+        ).params(pattern=f"{code[:8]}%")
+    )
+    if not org:
+        raise NotFoundError("Invalid org code — ask your admin for the correct code")
+    return org
+
+
+async def _session(db: AsyncSession, user: User) -> TokenResponse:
+    """Issue the access + refresh tokens for a user who just proved who they are."""
+    org = await db.get(Organization, user.org_id)
+    return TokenResponse(
+        access_token=create_access_token(str(user.id), str(user.org_id), user.role),
+        refresh_token=create_refresh_token(str(user.id), str(user.org_id)),
+        user=UserOut(
+            id=str(user.id),
+            email=user.email,
+            full_name=user.full_name,
+            role=user.role,
+            org_id=str(user.org_id),
+            org_name=org.name if org else "",
+        ),
+    )
+
+
 @router.post("/register", response_model=RegisterPendingResponse, status_code=201)
 async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     await enforce_rate_limit("register", client_ip(request), limit=5, window_seconds=3600)
@@ -58,24 +121,7 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     if existing:
         raise ConflictError("Email already registered")
 
-    slug = re.sub(r"[^a-z0-9]+", "-", body.company_name.lower()).strip("-") or "org"
-    if await db.scalar(select(Organization.id).where(Organization.slug == slug)):
-        slug = f"{slug}-{uuid4().hex[:6]}"
-
-    org = Organization(
-        name=body.company_name,
-        slug=slug,
-        phone=body.phone,
-        sip_caller_id=settings.DEFAULT_SIP_CALLER_ID,
-        # Self-serve orgs start suspended until a Razorpay subscription
-        # payment succeeds — the webhook (POST /webhooks/razorpay:
-        # subscription.activated/charged) flips this true. Orgs a superadmin
-        # creates directly (app/api/platform.py) are unaffected by this and
-        # keep the column's normal default of active.
-        is_active=False,
-    )
-    db.add(org)
-    await db.flush()
+    org = await _new_org(db, body.company_name, body.phone)
 
     user = User(
         org_id=org.id,
@@ -114,23 +160,7 @@ async def register_member(body: MemberRegisterRequest, request: Request, db: Asy
     """
     await enforce_rate_limit("register-member", client_ip(request), limit=5, window_seconds=3600)
 
-    # Find org by code prefix (first 8 hex chars of org UUID without dashes)
-    code = body.org_code.strip().lower().replace("-", "")
-    if len(code) < 8:
-        raise AppValidationError("Invalid org code", errors=[])
-
-    # Fetch all orgs and match by the first 8 chars of their id (hex, no dashes)
-    from sqlalchemy import text
-    org = await db.scalar(
-        select(Organization).where(
-            Organization.deleted_at.is_(None),
-        ).where(
-            # cast uuid to text, strip dashes, check prefix
-            text("replace(cast(id as text), '-', '') LIKE :pattern"),
-        ).params(pattern=f"{code[:8]}%")
-    )
-    if not org:
-        raise NotFoundError("Invalid org code — ask your admin for the correct code")
+    org = await _org_by_code(db, body.org_code)
 
     existing = await db.scalar(select(User.id).where(User.email == body.email))
     if existing:
@@ -179,21 +209,7 @@ async def verify_otp_endpoint(body: VerifyOtpRequest, db: AsyncSession = Depends
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
 
-    org = await db.get(Organization, user.org_id)
-    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
-    refresh_token = create_refresh_token(str(user.id), str(user.org_id))
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=UserOut(
-            id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            org_id=str(user.org_id),
-            org_name=org.name if org else "",
-        ),
-    )
+    return await _session(db, user)
 
 
 _RESEND_COOLDOWN_SECONDS = 60
@@ -280,26 +296,100 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     if settings.REQUIRE_EMAIL_VERIFICATION and user.email_verified_at is None:
         raise AuthenticationError("Please verify your email before logging in", code="EMAIL_NOT_VERIFIED")
 
-    org = await db.get(Organization, user.org_id)
-
-    access_token = create_access_token(str(user.id), str(user.org_id), user.role)
-    refresh_token = create_refresh_token(str(user.id), str(user.org_id))
-
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
+    return await _session(db, user)
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=UserOut(
-            id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            org_id=str(user.org_id),
-            org_name=org.name if org else "",
-        ),
+
+@router.get("/google/url")
+async def google_signin_url(origin: str, nonce: str):
+    """Where the "Sign in with Google" button sends the browser. Google sends it back to
+    <origin>/auth/google; origin must be one of our own frontends (CORS_ORIGINS)."""
+    if not google_signin.configured():
+        raise AppValidationError("Google sign-in isn't set up on this server yet", errors=[])
+    if origin.rstrip("/") not in [o.rstrip("/") for o in settings.CORS_ORIGINS]:
+        raise AppValidationError("Unknown site", errors=[])
+    redirect = google_signin.redirect_uri(origin)
+    # The nonce stays in the browser's sessionStorage, so a code+state pasted into someone
+    # else's browser (login CSRF) won't match theirs.
+    state = pyjwt.encode({
+        "type": "google_signin", "redirect": redirect, "nonce": nonce,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+    }, settings.SECRET_KEY, algorithm="HS256")
+    return {"url": google_signin.auth_url(redirect, state)}
+
+
+@router.post("/google/signin")
+async def google_signin_callback(body: GoogleSignInRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Existing account → session (same body as /login, plus status "ok").
+    Unknown email → status "signup" with a short-lived token for /google/complete."""
+    await enforce_rate_limit("login-ip", client_ip(request), limit=30, window_seconds=600)
+    try:
+        state = pyjwt.decode(body.state, settings.SECRET_KEY, algorithms=["HS256"])
+    except pyjwt.InvalidTokenError:
+        raise AuthenticationError("Google sign-in expired. Please try again.")
+    if state.get("type") != "google_signin" or not body.nonce or state.get("nonce") != body.nonce:
+        raise AuthenticationError("Google sign-in expired. Please try again.")
+    try:
+        email, name = await google_signin.exchange_code(body.code, state["redirect"])
+    except google_signin.GoogleSignInError as exc:
+        raise AuthenticationError(str(exc))
+
+    user = await db.scalar(select(User).where(func.lower(User.email) == email, User.deleted_at.is_(None)))
+    if not user:
+        signup_token = pyjwt.encode({
+            "type": "google_signup", "email": email,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        }, settings.SECRET_KEY, algorithm="HS256")
+        return {"status": "signup", "signup_token": signup_token, "email": email, "full_name": name}
+    if not user.is_active:
+        raise AuthenticationError("Account is inactive. Contact your admin.")
+    # Google has confirmed they own this inbox, which is all the OTP step proves.
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "ok", **(await _session(db, user)).model_dump()}
+
+
+@router.post("/google/complete", response_model=TokenResponse, status_code=201)
+async def google_complete_signup(body: GoogleCompleteRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Create the account for a first-time Google user: a new org, or join one by invite code."""
+    await enforce_rate_limit("register", client_ip(request), limit=5, window_seconds=3600)
+    try:
+        claims = pyjwt.decode(body.signup_token, settings.SECRET_KEY, algorithms=["HS256"])
+    except pyjwt.InvalidTokenError:
+        raise AuthenticationError("Google sign-up expired. Please sign in with Google again.")
+    if claims.get("type") != "google_signup":
+        raise AuthenticationError("Google sign-up expired. Please sign in with Google again.")
+    email = claims["email"]
+    if len(body.full_name.strip()) < 2:
+        raise AppValidationError("Enter your full name", errors=[])
+    if await db.scalar(select(User.id).where(func.lower(User.email) == email)):
+        raise ConflictError("Email already registered")
+
+    if body.org_code:
+        org, role = await _org_by_code(db, body.org_code), UserRole.MEMBER
+    elif body.company_name and len(body.company_name.strip()) >= 2 and body.phone:
+        org, role = await _new_org(db, body.company_name.strip(), body.phone), UserRole.ADMIN
+    else:
+        raise AppValidationError("Enter your company name and phone, or a team invite code", errors=[])
+
+    now = datetime.now(timezone.utc)
+    user = User(
+        org_id=org.id,
+        email=email,
+        # No password yet: they log in with Google, or set one via "Forgot password".
+        hashed_password=hash_password(uuid4().hex + uuid4().hex),
+        full_name=body.full_name.strip(),
+        role=role,
+        is_active=True,
+        email_verified_at=now,
+        last_login_at=now,
     )
+    db.add(user)
+    await db.commit()
+    return await _session(db, user)
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)

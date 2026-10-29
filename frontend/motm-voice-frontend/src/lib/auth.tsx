@@ -11,6 +11,8 @@ interface AuthContextValue {
   registerOrg: (data: { full_name: string; company_name: string; email: string; password: string; phone: string }) => Promise<{ email: string; message: string }>;
   verifyOtp: (email: string, code: string) => Promise<User>;
   registerMember: (data: { full_name: string; email: string; password: string; org_code: string }) => Promise<{ email: string; message: string }>;
+  // For sign-ins that hand back tokens directly (Google).
+  setSession: (res: { access_token: string; refresh_token: string; user: User }) => User;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -117,10 +119,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       registerOrg,
       verifyOtp,
       registerMember,
+      setSession: persistSession,
       logout,
       refreshUser,
     }),
-    [user, isLoading, login, registerOrg, verifyOtp, registerMember, logout, refreshUser]
+    [user, isLoading, login, registerOrg, verifyOtp, registerMember, persistSession, logout, refreshUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
