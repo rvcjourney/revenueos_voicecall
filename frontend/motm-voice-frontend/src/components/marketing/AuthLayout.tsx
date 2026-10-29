@@ -15,7 +15,7 @@ export function AuthLayout({
   children: ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-card to-background px-4 py-12 sm:px-6">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-card to-background px-4 pb-4 pt-20 sm:px-6 sm:pt-4">
       <video
         className="absolute inset-0 h-full w-full object-cover motion-reduce:hidden"
         src="/auth-bg.mp4"
@@ -28,16 +28,16 @@ export function AuthLayout({
       {/* Dims the video so the card stays readable in light and dark mode */}
       <div className="absolute inset-0 bg-background/60" />
 
+      <Link to="/" className="absolute left-4 top-4 z-10 sm:left-6">
+        <Logo />
+      </Link>
       <div className="absolute right-4 top-4 z-10 sm:right-6">
         <ThemeToggle />
       </div>
 
-      <div className="relative w-full max-w-md space-y-8 rounded-2xl border border-border/60 bg-card/80 p-8 shadow-2xl backdrop-blur-md">
-        <Link to="/" className="inline-block">
-          <Logo />
-        </Link>
-        <div className="space-y-1.5">
-          <h1 className="font-heading text-2xl font-semibold">{title}</h1>
+      <div className="relative w-full max-w-xl space-y-4 rounded-2xl border border-border/60 bg-card/80 p-6 shadow-2xl backdrop-blur-md">
+        <div className="space-y-1">
+          <h1 className="font-heading text-xl font-semibold">{title}</h1>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
         {children}

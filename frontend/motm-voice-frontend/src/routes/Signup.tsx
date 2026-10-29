@@ -67,14 +67,14 @@ export default function Signup() {
         </TabsList>
 
         <TabsContent value="join">
-          <p className="mb-4 text-xs text-muted-foreground">
+          <p className="mb-3 text-xs text-muted-foreground">
             Have an 8-character invite code from your admin? Join their existing QuickHowl workspace.
           </p>
           <JoinTeamForm google={google} />
         </TabsContent>
 
         <TabsContent value="org">
-          <p className="mb-4 text-xs text-muted-foreground">
+          <p className="mb-3 text-xs text-muted-foreground">
             Setting up QuickHowl for your company for the first time? Create a new organization.
           </p>
           <CreateOrgForm google={google} />
@@ -145,9 +145,9 @@ function JoinTeamForm({ google }: { google?: GoogleSignup }) {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
       {serverError && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="sm:col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {serverError}
         </div>
       )}
@@ -176,7 +176,7 @@ function JoinTeamForm({ google }: { google?: GoogleSignup }) {
         {errors.org_code && <p className="text-xs text-destructive">{errors.org_code.message}</p>}
         <p className="text-xs text-muted-foreground">Ask your admin for this — it's on their Team page.</p>
       </div>
-      <Button type="submit" variant="gradient" className="w-full" size="lg" disabled={isSubmitting}>
+      <Button type="submit" variant="gradient" className="w-full sm:col-span-2" size="lg" disabled={isSubmitting}>
         {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
         Join team
       </Button>
@@ -325,9 +325,9 @@ function CreateOrgForm({ google }: { google?: GoogleSignup }) {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
       {emailTaken && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="sm:col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           This email is already registered.{" "}
           <Link to="/login" className="font-medium underline">
             Log in
@@ -336,7 +336,7 @@ function CreateOrgForm({ google }: { google?: GoogleSignup }) {
         </div>
       )}
       {serverError && (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="sm:col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {serverError}
         </div>
       )}
@@ -364,12 +364,12 @@ function CreateOrgForm({ google }: { google?: GoogleSignup }) {
           </div>
         </>
       )}
-      <div className="space-y-1.5">
+      <div className="space-y-1.5 sm:col-span-2">
         <Label htmlFor="org-phone">Phone</Label>
         <Input id="org-phone" placeholder="+91 98765 43210" {...register("phone")} />
         {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
       </div>
-      <Button type="submit" variant="gradient" className="w-full" size="lg" disabled={isSubmitting}>
+      <Button type="submit" variant="gradient" className="w-full sm:col-span-2" size="lg" disabled={isSubmitting}>
         {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
         Create organization
       </Button>
