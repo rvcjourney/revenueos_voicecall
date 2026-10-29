@@ -8,9 +8,8 @@ const queryClient = new QueryClient();
 
 // No router library here on purpose -- this is a single marketing site with
 // a couple of extra static legal pages, not worth pulling in react-router-dom
-// for. `serve -s dist` (Dockerfile) already falls back to index.html for any
-// path, so a direct visit to /privacy-policy or /terms-of-service works in
-// production too.
+// for. The Dockerfile copies index.html to privacy-policy.html and
+// terms-of-service.html, so add a copy there too when adding a route here.
 function CurrentRoute() {
   if (window.location.pathname === "/privacy-policy") return <PrivacyPolicy />;
   if (window.location.pathname === "/terms-of-service") return <TermsOfService />;

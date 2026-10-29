@@ -95,7 +95,7 @@ export function Nav() {
       : `${plan.credits_per_month.toLocaleString()} AI call-minutes every month`,
   }));
 
-  const allLinks = [...links, { href: "#pricing", label: "Pricing", menu: pricingMenu }];
+  const allLinks = [...links, { href: "#pricing", label: "Pricing", menu: pricingMenu }, { href: "/blog/", label: "Blog" }];
   const closeTimer = useRef<number | undefined>(undefined);
   const { setActiveTab } = usePlatformTab();
 
