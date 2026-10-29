@@ -67,16 +67,10 @@ export default function Signup() {
         </TabsList>
 
         <TabsContent value="join">
-          <p className="mb-3 text-xs text-muted-foreground">
-            Have an 8-character invite code from your admin? Join their existing QuickHowl workspace.
-          </p>
           <JoinTeamForm google={google} />
         </TabsContent>
 
         <TabsContent value="org">
-          <p className="mb-3 text-xs text-muted-foreground">
-            Setting up QuickHowl for your company for the first time? Create a new organization.
-          </p>
           <CreateOrgForm google={google} />
         </TabsContent>
       </Tabs>
