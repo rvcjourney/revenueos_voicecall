@@ -43,11 +43,11 @@ type OrgValues = z.infer<typeof orgSchema>;
 type GoogleSignup = { signup_token: string; email: string; full_name: string };
 
 export default function Signup() {
-  const [tab, setTab] = useState("join");
+  const [tab, setTab] = useState("org");
   const google = (useLocation().state as { google?: GoogleSignup } | null)?.google;
 
   return (
-    <AuthLayout title="Create your account" subtitle="Get your AI voice agents making calls in minutes.">
+    <AuthLayout wide title="Create your account" subtitle="Get your AI voice agents making calls in minutes.">
       {google ? (
         <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
           Signing up with Google as <span className="font-medium">{google.email}</span>. Just a few details to
@@ -58,11 +58,11 @@ export default function Signup() {
       )}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="w-full">
-          <TabsTrigger value="join" className="flex-1">
-            Join a team
-          </TabsTrigger>
           <TabsTrigger value="org" className="flex-1">
             Create organization
+          </TabsTrigger>
+          <TabsTrigger value="join" className="flex-1">
+            Join a team
           </TabsTrigger>
         </TabsList>
 

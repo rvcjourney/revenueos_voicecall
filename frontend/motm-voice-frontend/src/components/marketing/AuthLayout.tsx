@@ -8,10 +8,13 @@ import { ThemeToggle } from "@/components/shared/ThemeToggle";
 export function AuthLayout({
   title,
   subtitle,
+  wide = false,
   children,
 }: {
   title: string;
   subtitle: string;
+  // Signup's two-column form needs more room; login stays a compact square
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -35,7 +38,7 @@ export function AuthLayout({
         <ThemeToggle />
       </div>
 
-      <div className="relative w-full max-w-xl space-y-4 rounded-2xl border border-border/60 bg-card/80 p-6 shadow-2xl backdrop-blur-md">
+      <div className={`relative w-full ${wide ? "max-w-xl" : "max-w-md"} space-y-4 rounded-2xl border border-border/60 bg-card/80 p-6 shadow-2xl backdrop-blur-md`}>
         <div className="space-y-1">
           <h1 className="font-heading text-xl font-semibold">{title}</h1>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
