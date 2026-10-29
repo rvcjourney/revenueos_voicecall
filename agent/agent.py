@@ -1284,8 +1284,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # Quiet office hum + typing while the agent "thinks", so the call sounds like a real desk.
         try:
             background = BackgroundAudioPlayer(
-                ambient_sound  = AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.3),
-                thinking_sound = [AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.5)],
+                ambient_sound  = AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.6),
+                thinking_sound = [AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.8)],
             )
             await background.start(room=ctx.room, agent_session=session)
         except Exception:
