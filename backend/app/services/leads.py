@@ -7,7 +7,8 @@ is reused by scripts/backfill_leads.py for calls made before the CRM existed.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,10 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.call import Call
 from app.models.campaign import CampaignContact
-from app.models.lead import Lead, LeadActivity, LeadActivityType, LeadEmailStatus, LeadMeetingStatus, LeadStatus
+from app.models.lead import (
+    Lead, LeadActivity, LeadActivityType, LeadEmailStatus, LeadMeetingStatus, LeadPriority, LeadSource, LeadStatus,
+)
 
 # Auto-advance only moves forward along this ladder; anything the team set by
 # hand outside it (qualified/won/lost) is never touched by a call.
+_IST = ZoneInfo("Asia/Kolkata")
 _RANK = {LeadStatus.NEW: 0, LeadStatus.CONTACTED: 1, LeadStatus.INTERESTED: 2, LeadStatus.MEETING_SCHEDULED: 3}
 
 
@@ -57,7 +61,9 @@ async def upsert_from_call(
 
     # Insert-if-missing first so two calls to the same number can't race into two leads.
     await db.execute(
-        pg_insert(Lead).values(org_id=call.org_id, phone=call.phone_number)
+        pg_insert(Lead).values(
+            org_id=call.org_id, phone=call.phone_number, source=LeadSource.CAMPAIGN, source_campaign_id=call.campaign_id,
+        )
         .on_conflict_do_nothing(index_elements=["org_id", "phone"])
     )
     lead = (await db.execute(
@@ -100,4 +106,14 @@ async def upsert_from_call(
             payload={"from": lead.status, "to": new_status, "by": "ai"},
         ))
         lead.status = new_status
+
+    if not lead.priority_by_user:
+        if booking or outcome == "interested":
+            lead.priority = LeadPriority.HOT
+        elif outcome == "not_interested":
+            lead.priority = LeadPriority.COLD
+    if outcome == "callback_requested" and lead.next_follow_up_at is None:
+        # Nobody parsed "call me later" into a time: put it on tomorrow's list, 10 am India time.
+        tomorrow = when.astimezone(_IST).date() + timedelta(days=1)
+        lead.next_follow_up_at = datetime.combine(tomorrow, time(10), _IST)
     return lead

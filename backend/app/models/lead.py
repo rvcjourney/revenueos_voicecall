@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, false, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -47,6 +47,18 @@ class LeadMeetingStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class LeadPriority(StrEnum):
+    HOT = "hot"
+    WARM = "warm"
+    COLD = "cold"
+
+
+class LeadSource(StrEnum):
+    CAMPAIGN = "campaign"
+    IMPORT = "import"
+    MANUAL = "manual"
+
+
 class LeadActivityType(StrEnum):
     CALL = "call"
     NOTE = "note"
@@ -63,6 +75,7 @@ class Lead(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     __table_args__ = (
         UniqueConstraint("org_id", "phone", name="uq_leads_org_phone"),
         Index("ix_leads_org_last_called", "org_id", "last_called_at"),
+        Index("ix_leads_org_follow_up", "org_id", "next_follow_up_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
@@ -93,6 +106,17 @@ class Lead(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     # Free text on purpose: the agent books in natural language ("Tuesday 4pm").
     meeting_at_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
     meeting_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Management fields (Leads table / board)
+    next_follow_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    priority: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Once a teammate picks the priority, calls stop changing it.
+    priority_by_user: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false(), default=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default=LeadSource.MANUAL, default=LeadSource.MANUAL)
+    source_campaign_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True,
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class LeadActivity(Base, OrgScopedMixin):

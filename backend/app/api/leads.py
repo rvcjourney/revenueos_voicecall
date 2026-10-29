@@ -10,14 +10,16 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from types import SimpleNamespace
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contacts_file import normalize_phone, parse_contacts_file
@@ -27,7 +29,8 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError as
 from app.core.rate_limit import enforce_rate_limit
 from app.database import get_db
 from app.models.call import Call
-from app.models.lead import Lead, LeadActivity, LeadActivityType, LeadEmailStatus
+from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus
+from app.models.lead import Lead, LeadActivity, LeadActivityType, LeadEmailStatus, LeadSource, LeadStatus
 from app.models.user import Organization, User
 from app.services.brochure import agent_for_call, deliver_brochure
 from app.services.leads import fill_lead_placeholders
@@ -37,6 +40,10 @@ router = APIRouter()
 StatusLit = Literal["new", "contacted", "interested", "meeting_scheduled", "qualified", "won", "lost", "do_not_call"]
 EmailStatusLit = Literal["none", "captured", "sent", "failed", "replied"]
 MeetingStatusLit = Literal["none", "scheduled", "done", "cancelled"]
+PriorityLit = Literal["hot", "warm", "cold"]
+FollowUpLit = Literal["due_today", "overdue", "upcoming"]
+
+_IST = ZoneInfo("Asia/Kolkata")  # "today" for follow-ups and date ranges
 
 _PHONE_RE = re.compile(r"^\+\d{6,15}$")
 _MAX_IMPORT_ROWS = 5000
@@ -55,7 +62,7 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def _lead_out(lead: Lead, members: dict[UUID, str]) -> dict:
+def _lead_out(lead: Lead, members: dict[UUID, str], campaigns: dict[UUID, str] | None = None) -> dict:
     return {
         "id": str(lead.id), "phone": lead.phone, "name": lead.name, "email": lead.email, "company": lead.company,
         "status": lead.status, "owner_id": str(lead.owner_id) if lead.owner_id else None,
@@ -67,8 +74,19 @@ def _lead_out(lead: Lead, members: dict[UUID, str]) -> dict:
         "email_status": lead.email_status, "email_sent_at": _iso(lead.email_sent_at),
         "meeting_status": lead.meeting_status, "meeting_at_text": lead.meeting_at_text,
         "meeting_ref": lead.meeting_ref,
+        "next_follow_up_at": _iso(lead.next_follow_up_at), "priority": lead.priority, "note": lead.note,
+        "source": lead.source,
+        "source_campaign_id": str(lead.source_campaign_id) if lead.source_campaign_id else None,
+        "source_campaign_name": (campaigns or {}).get(lead.source_campaign_id) if lead.source_campaign_id else None,
         "created_at": _iso(lead.created_at), "updated_at": _iso(lead.updated_at),
     }
+
+
+async def _campaign_names(db: AsyncSession, leads) -> dict[UUID, str]:
+    ids = {lead.source_campaign_id for lead in leads if lead.source_campaign_id}
+    if not ids:
+        return {}
+    return dict((await db.execute(select(Campaign.id, Campaign.name).where(Campaign.id.in_(ids)))).all())
 
 
 async def _get_lead(db: AsyncSession, lead_id: UUID, org_id: UUID) -> Lead:
@@ -96,10 +114,52 @@ def _check_custom_fields(fields: dict[str, str]) -> None:
         raise AppValidationError("Too many custom fields, or a name/value is too long", errors=[])
 
 
-def _filters(token: TokenPayload, status, owner, q, email_status, meeting_status) -> list:
+def lead_query(
+    status: StatusLit | None = Query(None),
+    owner: str | None = Query(None, description="'me', 'none' or a user id"),
+    q: str | None = Query(None),
+    email_status: EmailStatusLit | None = Query(None),
+    meeting_status: MeetingStatusLit | None = Query(None),
+    priority: PriorityLit | None = Query(None),
+    campaign_id: UUID | None = Query(None, description="Leads that came from this campaign"),
+    follow_up: FollowUpLit | None = Query(None),
+    date_from: date | None = Query(None, description="Last activity on/after this day (India time)"),
+    date_to: date | None = Query(None),
+    ids: list[UUID] | None = Query(None, description="Only these leads (export selected)"),
+) -> SimpleNamespace:
+    """The list's filters, shared by the list, its counts and the CSV export."""
+    return SimpleNamespace(**locals())
+
+
+def _today_bounds() -> tuple[datetime, datetime]:
+    start = datetime.combine(datetime.now(_IST).date(), time(0), _IST)
+    return start, start + timedelta(days=1)
+
+
+def _filters(token: TokenPayload, fq: SimpleNamespace, *, with_status: bool = True) -> list:
     f = [Lead.org_id == token.org_id, Lead.deleted_at.is_(None)]
-    if status:
+    status, owner, q = fq.status, fq.owner, fq.q
+    email_status, meeting_status = fq.email_status, fq.meeting_status
+    if status and with_status:
         f.append(Lead.status == status)
+    if fq.priority:
+        f.append(Lead.priority == fq.priority)
+    if fq.campaign_id:
+        f.append(Lead.source_campaign_id == fq.campaign_id)
+    if fq.ids:
+        f.append(Lead.id.in_(fq.ids[:500]))
+    if fq.follow_up:
+        start, end = _today_bounds()
+        f.append({
+            "due_today": (Lead.next_follow_up_at >= start) & (Lead.next_follow_up_at < end),
+            "overdue": Lead.next_follow_up_at < start,
+            "upcoming": Lead.next_follow_up_at >= end,
+        }[fq.follow_up])
+    activity = func.coalesce(Lead.last_called_at, Lead.created_at)
+    if fq.date_from:
+        f.append(activity >= datetime.combine(fq.date_from, time(0), _IST))
+    if fq.date_to:
+        f.append(activity < datetime.combine(fq.date_to + timedelta(days=1), time(0), _IST))
     if owner == "me":
         f.append(Lead.owner_id == token.user_id)
     elif owner == "none":
@@ -129,31 +189,37 @@ def _csv_safe(value) -> str:
 
 @router.get("")
 async def list_leads(
-    status: StatusLit | None = Query(None),
-    owner: str | None = Query(None, description="'me', 'none' or a user id"),
-    q: str | None = Query(None),
-    email_status: EmailStatusLit | None = Query(None),
-    meeting_status: MeetingStatusLit | None = Query(None),
+    query: SimpleNamespace = Depends(lead_query),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    filters = _filters(token, status, owner, q, email_status, meeting_status)
+    filters = _filters(token, query)
     total = await db.scalar(select(func.count(Lead.id)).where(*filters))
     rows = (await db.execute(
         select(Lead).where(*filters)
         .order_by(Lead.last_called_at.desc().nulls_last(), Lead.created_at.desc())
         .limit(limit).offset(offset)
     )).scalars().all()
-    # Pipeline counts ignore the status filter so every status chip keeps its number.
+    # Pipeline counts and the summary ignore the status filter, so every stage keeps its number.
+    no_status = _filters(token, query, with_status=False)
     counts = dict((await db.execute(
-        select(Lead.status, func.count(Lead.id))
-        .where(*_filters(token, None, owner, q, email_status, meeting_status))
-        .group_by(Lead.status)
+        select(Lead.status, func.count(Lead.id)).where(*no_status).group_by(Lead.status)
     )).all())
+    start, end = _today_bounds()
+    s = (await db.execute(select(
+        func.count(Lead.id),
+        func.count(Lead.id).filter(Lead.next_follow_up_at >= start, Lead.next_follow_up_at < end),
+        func.count(Lead.id).filter(Lead.next_follow_up_at < start),
+        func.count(Lead.id).filter(Lead.priority == "hot"),
+    ).where(*no_status))).one()
     members = await _members(db, token.org_id)
-    return {"items": [_lead_out(r, members) for r in rows], "total": total, "status_counts": counts}
+    campaigns = await _campaign_names(db, rows)
+    return {
+        "items": [_lead_out(r, members, campaigns) for r in rows], "total": total, "status_counts": counts,
+        "summary": {"total": s[0], "due_today": s[1], "overdue": s[2], "hot": s[3]},
+    }
 
 
 @router.get("/meta")
@@ -164,31 +230,34 @@ async def leads_meta(token: TokenPayload = Depends(get_current_user), db: AsyncS
     return {
         "members": [{"id": str(k), "name": v} for k, v in sorted(members.items(), key=lambda kv: kv[1] or "")],
         "email_enabled": smtp_configured(org),
+        # For "Call again": the campaigns selected leads can be added to.
+        "campaigns": [{"id": str(c.id), "name": c.name, "status": c.status} for c in (await db.execute(
+            select(Campaign).where(Campaign.org_id == token.org_id, Campaign.deleted_at.is_(None))
+            .order_by(Campaign.created_at.desc()).limit(200)
+        )).scalars().all()],
     }
 
 
 @router.get("/export.csv")
 async def export_leads(
-    status: StatusLit | None = Query(None),
-    owner: str | None = Query(None),
-    q: str | None = Query(None),
-    email_status: EmailStatusLit | None = Query(None),
-    meeting_status: MeetingStatusLit | None = Query(None),
+    query: SimpleNamespace = Depends(lead_query),
     token: TokenPayload = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    filters = _filters(token, status, owner, q, email_status, meeting_status)
+    filters = _filters(token, query)
     rows = (await db.execute(
         select(Lead).where(*filters).order_by(Lead.last_called_at.desc().nulls_last()).limit(50_000)
     )).scalars().all()
     members = await _members(db, token.org_id)
+    campaigns = await _campaign_names(db, rows)
     custom_keys = sorted({k for r in rows for k in (r.custom_fields or {})})
 
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
         "Phone", "Name", "Email", "Company", "Status", "Owner", "Last outcome", "Last summary", "Last called",
-        "Email status", "Email sent at", "Meeting status", "Meeting when", "Meeting ref", "Tags", *custom_keys,
+        "Email status", "Email sent at", "Meeting status", "Meeting when", "Meeting ref", "Tags",
+        "Priority", "Next follow-up", "Source", "Source campaign", "Note", *custom_keys,
     ])
     for r in rows:
         cf = r.custom_fields or {}
@@ -197,6 +266,7 @@ async def export_leads(
                 r.name, r.email, r.company, r.status, members.get(r.owner_id, "") if r.owner_id else "",
                 r.last_outcome, r.last_summary, _iso(r.last_called_at), r.email_status, _iso(r.email_sent_at),
                 r.meeting_status, r.meeting_at_text, r.meeting_ref, ", ".join(r.tags or []),
+                r.priority, _iso(r.next_follow_up_at), r.source, campaigns.get(r.source_campaign_id, ""), r.note,
                 *[cf.get(k, "") for k in custom_keys],
             )],
         ])
@@ -229,7 +299,7 @@ async def create_lead(body: LeadCreate, token: TokenPayload = Depends(get_curren
     if lead and lead.deleted_at is None:
         raise ConflictError("A lead with this phone number already exists")
     if lead is None:
-        lead = Lead(org_id=token.org_id, phone=phone)
+        lead = Lead(org_id=token.org_id, phone=phone, source=LeadSource.MANUAL)
         db.add(lead)
     lead.deleted_at = None
     lead.name, lead.email, lead.company = body.name or None, body.email or None, body.company or None
@@ -269,7 +339,7 @@ async def import_leads(
         lead = existing.get(phone)
         is_new = lead is None
         if is_new:
-            lead = Lead(org_id=token.org_id, phone=phone, custom_fields={}, tags=[])
+            lead = Lead(org_id=token.org_id, phone=phone, custom_fields={}, tags=[], source=LeadSource.IMPORT)
             db.add(lead)
         lead.deleted_at = None
         lead.name = r["name"] or lead.name
@@ -324,6 +394,9 @@ class LeadPatch(BaseModel):
     meeting_status: MeetingStatusLit | None = None
     meeting_at_text: str | None = Field(None, max_length=255)
     meeting_ref: str | None = Field(None, max_length=64)
+    priority: PriorityLit | None = None
+    next_follow_up_at: datetime | None = None
+    note: str | None = Field(None, max_length=5000)
 
 
 _NOT_NULL = {"status", "tags", "custom_fields", "email_status", "meeting_status"}
@@ -354,6 +427,8 @@ async def update_lead(
         if old == new:
             continue
         setattr(lead, field, new)
+        if field == "priority":
+            lead.priority_by_user = True
         if field == "status":
             db.add(_activity(lead, LeadActivityType.STATUS_CHANGE, {"from": old, "to": new, "by": "user"}, token.user_id))
         elif field.startswith("meeting_"):
@@ -362,6 +437,8 @@ async def update_lead(
             edited["owner"] = members.get(new) if new else None
         elif field in ("custom_fields", "tags"):
             edited[field] = "updated"
+        elif field == "next_follow_up_at":
+            edited["next_follow_up"] = _iso(new)
         else:
             edited[field] = new
     if edited:
@@ -446,6 +523,108 @@ async def send_lead_brochure(
             ok, detail = await deliver_brochure(db, lead, agent, call=call, user_id=token.user_id)
             return {"ok": ok, "detail": detail}
     raise AppValidationError("None of the agents that called this lead has a brochure", errors=[])
+
+
+# ── bulk ─────────────────────────────────────────────────────────────────────
+
+_CAN_ADD_TO = {CampaignStatus.DRAFT, CampaignStatus.SCHEDULED, CampaignStatus.PAUSED}
+
+
+class BulkIn(BaseModel):
+    ids: list[UUID] = Field(min_length=1, max_length=500)
+    action: Literal["assign", "status", "priority", "follow_up", "tag", "delete", "add_to_campaign"]
+    # owner id / status / priority / ISO datetime / tag / campaign id; null clears owner or follow-up
+    value: str | None = Field(None, max_length=255)
+
+
+@router.post("/bulk")
+async def bulk_update(body: BulkIn, token: TokenPayload = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """One action on many leads, each change on its lead's timeline like a single edit."""
+    leads = (await db.execute(
+        select(Lead).where(Lead.org_id == token.org_id, Lead.deleted_at.is_(None), Lead.id.in_(body.ids))
+    )).scalars().all()
+    value, uid = body.value, token.user_id
+
+    if body.action == "add_to_campaign":
+        return await _add_to_campaign(db, token, leads, value)
+
+    if body.action == "assign":
+        members = await _members(db, token.org_id)
+        owner = UUID(value) if value else None
+        if owner and owner not in members:
+            raise AppValidationError("Owner must be someone in your team", errors=[])
+        for lead in leads:
+            lead.owner_id = owner
+            db.add(_activity(lead, LeadActivityType.EDIT, {"owner": members.get(owner) if owner else None}, uid))
+    elif body.action == "status":
+        if value not in LeadStatus.__members__.values():
+            raise AppValidationError("Unknown status", errors=[])
+        for lead in leads:
+            if lead.status != value:
+                db.add(_activity(lead, LeadActivityType.STATUS_CHANGE, {"from": lead.status, "to": value, "by": "user"}, uid))
+                lead.status = value
+    elif body.action == "priority":
+        if value not in ("hot", "warm", "cold"):
+            raise AppValidationError("Priority is hot, warm or cold", errors=[])
+        for lead in leads:
+            lead.priority, lead.priority_by_user = value, True
+            db.add(_activity(lead, LeadActivityType.EDIT, {"priority": value}, uid))
+    elif body.action == "follow_up":
+        try:
+            when = datetime.fromisoformat(value) if value else None
+        except ValueError:
+            raise AppValidationError("Pick a valid follow-up date", errors=[])
+        if when and when.tzinfo is None:
+            when = when.replace(tzinfo=_IST)
+        for lead in leads:
+            lead.next_follow_up_at = when
+            db.add(_activity(lead, LeadActivityType.EDIT, {"next_follow_up": _iso(when)}, uid))
+    elif body.action == "tag":
+        tag = (value or "").strip()[:40]
+        if not tag:
+            raise AppValidationError("Type a tag", errors=[])
+        for lead in leads:
+            if tag not in (lead.tags or []) and len(lead.tags or []) < 20:
+                lead.tags = [*(lead.tags or []), tag]
+                db.add(_activity(lead, LeadActivityType.EDIT, {"tags": "updated"}, uid))
+    elif body.action == "delete":
+        now = datetime.now(timezone.utc)
+        for lead in leads:
+            lead.deleted_at = now
+    await db.commit()
+    return {"updated": len(leads)}
+
+
+async def _add_to_campaign(db: AsyncSession, token: TokenPayload, leads, campaign_id: str | None) -> dict:
+    """'Call again': the selected leads become pending contacts of a not-yet-running campaign."""
+    try:
+        campaign = await db.get(Campaign, UUID(campaign_id or ""))
+    except ValueError:
+        campaign = None
+    if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
+        raise NotFoundError("Campaign not found")
+    if campaign.status not in _CAN_ADD_TO:
+        raise AppValidationError("Pick a draft or paused campaign (a running or finished one can't take new contacts)", errors=[])
+    already = set((await db.execute(
+        select(CampaignContact.phone).where(CampaignContact.campaign_id == campaign.id)
+    )).scalars().all())
+    added = 0
+    for lead in leads:
+        if lead.status == LeadStatus.DO_NOT_CALL or lead.phone in already:
+            continue
+        already.add(lead.phone)
+        db.add(CampaignContact(
+            org_id=campaign.org_id, campaign_id=campaign.id, name=lead.name or "Contact", phone=lead.phone,
+            email=lead.email, company=lead.company, custom_fields=lead.custom_fields or {}, status=ContactStatus.PENDING,
+        ))
+        db.add(_activity(lead, LeadActivityType.EDIT, {"added_to_campaign": campaign.name}, token.user_id))
+        added += 1
+    if added:
+        await db.execute(
+            update(Campaign).where(Campaign.id == campaign.id).values(total_contacts=Campaign.total_contacts + added)
+        )
+    await db.commit()
+    return {"added": added, "skipped": len(leads) - added, "campaign": campaign.name}
 
 
 @router.delete("/{lead_id}", status_code=204)

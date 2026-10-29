@@ -540,6 +540,9 @@ export const LEAD_STATUSES: LeadStatus[] = [
 ];
 export type LeadEmailStatus = "none" | "captured" | "sent" | "failed" | "replied";
 export type LeadMeetingStatus = "none" | "scheduled" | "done" | "cancelled";
+export type LeadPriority = "hot" | "warm" | "cold";
+export type LeadSource = "campaign" | "import" | "manual";
+export type LeadFollowUp = "due_today" | "overdue" | "upcoming";
 
 export interface Lead {
   id: string;
@@ -561,6 +564,12 @@ export interface Lead {
   meeting_status: LeadMeetingStatus;
   meeting_at_text: string | null;
   meeting_ref: string | null;
+  next_follow_up_at: string | null;
+  priority: LeadPriority | null;
+  note: string | null;
+  source: LeadSource;
+  source_campaign_id: string | null;
+  source_campaign_name: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -569,6 +578,7 @@ export interface LeadListResponse {
   items: Lead[];
   total: number;
   status_counts: Partial<Record<LeadStatus, number>>;
+  summary: { total: number; due_today: number; overdue: number; hot: number };
 }
 
 export interface LeadActivity {
@@ -598,7 +608,10 @@ export interface LeadDetail extends Lead {
 export interface LeadsMeta {
   members: { id: string; name: string }[];
   email_enabled: boolean;
+  campaigns: { id: string; name: string; status: string }[];
 }
+
+export type LeadBulkAction = "assign" | "status" | "priority" | "follow_up" | "tag" | "delete" | "add_to_campaign";
 
 export interface LeadFilters {
   status?: LeadStatus;
@@ -606,6 +619,11 @@ export interface LeadFilters {
   q?: string;
   email_status?: LeadEmailStatus;
   meeting_status?: LeadMeetingStatus;
+  priority?: LeadPriority;
+  campaign_id?: string;
+  follow_up?: LeadFollowUp;
+  date_from?: string; // YYYY-MM-DD
+  date_to?: string;
   limit?: number;
   offset?: number;
 }

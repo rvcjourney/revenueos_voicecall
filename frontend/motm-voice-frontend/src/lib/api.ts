@@ -44,6 +44,7 @@ import type {
   LeadFilters,
   LeadListResponse,
   LeadsMeta,
+  LeadBulkAction,
   SmtpSettings,
   SmtpSettingsInput,
   CalendarSettings,
@@ -294,6 +295,8 @@ export const leadsApi = {
   sendEmail: (id: string, data: { subject: string; body: string; to?: string }) =>
     api.post<{ ok: boolean; detail: string }>(`/api/leads/${id}/email`, data),
   remove: (id: string) => api.delete(`/api/leads/${id}`),
+  bulk: (ids: string[], action: LeadBulkAction, value?: string | null) =>
+    api.post<{ updated?: number; added?: number; skipped?: number; campaign?: string }>("/api/leads/bulk", { ids, action, value }),
   importFile: (file: File) => {
     const form = new FormData();
     form.append("file", file);
@@ -301,10 +304,11 @@ export const leadsApi = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
-  exportCsv: (params: LeadFilters) => {
-    const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v != null && v !== "") as [string, string][]
-    ).toString();
+  exportCsv: (params: LeadFilters, ids?: string[]) => {
+    const qs = new URLSearchParams([
+      ...(Object.entries(params).filter(([, v]) => v != null && v !== "") as [string, string][]),
+      ...(ids ?? []).map((id) => ["ids", id] as [string, string]),
+    ]).toString();
     return downloadBlob(`/api/leads/export.csv${qs ? `?${qs}` : ""}`, "leads.csv");
   },
 };

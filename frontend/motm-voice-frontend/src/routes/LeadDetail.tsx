@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Bot, CalendarCheck, FileUp, Loader2, Mail, MessageSquare, Paperclip, Pencil, Phone, Play, Plus, Reply,
+  ArrowLeft, Bot, CalendarCheck, FileUp, Flag, Loader2, Mail, MessageSquare, Paperclip, Pencil, Phone, Play, Plus, Reply,
   Trash2, User, X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,8 +20,9 @@ import { useLead, useLeadsMeta, useUpdateLead } from "@/lib/hooks";
 import { api, leadsApi, apiErrorMessage } from "@/lib/api";
 import {
   LEAD_STATUSES, type Lead, type LeadActivity, type LeadCall, type LeadDetail as LeadDetailT,
-  type LeadEmailStatus, type LeadMeetingStatus, type LeadStatus,
+  type LeadEmailStatus, type LeadMeetingStatus, type LeadPriority, type LeadStatus,
 } from "@/lib/types";
+import { FollowUpText, fromDateInput, toDateInput } from "@/components/leads/leadBits";
 import { formatDateTime, formatDuration, titleCase } from "@/lib/utils";
 
 type LeadUpdate = Partial<Omit<Lead, "id" | "phone" | "owner_name">>;
@@ -113,6 +114,7 @@ export default function LeadDetail() {
           <TimelineCard lead={l} />
         </div>
         <div className="space-y-6">
+          <ManageCard lead={l} save={save} />
           <ContactCard lead={l} save={save} />
           <EmailCard lead={l} emailEnabled={!!meta.data?.email_enabled} save={save} />
           <MeetingCard lead={l} save={save} />
@@ -124,6 +126,54 @@ export default function LeadDetail() {
 }
 
 type SaveFn = (data: LeadUpdate, okMessage?: string) => Promise<boolean>;
+
+/** Priority, next follow-up, the lead's note, and where it came from. */
+function ManageCard({ lead, save }: { lead: LeadDetailT; save: SaveFn }) {
+  const [note, setNote] = useState(lead.note ?? "");
+  useEffect(() => setNote(lead.note ?? ""), [lead.note]);
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Flag className="h-4 w-4" /> Follow-up & priority</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Priority</Label>
+            <Select value={lead.priority ?? ""} onValueChange={(v) => save({ priority: v as LeadPriority }, "Priority saved")}>
+              <SelectTrigger aria-label="Priority"><SelectValue placeholder="Not set" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hot">Hot</SelectItem>
+                <SelectItem value="warm">Warm</SelectItem>
+                <SelectItem value="cold">Cold</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lead-follow-up">Next follow-up</Label>
+            <Input
+              id="lead-follow-up" type="date" value={toDateInput(lead.next_follow_up_at)}
+              onChange={(e) => save({ next_follow_up_at: fromDateInput(e.target.value) }, e.target.value ? "Follow-up set" : "Follow-up cleared")}
+            />
+          </div>
+        </div>
+        {lead.next_follow_up_at && <p className="text-xs"><FollowUpText at={lead.next_follow_up_at} /></p>}
+        <div className="space-y-1.5">
+          <Label htmlFor="lead-note">Note</Label>
+          <Textarea id="lead-note" rows={3} value={note} maxLength={5000} onChange={(e) => setNote(e.target.value)} placeholder="Shown on the Leads table" />
+          {note.trim() !== (lead.note ?? "") && (
+            <Button size="sm" variant="outline" onClick={() => save({ note: note.trim() || null }, "Note saved")}>Save note</Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Source:{" "}
+          {lead.source === "campaign" && lead.source_campaign_id
+            ? <Link to={`/campaigns/${lead.source_campaign_id}`} className="text-primary hover:underline">{lead.source_campaign_name ?? "Campaign"}</Link>
+            : titleCase(lead.source)}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ContactCard({ lead, save }: { lead: LeadDetailT; save: SaveFn }) {
   const [form, setForm] = useState({ name: "", email: "", company: "" });

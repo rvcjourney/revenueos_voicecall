@@ -1259,7 +1259,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # landed on outcome=pending.
         if not voice_agent._ending:
             voice_agent._ending = True
-            logger.info("Participant disconnected — reporting outcome before disconnect")
+            # Who ended it and why (SIP status/BYE reason): tells "customer hung up" apart from "line/media dropped".
+            sip = {k: v for k, v in (getattr(participant, "attributes", None) or {}).items() if k.startswith("sip.")}
+            logger.info("Participant disconnected — reporting outcome before disconnect | reason=%s sip=%s",
+                        getattr(participant, "disconnect_reason", None), sip)
             _safe_task(voice_agent._silent_hangup(abrupt_disconnect=True), "post-call-on-disconnect")
 
     try:
