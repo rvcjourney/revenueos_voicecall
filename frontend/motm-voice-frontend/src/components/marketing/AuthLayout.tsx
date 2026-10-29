@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/shared/Logo";
-import { SoundWave } from "@/components/shared/SoundWave";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
 
+// Background video lives at public/auth-bg.mp4. If the file is missing the
+// gradient underneath shows instead, so the page never breaks.
 export function AuthLayout({
   title,
   subtitle,
@@ -14,42 +15,32 @@ export function AuthLayout({
   children: ReactNode;
 }) {
   return (
-    <div className="relative grid min-h-screen lg:grid-cols-2">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-card to-background px-4 py-12 sm:px-6">
+      <video
+        className="absolute inset-0 h-full w-full object-cover motion-reduce:hidden"
+        src="/auth-bg.mp4"
+        autoPlay
+        muted
+        loop
+        playsInline
+        aria-hidden="true"
+      />
+      {/* Dims the video so the card stays readable in light and dark mode */}
+      <div className="absolute inset-0 bg-background/60" />
+
       <div className="absolute right-4 top-4 z-10 sm:right-6">
         <ThemeToggle />
       </div>
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-card to-background p-10 lg:flex">
-        <div className="dot-grid absolute inset-0 opacity-40" />
-        <div className="relative">
-          <Link to="/">
-            <Logo />
-          </Link>
-        </div>
-        <div className="relative space-y-6">
-          <SoundWave className="h-16" />
-          <blockquote className="max-w-md font-heading text-2xl leading-snug text-foreground">
-            "Our AI agents made 12,000 calls last month — in Hinglish, at scale, without hiring a single extra rep."
-          </blockquote>
-          <p className="text-sm text-muted-foreground">Sales Ops Lead, mid-market SaaS company</p>
-        </div>
-        <p className="relative text-xs text-muted-foreground">
-          Trusted by outbound sales teams across India
-        </p>
-      </div>
 
-      <div className="flex items-center justify-center px-4 py-12 sm:px-6">
-        <div className="w-full max-w-sm space-y-8">
-          <div className="space-y-2 lg:hidden">
-            <Link to="/">
-              <Logo />
-            </Link>
-          </div>
-          <div className="space-y-1.5">
-            <h1 className="font-heading text-2xl font-semibold">{title}</h1>
-            <p className="text-sm text-muted-foreground">{subtitle}</p>
-          </div>
-          {children}
+      <div className="relative w-full max-w-md space-y-8 rounded-2xl border border-border/60 bg-card/80 p-8 shadow-2xl backdrop-blur-md">
+        <Link to="/" className="inline-block">
+          <Logo />
+        </Link>
+        <div className="space-y-1.5">
+          <h1 className="font-heading text-2xl font-semibold">{title}</h1>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
+        {children}
       </div>
     </div>
   );
