@@ -38,6 +38,7 @@ def _to_out(a: AgentTemplate) -> AgentOut:
         llm_temperature=a.llm_temperature,
         speech_pace=a.speech_pace,
         max_call_duration_seconds=a.max_call_duration_seconds,
+        transfer_number=a.transfer_number or "",
         created_at=a.created_at,
         brochure_filename=a.brochure_filename if a.brochure_key else None,
         brochure_email_subject=a.brochure_email_subject,

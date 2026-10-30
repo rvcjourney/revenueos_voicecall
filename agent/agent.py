@@ -25,8 +25,9 @@ from zoneinfo import ZoneInfo
 os.environ["SSL_CERT_FILE"]      = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
-from livekit import agents
-from livekit.agents import AgentSession, Agent, AudioConfig, BackgroundAudioPlayer, BuiltinAudioClip, JobProcess, RunContext, StopResponse, function_tool, stt, tts, utils
+from google.protobuf.duration_pb2 import Duration
+from livekit import agents, api
+from livekit.agents import get_job_context, AgentSession, Agent, AudioConfig, BackgroundAudioPlayer, BuiltinAudioClip, JobProcess, RunContext, StopResponse, function_tool, stt, tts, utils
 from livekit.agents.llm import ChatContext
 from livekit.agents.voice.room_io import AudioInputOptions, RoomOptions
 
@@ -159,6 +160,8 @@ _BACKCHANNEL_WORDS = frozenset({
 _BACKCHANNEL_MAX_WORDS = 6
 _LLM_FIRST_TOKEN_TIMEOUT_S = 8.0  # no first word by now: say the "repeat" line instead of silence
 _GOODBYE_TIMEOUT_S = 20.0 # hang up anyway if the closing statement never finishes playing
+_TRANSFER_RING_S = 30     # how long transfer_call rings the team member before giving up
+_TRANSFER_MAX_S = 3600    # a bridged call still ends after an hour (it outlives max_duration)
 # Splits on anything but letters/digits/Devanagari. The explicit Devanagari
 # range is needed because Python's \w doesn't match vowel signs (ा ं ्), but it
 # skips U+0964/U+0965 so the danda "।" / "॥" still counts as punctuation.
@@ -295,8 +298,8 @@ def prewarm(proc: JobProcess) -> None:
 # =============================================================================
 class VoiceAgent(Agent):
     """One phone call: greeting, the agent's instructions, tools
-    (end_interaction, switch_language, book_next_step; check_calendar and
-    send_brochure when the backend says they're set up), voicemail/IVR/silence
+    (end_interaction, switch_language, book_next_step; check_calendar,
+    send_brochure and transfer_call when the backend says they're set up), voicemail/IVR/silence
     handling, an empty-reply guard, history trimmed to the model's window, and a
     signed post-call report."""
 
@@ -314,6 +317,7 @@ class VoiceAgent(Agent):
         max_duration: int = 600,
         brochure: dict | None = None,
         calendar: dict | None = None,
+        transfer: dict | None = None,
     ) -> None:
         self._room            = room
         self._ending          = False
@@ -338,6 +342,9 @@ class VoiceAgent(Agent):
         self._recoverable_errors = 0
         self._tts_engine = None  # set by entrypoint(); switch_language retargets them
         self._stt_engine = None
+        self._transfer = transfer or {}
+        self._transfer_state: str | None = None  # dialing | connected | failed
+        self._background = None  # BackgroundAudioPlayer, stopped once a transfer connects
 
         self._calendar_agent_id = str((calendar or {}).get("agent_id") or "")
         tools = [self._switch_language_tool()]
@@ -347,6 +354,8 @@ class VoiceAgent(Agent):
             tools.append(self._note_booking_tool())
         if (brochure or {}).get("available"):
             tools.append(self._send_brochure_tool(bool(brochure.get("email_on_file"))))
+        if self._transfer.get("number") and self._transfer.get("trunk_id"):
+            tools.append(self._transfer_call_tool())
         super().__init__(instructions=instructions, tools=tools)
 
     # ── Tools ─────────────────────────────────────────────────────────────────
@@ -548,6 +557,64 @@ class VoiceAgent(Agent):
             description=f"Call this when the customer agrees to receive our brochure by email. {when}",
         )
 
+    def _transfer_call_tool(self):
+        """Only offered when the agent has a transfer number (agent Settings). Rings it over
+        this call's own trunk and bridges it into the room, which works on any SIP provider
+        (no REFER support needed). The agent then goes quiet; the call ends when either person
+        hangs up (participant_disconnected deletes the room)."""
+        async def transfer_call(ctx: RunContext, hold_message: str = "") -> str | None:
+            """Connect the customer to a human team member on this call.
+
+            Args:
+                hold_message: Only if you have not already said it: a short line in the current language telling the customer you are connecting them to a colleague.
+            """
+            if self._transfer_state in ("dialing", "connected"):
+                return None
+            self._transfer_state = "dialing"
+            number = self._transfer["number"]
+            logger.info("transfer_call | call=%s dialing=%s", self._call_id, number)
+            if self._last_reply_text.strip():
+                await ctx.wait_for_playout()  # let "please hold" finish before anyone else joins
+            elif hold_message.strip():
+                self.session.say(hold_message.strip(), allow_interruptions=False)
+            try:
+                await get_job_context().api.sip.create_sip_participant(api.CreateSIPParticipantRequest(
+                    sip_trunk_id=self._transfer["trunk_id"],
+                    sip_call_to=number,
+                    sip_number=self._transfer.get("caller_id") or "",
+                    room_name=self._room.name,
+                    participant_identity=f"transfer-{number.lstrip('+')}",
+                    participant_name="Team member",
+                    wait_until_answered=True,
+                    ringing_timeout=Duration(seconds=_TRANSFER_RING_S),
+                    max_call_duration=Duration(seconds=_TRANSFER_MAX_S),
+                ))
+            except Exception as exc:
+                self._transfer_state = "failed"
+                self._last_user_activity = time.monotonic()
+                logger.warning("transfer_call_failed | call=%s to=%s error=%s", self._call_id, number, exc)
+                return ("Nobody from the team picked up. Apologise, tell the customer a colleague will call "
+                        "them back soon, and carry on the conversation. Don't try transfer_call again.")
+            self._transfer_state = "connected"
+            logger.info("transfer_call_connected | call=%s to=%s", self._call_id, number)
+            # Customer and team member now hear each other directly; the agent steps out.
+            self.session.input.set_audio_enabled(False)
+            self.session.output.set_audio_enabled(False)
+            if self._background is not None:
+                _safe_task(self._background.aclose(), "background-stop-on-transfer")
+            return None  # no reply: the agent says nothing more
+
+        return function_tool(
+            transfer_call,
+            name="transfer_call",
+            description=(
+                "Transfer the call to a human colleague. Use it when the customer asks to speak to a "
+                "person, manager or someone from the team, or when your instructions say to transfer. "
+                "Tell the customer you're connecting them, then call this. Their phone rings for up to "
+                "30 seconds; if nobody answers you'll be told and the call stays with you."
+            ),
+        )
+
     def attach_engines(self, tts_engine, stt_engine) -> None:
         self._tts_engine, self._stt_engine = tts_engine, stt_engine
 
@@ -612,7 +679,7 @@ class VoiceAgent(Agent):
 
     async def _max_duration_guard(self) -> None:
         await asyncio.sleep(self._max_duration)
-        if not self._ending:
+        if not self._ending and self._transfer_state != "connected":
             logger.warning("Max call duration reached — auto-hangup")
             self._ending = True
             await self._silent_hangup()
@@ -755,6 +822,9 @@ class VoiceAgent(Agent):
         await asyncio.sleep(_SILENCE_INITIAL_SLEEP)
         probe_idx = 0
         while not self._ending:
+            if self._transfer_state in ("dialing", "connected"):
+                await asyncio.sleep(2.0)  # on hold / handed over: no "can you hear me?" probes
+                continue
             silence_sec = time.monotonic() - self._last_user_activity
             # The clock restarts only when the agent stops talking, so a long answer
             # (> 18 s of audio) would look like caller silence and queue a "can you
@@ -936,6 +1006,8 @@ class VoiceAgent(Agent):
         extra = {"next_step_booking": self._booking} if self._booking else {}
         if self._brochure_request is not None:
             extra["brochure_request"] = self._brochure_request
+        if self._transfer_state:
+            extra["transfer"] = {"to": self._transfer.get("number"), "status": self._transfer_state}
 
         if not full_transcript and not outcome_override:
             if abrupt_disconnect:
@@ -1200,6 +1272,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         max_duration=int(meta.get("max_duration") or 600),
         brochure=meta.get("brochure"),
         calendar=meta.get("calendar"),
+        transfer=meta.get("transfer"),
     )
     voice_agent.attach_engines(tts_engine, stt_engine)
 
@@ -1263,7 +1336,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             sip = {k: v for k, v in (getattr(participant, "attributes", None) or {}).items() if k.startswith("sip.")}
             logger.info("Participant disconnected — reporting outcome before disconnect | reason=%s sip=%s",
                         getattr(participant, "disconnect_reason", None), sip)
-            _safe_task(voice_agent._silent_hangup(abrupt_disconnect=True), "post-call-on-disconnect")
+            # After a transfer, one side hanging up is the normal end of the call, not a drop.
+            _safe_task(voice_agent._silent_hangup(abrupt_disconnect=voice_agent._transfer_state != "connected"),
+                       "post-call-on-disconnect")
 
     try:
         await session.start(
@@ -1288,6 +1363,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 thinking_sound = [AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.8)],
             )
             await background.start(room=ctx.room, agent_session=session)
+            voice_agent._background = background
         except Exception:
             logger.warning("Background audio failed to start; continuing without it", exc_info=True)
     except Exception:

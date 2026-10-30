@@ -370,6 +370,9 @@ async def _place_call(
             "max_duration": max_duration,
             **(extra_meta or {}),  # {"sarvam": {...}} from pipelines.call_meta
         }
+        if (call_meta.get("transfer") or {}).get("number"):
+            # transfer_call dials the team member out over this same trunk and caller ID
+            call_meta["transfer"] = {**call_meta["transfer"], "trunk_id": livekit_trunk_id, "caller_id": sip_caller_id}
         await lk.room.create_room(
             lk_api.CreateRoomRequest(
                 name=room_name,
@@ -1098,6 +1101,7 @@ async def _dispatch_loop(http: aiohttp.ClientSession, campaign_id: str) -> None:
                                 # Linked Google Calendar → book_next_step checks and books real slots.
                                 "calendar": {"available": calendar_on, "email_on_file": bool(contact.email),
                                              "agent_id": str(tmpl.id) if tmpl else ""},
+                                "transfer": {"number": tmpl.transfer_number if tmpl else ""},
                             },
                         ))
 
@@ -1319,6 +1323,7 @@ async def _run_test_call_body(
         )
         # A test call books into the agent's calendar too, so it can be tried before a campaign.
         extra_meta["calendar"] = {"available": bool(agent.gcal_refresh_token), "email_on_file": False, "agent_id": agent_id}
+        extra_meta["transfer"] = {"number": agent.transfer_number}
         call_row.pipeline = pipelines.SARVAM
         await session.commit()
 

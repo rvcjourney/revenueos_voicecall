@@ -107,6 +107,8 @@ export interface AgentTemplate {
   llm_temperature: number;
   speech_pace: number;
   max_call_duration_seconds: number;
+  /** Number transfer_call rings and connects the customer to; "" = no transfers. */
+  transfer_number: string;
   created_at: string;
   access_status: AgentAccessStatus;
   access_request_id: string | null;
@@ -145,6 +147,7 @@ export interface AgentCreate {
   llm_temperature?: number;
   speech_pace?: number;
   max_call_duration_seconds?: number;
+  transfer_number?: string;
 }
 
 export interface CustomizeResult {

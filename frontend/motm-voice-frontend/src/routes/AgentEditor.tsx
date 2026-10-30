@@ -63,6 +63,8 @@ const TOOL_HELP: Record<string, string> = {
   switch_language: "Switches the spoken language mid-call when the caller asks for one of your enabled languages.",
   send_brochure:
     "When the customer agrees to receive the brochure, it is emailed to them right after the call. Only on calls where this agent has a brochure (Brochure tab) and your mailbox is connected.",
+  transfer_call:
+    "When the customer asks for a person, or your instructions say to transfer, the agent asks them to hold and rings your transfer number. Once someone answers, the customer is connected to them and the agent goes quiet. If nobody answers within 30 seconds, the agent promises a callback and carries on. Only when a transfer number is set (Settings tab).",
 };
 
 const NEW_AGENT: Required<AgentCreate> = {
@@ -76,6 +78,7 @@ const NEW_AGENT: Required<AgentCreate> = {
   llm_temperature: 0.7,
   speech_pace: 1,
   max_call_duration_seconds: 600,
+  transfer_number: "",
 };
 
 interface ChatTurn {
@@ -106,6 +109,7 @@ export default function AgentEditor() {
       name: a.name, description: a.description ?? "", language: a.language,
       welcome_message: a.welcome_message, system_prompt: a.system_prompt, variables: a.variables ?? {},
       voice_id: a.voice_id ?? "", llm_temperature: a.llm_temperature, speech_pace: a.speech_pace, max_call_duration_seconds: a.max_call_duration_seconds,
+      transfer_number: a.transfer_number ?? "",
     };
     setForm(loaded);
     setSaved(loaded);
@@ -291,6 +295,18 @@ export default function AgentEditor() {
                   onChange={(e) => update("max_call_duration_seconds", Math.max(1, Math.min(30, Number(e.target.value) || 1)) * 60)}
                   disabled={!canEdit}
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="transfer-number">Transfer number</Label>
+                <Input
+                  id="transfer-number" type="tel" placeholder="+91 98765 43210"
+                  value={form.transfer_number}
+                  onChange={(e) => update("transfer_number", e.target.value)}
+                  disabled={!canEdit}
+                />
+                <p className="text-xs text-muted-foreground">
+                  When a customer asks for a person, the agent rings this number and connects them. Leave empty to turn transfers off.
+                </p>
               </div>
             </div>
           )}

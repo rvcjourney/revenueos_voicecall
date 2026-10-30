@@ -184,7 +184,11 @@ export default function CallDetail() {
                       {Object.entries(c.extracted_data).map(([key, value]) => (
                         <div key={key} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
                           <dt className="capitalize text-muted-foreground">{key.replace(/_/g, " ")}</dt>
-                          <dd className="text-right font-medium">{String(value)}</dd>
+                          <dd className="text-right font-medium">
+                            {value && typeof value === "object"
+                              ? Object.entries(value).map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v)}`).join(" · ")
+                              : String(value)}
+                          </dd>
                         </div>
                       ))}
                     </dl>

@@ -184,6 +184,7 @@ async def test_dispatcher_tells_agent_when_brochure_can_be_sent(db_engine, db):
         "sarvam": {"language": "hindi"},
         "brochure": {"available": True, "email_on_file": True},
         "calendar": {"available": True, "email_on_file": True, "agent_id": str(agent.id)},
+        "transfer": {"number": ""},
     }
     assert by_phone["+91123456781"]["brochure"] == {"available": True, "email_on_file": False}
     assert by_phone["+91123456781"]["calendar"]["email_on_file"] is False

@@ -3,6 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.contacts_file import normalize_phone
+
+
+def _transfer_number(v: str | None) -> str | None:
+    """'' clears it; otherwise E.164 (+91 assumed when no country code is given)."""
+    if v is None or not v.strip():
+        return v if v is None else ""
+    phone = normalize_phone(v.replace("(", "").replace(")", ""))
+    if not (phone[1:].isdigit() and 8 <= len(phone) - 1 <= 15):
+        raise ValueError("Enter a valid phone number, e.g. +91 98765 43210")
+    return phone
+
 
 class AgentOut(BaseModel):
     id: str
@@ -16,6 +28,7 @@ class AgentOut(BaseModel):
     llm_temperature: float
     speech_pace: float
     max_call_duration_seconds: int
+    transfer_number: str = ""
     created_at: datetime
     # Brochure emailed when a customer agrees on a call (None = no brochure uploaded).
     brochure_filename: str | None = None
@@ -75,11 +88,14 @@ class AgentCreate(BaseModel):
     llm_temperature: float = 0.7
     speech_pace: float = Field(1.0, ge=0.7, le=1.5)
     max_call_duration_seconds: int = 600
+    transfer_number: str = ""
 
     @field_validator("language")
     @classmethod
     def normalize_language(cls, v: str) -> str:
         return v.lower()
+
+    _check_transfer = field_validator("transfer_number")(_transfer_number)
 
 
 class AgentUpdate(BaseModel):
@@ -95,3 +111,6 @@ class AgentUpdate(BaseModel):
     max_call_duration_seconds: int | None = None
     brochure_email_subject: str | None = Field(None, max_length=255)
     brochure_email_body: str | None = Field(None, max_length=20_000)
+    transfer_number: str | None = None
+
+    _check_transfer = field_validator("transfer_number")(_transfer_number)

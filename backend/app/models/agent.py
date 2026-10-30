@@ -81,6 +81,8 @@ class AgentTemplate(Base, OrgScopedMixin, TimestampMixin, SoftDeleteMixin):
     gcal_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     gcal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gcal_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}", default=dict)
+    # E.164 number the agent's transfer_call tool rings and bridges the customer to; "" = no transfer
+    transfer_number: Mapped[str] = mapped_column(String(20), nullable=False, server_default="", default="")
     # Hard limit; agent auto-hangs up after this many seconds regardless of conversation state
     max_call_duration_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="600"
