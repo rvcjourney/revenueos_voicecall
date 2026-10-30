@@ -593,8 +593,8 @@ class VoiceAgent(Agent):
                 self._transfer_state = "failed"
                 self._last_user_activity = time.monotonic()
                 logger.warning("transfer_call_failed | call=%s to=%s error=%s", self._call_id, number, exc)
-                return ("Nobody from the team picked up. Apologise, tell the customer a colleague will call "
-                        "them back soon, and carry on the conversation. Don't try transfer_call again.")
+                return ("The colleague is busy or didn't pick up. Tell the customer they're busy right now and "
+                        "will call them back shortly, then carry on the conversation. Don't try transfer_call again.")
             self._transfer_state = "connected"
             logger.info("transfer_call_connected | call=%s to=%s", self._call_id, number)
             # Customer and team member now hear each other directly; the agent steps out.
@@ -811,6 +811,28 @@ class VoiceAgent(Agent):
             except Exception as exc:
                 logger.warning("Apology TTS failed: %s", exc)
         await self._silent_hangup()
+
+    def on_participant_left(self, participant) -> None:
+        """Customer hung up — classify + POST the outcome BEFORE tearing the room
+        down ourselves (close_on_disconnect is off): with it on, the room teardown
+        won the race against the report and every customer-hangup call landed on
+        outcome=pending."""
+        # Who ended it and why (SIP status/BYE reason): tells "customer hung up" apart from "line/media dropped".
+        sip = {k: v for k, v in (getattr(participant, "attributes", None) or {}).items() if k.startswith("sip.")}
+        identity = getattr(participant, "identity", "") or ""
+        # LiveKit adds the transfer leg to the room while it is still ringing, so a busy or
+        # unanswered colleague "leaves" too; transfer_call handles that and the call goes on.
+        if identity.startswith("transfer-") and self._transfer_state != "connected":
+            logger.info("Transfer leg left before answering | sip=%s", sip)
+            return
+        if self._ending:
+            return
+        self._ending = True
+        logger.info("Participant disconnected — reporting outcome before disconnect | who=%s reason=%s sip=%s",
+                    identity, getattr(participant, "disconnect_reason", None), sip)
+        # After a transfer, one side hanging up is the normal end of the call, not a drop.
+        _safe_task(self._silent_hangup(abrupt_disconnect=self._transfer_state != "connected"),
+                   "post-call-on-disconnect")
 
     async def _silent_hangup(self, *, outcome_override: str | None = None, abrupt_disconnect: bool = False) -> None:
         """Hang up without a goodbye (voicemail, bot, silence, max duration)."""
@@ -1324,21 +1346,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     session.on("agent_false_interruption", _on_false_interruption)
 
-    @ctx.room.on("participant_disconnected")
-    def _on_participant_left(participant):
-        # Customer hung up — classify + POST the outcome BEFORE tearing the room
-        # down ourselves (close_on_disconnect is off below): with it on, the room
-        # teardown won the race against the report and every customer-hangup call
-        # landed on outcome=pending.
-        if not voice_agent._ending:
-            voice_agent._ending = True
-            # Who ended it and why (SIP status/BYE reason): tells "customer hung up" apart from "line/media dropped".
-            sip = {k: v for k, v in (getattr(participant, "attributes", None) or {}).items() if k.startswith("sip.")}
-            logger.info("Participant disconnected — reporting outcome before disconnect | reason=%s sip=%s",
-                        getattr(participant, "disconnect_reason", None), sip)
-            # After a transfer, one side hanging up is the normal end of the call, not a drop.
-            _safe_task(voice_agent._silent_hangup(abrupt_disconnect=voice_agent._transfer_state != "connected"),
-                       "post-call-on-disconnect")
+    ctx.room.on("participant_disconnected", voice_agent.on_participant_left)
 
     try:
         await session.start(

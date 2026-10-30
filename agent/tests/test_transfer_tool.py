@@ -6,6 +6,8 @@ the same room; once answered the agent goes quiet and stops its own timers.
 """
 from __future__ import annotations
 
+import asyncio
+
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import agent
@@ -86,3 +88,36 @@ async def test_report_carries_transfer_and_max_duration_spares_a_bridged_call():
         va._booking = {"x": 1}  # past the short-call gate so extracted_data is sent
         await va._send_report()
     assert post.call_args.args[0]["extracted_data"]["transfer"] == {"to": "+919876543210", "status": "connected"}
+
+
+def _leaver(identity):
+    return MagicMock(identity=identity, attributes={"sip.callStatus": "hangup"}, disconnect_reason=None)
+
+
+async def test_busy_colleague_leaving_does_not_end_the_customer_call():
+    """LiveKit puts the transfer leg in the room while it rings; busy/no-answer makes it leave."""
+    va = _make_agent(_TRANSFER)
+    va._transfer_state = "dialing"
+    with patch.object(va, "_silent_hangup", new=AsyncMock()) as hangup:
+        va.on_participant_left(_leaver("transfer-919876543210"))
+        await asyncio.sleep(0)
+    hangup.assert_not_called()
+    assert not va._ending
+
+
+async def test_colleague_hanging_up_after_answering_ends_the_call():
+    va = _make_agent(_TRANSFER)
+    va._transfer_state = "connected"
+    with patch.object(va, "_silent_hangup", new=AsyncMock()) as hangup:
+        va.on_participant_left(_leaver("transfer-919876543210"))
+        await asyncio.sleep(0)
+    hangup.assert_called_once_with(abrupt_disconnect=False)
+
+
+async def test_customer_hanging_up_still_ends_the_call():
+    va = _make_agent(_TRANSFER)
+    va._transfer_state = "dialing"
+    with patch.object(va, "_silent_hangup", new=AsyncMock()) as hangup:
+        va.on_participant_left(_leaver("phone-919999999999"))
+        await asyncio.sleep(0)
+    hangup.assert_called_once_with(abrupt_disconnect=True)

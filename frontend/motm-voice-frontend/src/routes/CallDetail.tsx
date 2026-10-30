@@ -180,18 +180,7 @@ export default function CallDetail() {
 
                 <TabsContent value="extracted">
                   {Object.keys(c.extracted_data ?? {}).length > 0 ? (
-                    <dl className="space-y-2 text-sm">
-                      {Object.entries(c.extracted_data).map(([key, value]) => (
-                        <div key={key} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
-                          <dt className="capitalize text-muted-foreground">{key.replace(/_/g, " ")}</dt>
-                          <dd className="text-right font-medium">
-                            {value && typeof value === "object"
-                              ? Object.entries(value).map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v)}`).join(" · ")
-                              : String(value)}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <ExtractedTable data={c.extracted_data} />
                   ) : (
                     <EmptyState title="No structured data" description="Fields extracted from this call will appear here." />
                   )}
@@ -237,4 +226,65 @@ export default function CallDetail() {
       </div>
     </div>
   );
+}
+
+const label = (key: string) => key.replace(/_/g, " ");
+
+/** Extracted data as one bordered table. Nested results (meeting booking, transfer)
+ * get a shaded heading row with their own fields as indented rows beneath it. */
+function ExtractedTable({ data }: { data: Record<string, unknown> }) {
+  const cell = "border-t border-border px-3 py-2 align-top";
+  const row = (id: string, key: string, value: unknown, nested = false) => (
+    <tr key={id}>
+      <th scope="row" className={cn(cell, "w-2/5 font-normal capitalize text-muted-foreground", nested && "pl-6")}>{label(key)}</th>
+      <td className={cn(cell, "break-words font-medium")}><ExtractedValue value={value} /></td>
+    </tr>
+  );
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <table className="w-full table-fixed text-left text-sm [&_tr:first-child>*]:border-t-0">
+        <thead className="sr-only">
+          <tr><th>Field</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          {Object.entries(data).filter(([, v]) => !isEmpty(v)).flatMap(([key, value]) =>
+            isRecord(value)
+              ? [
+                  <tr key={key} className="bg-muted/50">
+                    <th scope="colgroup" colSpan={2} className={cn(cell, "font-semibold capitalize")}>{label(key)}</th>
+                  </tr>,
+                  ...Object.entries(value).filter(([, v]) => !isEmpty(v)).map(([k, v]) => row(`${key}.${k}`, k, v, true)),
+                ]
+              : [row(key, key, value)]
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function isEmpty(v: unknown): boolean {
+  return v == null || v === "" || (Array.isArray(v) && v.length === 0) || (isRecord(v) && Object.keys(v).length === 0);
+}
+
+/** One extracted value: lists one item per line, true/false as Yes/No, links clickable. */
+function ExtractedValue({ value }: { value: unknown }): React.ReactNode {
+  if (Array.isArray(value)) {
+    return value.map((item, i) => <div key={i}><ExtractedValue value={item} /></div>);
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (isRecord(value)) return Object.entries(value).map(([k, v]) => `${k.replace(/_/g, " ")}: ${String(v)}`).join(" · ");
+  const text = String(value);
+  if (/^https?:\/\//.test(text)) {
+    return (
+      <a href={text} target="_blank" rel="noreferrer" className="break-all text-primary hover:underline">
+        {text.replace(/^https?:\/\//, "").slice(0, 40)}{text.length > 48 ? "…" : ""}
+      </a>
+    );
+  }
+  return text;
 }
