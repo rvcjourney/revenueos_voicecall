@@ -610,3 +610,9 @@ def test_agent_speaking_speed_reaches_the_voice_and_is_kept_in_a_safe_range():
     assert sp.parse_meta({**base, "speech_pace": 1.2}).pace == 1.2
     assert sp.parse_meta({**base, "speech_pace": 9}).pace == 1.5
     assert sp._tts_kwargs("bulbul:v3", "ritu", "hi-IN", 1.2)["pace"] == 1.2
+
+
+def test_hinglish_replies_are_asked_for_in_devanagari():
+    out = agent_mod.build_instructions("Ananya", _state("hinglish", "simran_enhi_customer"))
+    assert "Devanagari" in out
+    assert "Devanagari" not in agent_mod.build_instructions("Ananya", _state("tamil", "ritu"))

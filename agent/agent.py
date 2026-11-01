@@ -254,7 +254,11 @@ def build_instructions(instructions: str, state: "sarvam_pipeline.SarvamCallStat
     line = f"This call is in {state.lang['display']}."
     if state.language in ("hinglish", "hindi"):
         line += (" Speak natural Hinglish: conversational Hindi with everyday English words, as Indian professionals do."
-                 " Reply in Hinglish even though these instructions are in English; use plain English only if the caller does.")
+                 " Reply in Hinglish even though these instructions are in English; use plain English only if the caller does."
+                 # Roman-letter Hindi ("aap kaise hain") is read with an English accent, so replies
+                 # sounded different from a Devanagari greeting (romanised_llm_reply in the logs).
+                 " Write Hindi words in Devanagari script and English words in English letters,"
+                 " e.g. \"आपका budget कितना है?\" — the voice reads Hindi naturally only in Devanagari.")
     return f"{instructions.strip()}\n\n# Call language\n{line}"
 
 
