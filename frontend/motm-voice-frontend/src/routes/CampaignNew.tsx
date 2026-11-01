@@ -11,6 +11,12 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { ContactsUploader } from "@/components/shared/ContactsUploader";
 import { LanguageSelect, VoiceSelect } from "@/components/shared/VoiceFields";
 import {
+  CallingHoursFields,
+  DEFAULT_CALLING_HOURS,
+  callingHoursError,
+  type CallingHours,
+} from "@/components/shared/CallingHoursFields";
+import {
   useAgents,
   useCampaignPreview,
   useCreateCampaign,
@@ -37,6 +43,7 @@ export default function CampaignNew() {
     voice_id: "", // "" = the agent's own voice (or the language's default)
     sip_trunk_id: "",
   });
+  const [hours, setHours] = useState<CallingHours>(DEFAULT_CALLING_HOURS);
 
   const agents = useAgents();
   const trunks = useMyTrunks();
@@ -63,6 +70,8 @@ export default function CampaignNew() {
     if (!form.sip_trunk_id && !trunkOptions.some((t) => t.is_default)) {
       return toast.error("Select the phone number to call from");
     }
+    const hoursError = callingHoursError(hours);
+    if (hoursError) return toast.error(hoursError);
     try {
       const res = await createCampaign.mutateAsync({
         name: form.name.trim(),
@@ -70,6 +79,9 @@ export default function CampaignNew() {
         sip_trunk_id: form.sip_trunk_id || undefined,
         language: form.language || undefined,
         voice_id: form.voice_id || undefined,
+        calling_window_start: hours.start,
+        calling_window_end: hours.end,
+        calling_days: hours.days,
       });
       setCampaignId(res.data.id);
       setStep(1);
@@ -201,6 +213,13 @@ export default function CampaignNew() {
                   </Select>
                 )}
               </div>
+              <div className="space-y-1.5">
+                <Label>Calling hours</Label>
+                <p className="text-xs text-muted-foreground">
+                  Calls are only placed in this window (India time). Outside it, the campaign waits and starts on its own.
+                </p>
+                <CallingHoursFields value={hours} onChange={setHours} />
+              </div>
               <div className="flex justify-end">
                 <Button variant="gradient" onClick={createDraft} disabled={createCampaign.isPending}>
                   {createCampaign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -281,6 +300,10 @@ export default function CampaignNew() {
                 <Summary
                   label="Calling from"
                   value={trunkOptions.find((t) => t.id === form.sip_trunk_id)?.caller_id ?? "Default number"}
+                />
+                <Summary
+                  label="Calling hours"
+                  value={`${hours.start}–${hours.end}, ${hours.days.map((d) => d[0].toUpperCase() + d.slice(1)).join(" ")}`}
                 />
               </dl>
               <p className="text-xs text-muted-foreground">

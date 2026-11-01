@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { CallingHoursFields, callingHoursError, type CallingHours } from "@/components/shared/CallingHoursFields";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { CallOutcomeBadge, CampaignStatusBadge, ContactStatusBadge } from "@/components/shared/StatusBadge";
 import {
@@ -212,8 +213,6 @@ export default function CampaignDetail() {
           <Card>
             <CardContent className="grid gap-6 pt-6 sm:grid-cols-2">
               <InfoRow label="Goal" value={c.goal.replace("_", " ")} />
-              <InfoRow label="Calling window" value={`${c.calling_window_start} – ${c.calling_window_end} (${c.timezone})`} />
-              <InfoRow label="Calling days" value={c.calling_days.map((d) => d.toUpperCase()).join(", ") || "—"} />
               <InfoRow label="Pace" value={`${c.calls_per_minute} calls/min · ${c.max_retries} retries`} />
               <InfoRow label="Started" value={formatDateTime(c.started_at)} />
               <InfoRow label="Completed" value={formatDateTime(c.completed_at)} />
@@ -223,6 +222,12 @@ export default function CampaignDetail() {
               </div>
             </CardContent>
           </Card>
+          <CallingHoursCard
+            key={`${c.calling_window_start}-${c.calling_window_end}-${c.calling_days.join()}`}
+            campaignId={c.id}
+            saved={{ start: c.calling_window_start.slice(0, 5), end: c.calling_window_end.slice(0, 5), days: c.calling_days }}
+            timezone={c.timezone}
+          />
         </TabsContent>
 
         <TabsContent value="contacts">
@@ -278,6 +283,50 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-0.5 text-sm capitalize">{value}</p>
     </div>
+  );
+}
+
+function CallingHoursCard({ campaignId, saved, timezone }: { campaignId: string; saved: CallingHours; timezone: string }) {
+  const update = useUpdateCampaign();
+  const [hours, setHours] = useState(saved);
+  const dirty = JSON.stringify(hours) !== JSON.stringify(saved);
+
+  async function save() {
+    try {
+      await update.mutateAsync({
+        id: campaignId,
+        data: { calling_window_start: hours.start, calling_window_end: hours.end, calling_days: hours.days },
+      });
+      toast.success("Calling hours saved");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Couldn't save calling hours"));
+    }
+  }
+
+  return (
+    <Card className="mt-4">
+      <CardContent className="space-y-4 pt-6">
+        <div>
+          <p className="text-sm font-medium">Calling hours</p>
+          <p className="text-xs text-muted-foreground">
+            Calls are only placed in this window ({timezone}). Outside it, a running campaign waits and starts on its own.
+            Changes apply to the next calls.
+          </p>
+        </div>
+        <CallingHoursFields value={hours} onChange={setHours} />
+        <div className="flex justify-end gap-2">
+          {dirty && (
+            <Button variant="ghost" onClick={() => setHours(saved)} disabled={update.isPending}>
+              Reset
+            </Button>
+          )}
+          <Button onClick={save} disabled={!dirty || !!callingHoursError(hours) || update.isPending}>
+            {update.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save calling hours
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

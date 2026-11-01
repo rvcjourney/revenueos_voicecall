@@ -213,6 +213,9 @@ async def update_campaign(
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(campaign, field, value)
+    # Checked after merging, since one side of the window may come from the saved campaign.
+    if campaign.calling_window_end <= campaign.calling_window_start:
+        raise AppValidationError("Calling hours must end after they start", errors=[])
 
     await db.commit()
     await db.refresh(campaign)

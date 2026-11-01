@@ -274,3 +274,33 @@ async def test_campaign_requires_an_agent(client, db):
         headers=headers,
     )
     assert rejected.status_code in (400, 422)
+
+
+async def test_calling_hours_saved_on_create_and_edit_and_validated(client, db):
+    org, user, campaign = await _make_campaign_with_contacts(db, contact_count=1)
+    headers = {"Authorization": f"Bearer {create_access_token(str(user.id), str(user.org_id), user.role)}"}
+    body = {"name": "Night shift", "agent_template_id": str(campaign.agent_template_id)}
+
+    # Defaults unchanged when not sent
+    default = (await client.post("/api/campaigns", json=body, headers=headers)).json()
+    assert default["calling_window_start"] == "09:00:00" and default["calling_window_end"] == "19:00:00"
+    assert default["calling_days"] == ["mon", "tue", "wed", "thu", "fri", "sat"]
+
+    created = await client.post("/api/campaigns", json={
+        **body, "calling_window_start": "10:30", "calling_window_end": "22:00", "calling_days": ["sun", "mon"],
+    }, headers=headers)
+    assert created.status_code == 201, created.text
+    c = created.json()
+    assert (c["calling_window_start"], c["calling_window_end"], c["calling_days"]) == ("10:30:00", "22:00:00", ["mon", "sun"])
+
+    for bad in ({"calling_window_start": "20:00", "calling_window_end": "09:00"},
+                {"calling_days": []}, {"calling_days": ["funday"]}):
+        assert (await client.post("/api/campaigns", json={**body, **bad}, headers=headers)).status_code == 422
+
+    edited = await client.patch(f"/api/campaigns/{c['id']}", json={"calling_window_end": "23:00", "calling_days": ["sat"]},
+                                headers=headers)
+    assert edited.status_code == 200 and edited.json()["calling_window_end"] == "23:00:00"
+    assert edited.json()["calling_days"] == ["sat"]
+    # End before the saved start is refused
+    assert (await client.patch(f"/api/campaigns/{c['id']}", json={"calling_window_end": "08:00"},
+                               headers=headers)).status_code in (400, 422)

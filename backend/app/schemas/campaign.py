@@ -5,6 +5,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, field_validator
 
+CALLING_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _check_days(v: list[str] | None) -> list[str] | None:
+    if v is None:
+        return None
+    days = [d for d in CALLING_DAYS if d in {str(x).strip().lower() for x in v}]
+    if not days or len(days) != len(set(v)):
+        raise ValueError("Pick at least one calling day (mon … sun)")
+    return days
+
 
 class FolderOut(BaseModel):
     id: str
@@ -106,6 +117,19 @@ class CampaignCreate(BaseModel):
             return time.fromisoformat(v)
         return v
 
+    @field_validator("calling_days")
+    @classmethod
+    def _days(cls, v: list[str]) -> list[str]:
+        return _check_days(v)
+
+    @field_validator("calling_window_end")
+    @classmethod
+    def _end_after_start(cls, v: time, info) -> time:
+        start = info.data.get("calling_window_start")
+        if start is not None and v <= start:
+            raise ValueError("Calling hours must end after they start")
+        return v
+
 
 class CampaignUpdate(BaseModel):
     name: str | None = None
@@ -125,3 +149,8 @@ class CampaignUpdate(BaseModel):
         if isinstance(v, str):
             return time.fromisoformat(v)
         return v
+
+    @field_validator("calling_days")
+    @classmethod
+    def _days(cls, v: list[str] | None) -> list[str] | None:
+        return _check_days(v)

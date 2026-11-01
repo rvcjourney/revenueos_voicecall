@@ -131,7 +131,8 @@ def _register_exception_handlers(app: FastAPI) -> None:
             content={
                 "detail": "Request validation failed.",
                 "code": "VALIDATION_ERROR",
-                "errors": exc.errors(),
+                # "ctx" can hold the raised ValueError itself, which isn't JSON-serialisable.
+                "errors": [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()],
             },
         )
 
