@@ -21,7 +21,6 @@ import jwt as pyjwt
 from app.config import settings
 
 _ALGORITHM = "HS256"
-_API_KEY_PREFIX = "motm_"
 
 
 # ── Passwords ─────────────────────────────────────────────────────────────────
@@ -100,30 +99,6 @@ def decode_token(token: str) -> dict[str, Any]:
     Callers should catch InvalidTokenError and raise AuthenticationError.
     """
     return pyjwt.decode(token, settings.SECRET_KEY, algorithms=[_ALGORITHM])
-
-
-# ── API keys ──────────────────────────────────────────────────────────────────
-
-def generate_api_key() -> tuple[str, str, str]:
-    """
-    Generate a new API key.
-
-    Returns:
-        (full_key, key_hash, key_prefix)
-        - full_key   : shown to the user ONCE on creation, never stored
-        - key_hash   : SHA-256 hex digest, stored in api_keys table
-        - key_prefix : first 12 chars (e.g. "motm_a3f9b2c1"), stored for UI display
-    """
-    raw = secrets.token_hex(32)
-    full_key = f"{_API_KEY_PREFIX}{raw}"
-    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
-    key_prefix = full_key[: len(_API_KEY_PREFIX) + 8]
-    return full_key, key_hash, key_prefix
-
-
-def hash_api_key(full_key: str) -> str:
-    """Hash an incoming API key for database lookup."""
-    return hashlib.sha256(full_key.encode()).hexdigest()
 
 
 # ── HMAC webhook signatures ───────────────────────────────────────────────────

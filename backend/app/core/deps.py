@@ -70,14 +70,6 @@ async def require_admin(
     return token
 
 
-async def require_member_or_admin(
-    token: TokenPayload = Depends(get_current_user),
-) -> TokenPayload:
-    if token.role not in ("admin", "member"):
-        raise PermissionDeniedError("Access denied")
-    return token
-
-
 async def require_platform_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),

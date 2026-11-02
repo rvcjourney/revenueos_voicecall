@@ -18,9 +18,9 @@ _ENV_FILE = Path(__file__).parent.parent / ".env"
 
 _SECRET_FIELDS = frozenset({
     "SECRET_KEY", "AGENT_WEBHOOK_SECRET", "LIVEKIT_API_SECRET",
-    "MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "VOBIZ_PASSWORD",
+    "MINIO_SECRET_KEY", "AWS_SECRET_ACCESS_KEY",
     "VOBIZ_AUTH_TOKEN",
-    "SUPABASE_SERVICE_ROLE_KEY", "FERNET_KEY",
+    "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
     "OPENAI_API_KEY", "GOOGLE_CLIENT_SECRET",
@@ -59,17 +59,12 @@ class Settings(BaseSettings):
 
     # ── Database ───────────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(...)
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 20
-    DB_POOL_TIMEOUT: int = 30
     DB_ECHO: bool = False
     DB_SSL_REQUIRED: bool = True
-    DB_USE_PGBOUNCER: bool = False
 
     # ── Supabase ───────────────────────────────────────────────────────────────
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
-    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # Temporary escape hatch: set to False to let /login through without a
     # verified email (OTP still gets requested/sent everywhere as normal,
@@ -107,20 +102,10 @@ class Settings(BaseSettings):
     # register against the same LiveKit Cloud project -- never receive each other's
     # dispatches; LiveKit round-robins across every worker sharing one agent_name.
     LIVEKIT_AGENT_NAME: str = "voice-call-agent"
-    # This LiveKit Cloud project's SIP hostname (Settings -> SIP in the LiveKit
-    # dashboard) -- same for every org, used as the destination Vobiz routes
-    # inbound calls to. LiveKit itself disambiguates which org/number a call
-    # belongs to via each SIPInboundTrunkInfo's own `numbers` list.
-    LIVEKIT_SIP_HOSTNAME: str = ""
 
     # ── SIP / Vobiz ───────────────────────────────────────────────────────────
     DEFAULT_SIP_TRUNK_ID: str = ""
     DEFAULT_SIP_CALLER_ID: str = ""
-    DEFAULT_SIP_TRUNK_ID_2: str = ""
-    DEFAULT_SIP_CALLER_ID_2: str = ""
-    VOBIZ_SIP_DOMAIN: str = ""
-    VOBIZ_USERNAME: str = ""
-    VOBIZ_PASSWORD: str = ""
     VOBIZ_AUTH_ID: str = ""       # Vobiz API Auth ID for CDR/Recording fetch
     VOBIZ_AUTH_TOKEN: str = ""    # Vobiz API Auth Token
 
@@ -230,7 +215,6 @@ class Settings(BaseSettings):
 
     # ── Internal service communication ────────────────────────────────────────
     BACKEND_INTERNAL_URL: str = "http://api:8000"
-    AGENT_TEMPLATE_CACHE_TTL: int = 60
 
     # ── Concurrency ────────────────────────────────────────────────────────────
     # Queue-then-reject: max seconds a contact waits for a plan-based org-level

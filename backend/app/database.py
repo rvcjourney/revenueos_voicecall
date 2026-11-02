@@ -4,7 +4,6 @@ app/database.py — SQLAlchemy 2.0 async engine, session factory, and base model
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import ssl
 import uuid
 from collections.abc import AsyncGenerator
@@ -148,21 +147,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency: yields a session, commits on success, rolls back on exception.
     Usage: db: AsyncSession = Depends(get_db)
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-
-
-@contextlib.asynccontextmanager
-async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Context manager for use outside FastAPI (Celery tasks, scripts).
-    Identical commit/rollback semantics to get_db().
     """
     async with AsyncSessionLocal() as session:
         try:

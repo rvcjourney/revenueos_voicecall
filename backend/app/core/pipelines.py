@@ -241,10 +241,6 @@ def voices_for(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
     return elevenlabs_voices(language, settings) or sarvam_voices(language, settings)
 
 
-def all_sarvam_stock_voice_ids() -> set[str]:
-    return {i for i, _ in V3_VOICES} | {v.id for lang in LANGUAGES.values() for v in lang.v4_voices}
-
-
 def default_sarvam_voice(language: str, settings: OwnerSettings, gender: str | None = None) -> str:
     """Default for the language's *Sarvam* voice (also the fallback behind an ElevenLabs voice)."""
     voices = sarvam_voices(language, settings)

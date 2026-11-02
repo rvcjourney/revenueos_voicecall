@@ -711,59 +711,6 @@ async def get_trunk_capacity(
     return result
 
 
-# ── Admin: initialize default trunk from env vars ────────────────────────────
-
-@router.post("/init-default", response_model=TrunkOut, status_code=200)
-async def init_default_trunk(
-    token: TokenPayload = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Seed all configured SIP trunks for this org. Idempotent — skips existing ones."""
-    trunks_cfg = [
-        (settings.DEFAULT_SIP_TRUNK_ID, settings.DEFAULT_SIP_CALLER_ID, "Vobiz SIP Trunk", True),
-    ]
-    if settings.DEFAULT_SIP_TRUNK_ID_2 and settings.DEFAULT_SIP_CALLER_ID_2:
-        trunks_cfg.append(
-            (settings.DEFAULT_SIP_TRUNK_ID_2, settings.DEFAULT_SIP_CALLER_ID_2, "Vobiz SIP Trunk 2", False)
-        )
-
-    first_trunk = None
-    for livekit_id, caller_id, name, is_default in trunks_cfg:
-        existing = await db.scalar(
-            select(SipTrunk).where(
-                SipTrunk.org_id == token.org_id,
-                SipTrunk.livekit_trunk_id == livekit_id,
-                SipTrunk.deleted_at.is_(None),
-            )
-        )
-        if existing:
-            if first_trunk is None:
-                first_trunk = existing
-            continue
-
-        trunk = SipTrunk(
-            org_id=token.org_id,
-            name=name,
-            livekit_trunk_id=livekit_id,
-            sip_domain=settings.VOBIZ_SIP_DOMAIN,
-            sip_username=settings.VOBIZ_USERNAME,
-            sip_password=settings.VOBIZ_PASSWORD,
-            caller_id=caller_id,
-            transport=SipTransport.TCP,
-            is_default=is_default,
-            is_active=True,
-        )
-        db.add(trunk)
-        await db.flush()
-        if first_trunk is None:
-            first_trunk = trunk
-
-    await db.commit()
-    if first_trunk:
-        await db.refresh(first_trunk)
-    return _to_out(first_trunk)
-
-
 # ── User: list my assigned trunks ─────────────────────────────────────────────
 
 @router.get("/my", response_model=list[TrunkOut])

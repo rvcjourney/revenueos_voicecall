@@ -12,7 +12,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-SYSTEM_VARIABLES = ("current_date", "time_greeting")
 
 
 def find(*texts: str) -> list[str]:
