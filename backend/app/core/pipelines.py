@@ -141,24 +141,6 @@ SPOKEN_LINES: dict[str, tuple[str, str]] = {
     "odia": _EN,
 }
 
-# Spoken before the greeting on every call: Vobiz records every call
-# (core/vobiz.py), and the person called must be told. Same ear-check caveat.
-_EN_NOTICE = "This call is being recorded for quality purposes."
-RECORDING_NOTICE: dict[str, str] = {
-    "hinglish": "यह कॉल quality के लिए record की जा रही है।",
-    "hindi": "यह कॉल गुणवत्ता के लिए रिकॉर्ड की जा रही है।",
-    "english": _EN_NOTICE,
-    "marathi": "हा कॉल गुणवत्तेसाठी रेकॉर्ड केला जात आहे.",
-    "tamil": "இந்த அழைப்பு தரத்திற்காக பதிவு செய்யப்படுகிறது.",
-    "telugu": "ఈ కాల్ నాణ్యత కోసం రికార్డ్ చేయబడుతోంది.",
-    "bengali": "এই কলটি মান উন্নয়নের জন্য রেকর্ড করা হচ্ছে।",
-    "gujarati": "આ કૉલ ગુણવત્તા માટે રેકોર્ડ કરવામાં આવી રહ્યો છે.",
-    "kannada": "ಈ ಕರೆಯನ್ನು ಗುಣಮಟ್ಟಕ್ಕಾಗಿ ರೆಕಾರ್ಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ.",
-    "punjabi": "ਇਹ ਕਾਲ ਗੁਣਵੱਤਾ ਲਈ ਰਿਕਾਰਡ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ।",
-    "malayalam": _EN_NOTICE,
-    "odia": _EN_NOTICE,
-}
-
 
 # ── Owner settings (platform_cost_settings row), cached ≤ 60 s ────────────────
 @dataclass(frozen=True)
@@ -300,7 +282,6 @@ def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSetti
             "voices": [{"id": v.id, "gender": v.gender} for v in voices],
             "repeat_line": SPOKEN_LINES[key][0],
             "failure_line": SPOKEN_LINES[key][1],
-            "recording_notice": RECORDING_NOTICE[key],
         }
     return {
         "language": language,

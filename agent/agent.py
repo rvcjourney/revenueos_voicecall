@@ -648,9 +648,6 @@ class VoiceAgent(Agent):
             return  # participant left before on_enter ran (rejected call)
         self.session.on("agent_state_changed", self._on_agent_state_changed)
         try:
-            # Recording disclosure first, uninterruptible: every call is recorded.
-            notice = self._sarvam.lang.get("recording_notice") or "This call is being recorded for quality purposes."
-            await self.session.say(notice, allow_interruptions=False)
             if self._welcome_message.strip():
                 await self.session.say(self._welcome_message)
             else:
