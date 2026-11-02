@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import Date, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.config import settings
 from app.core.billing import compute_blended_monthly_credits
 from app.core.credits import reset_credit_period_if_stale, resolve_org_credits_per_month
 from app.core.deps import require_platform_admin
+from app.core.rate_limit import client_ip, enforce_rate_limit
 from app.core import pipelines, sarvam_voice
 from app.core.exceptions import (
     AuthenticationError,
@@ -184,7 +185,11 @@ async def _to_org_detail_out(db: AsyncSession, org: Organization) -> OrgDetailOu
 
 
 @router.post("/login", response_model=PlatformTokenResponse)
-async def login(body: PlatformLoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(body: PlatformLoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Same windows as org login (api/auth.py), tighter: this account owns every org.
+    ip = client_ip(request)
+    await enforce_rate_limit("platform-login-ip", ip, limit=20, window_seconds=600)
+    await enforce_rate_limit("platform-login-account", f"{ip}:{body.email}", limit=5, window_seconds=600)
     admin = await db.scalar(select(PlatformAdmin).where(PlatformAdmin.email == body.email))
     if not admin or not verify_password(body.password, admin.hashed_password):
         raise AuthenticationError("Invalid email or password")

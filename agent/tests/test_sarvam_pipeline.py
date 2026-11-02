@@ -616,3 +616,19 @@ def test_hinglish_replies_are_asked_for_in_devanagari():
     out = agent_mod.build_instructions("Ananya", _state("hinglish", "simran_enhi_customer"))
     assert "Devanagari" in out
     assert "Devanagari" not in agent_mod.build_instructions("Ananya", _state("tamil", "ritu"))
+
+
+async def test_recording_notice_is_spoken_before_greeting(monkeypatch):
+    langs = {k: dict(v) for k, v in LANGS.items()}
+    langs["hindi"]["recording_notice"] = "notice-hindi"
+    va = agent_mod.VoiceAgent(SimpleNamespace(), instructions="x", welcome_message="w",
+                              sarvam_state=sp.SarvamCallState("hindi", "ritu_hi_conversation", False, langs))
+    said = []
+
+    async def say(text, **kw):
+        said.append((text, kw.get("allow_interruptions", True)))
+    fake = SimpleNamespace(say=say, on=lambda *a: None)
+    monkeypatch.setattr(agent_mod.VoiceAgent, "session", property(lambda self: fake))
+    monkeypatch.setattr(agent_mod, "_safe_task", lambda coro, name=None: coro.close())
+    await va.on_enter()
+    assert said == [("notice-hindi", False), ("w", True)]

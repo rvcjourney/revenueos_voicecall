@@ -297,7 +297,9 @@ services:
     image: redis:7-alpine
     container_name: motm-redis
     restart: always
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # noeviction: this Redis is also the Celery broker + call-slot counters + token
+    # blocklist; LRU eviction would silently drop queued tasks or revoked tokens.
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     networks:

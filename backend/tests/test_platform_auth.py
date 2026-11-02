@@ -154,3 +154,18 @@ async def test_delete_org_with_active_subscription_is_refused(client, db):
 
     await db.refresh(org)
     assert org.deleted_at is None
+
+
+async def test_platform_login_rate_limited_per_account(client, db, fake_redis):
+    await _make_platform_admin(db, "super4@motmvoice.com", "correct-horse-4")
+
+    for _ in range(5):
+        resp = await client.post(
+            "/api/platform/login", json={"email": "super4@motmvoice.com", "password": "wrong"}
+        )
+        assert resp.status_code == 401
+
+    resp = await client.post(
+        "/api/platform/login", json={"email": "super4@motmvoice.com", "password": "correct-horse-4"}
+    )
+    assert resp.status_code == 429
