@@ -1,5 +1,7 @@
 # ── Secrets & credentials ─────────────────────────────────────────────────────
 .env
+.env.dev
+.env.local
 google_credentials.json
 *.pem
 *.p12

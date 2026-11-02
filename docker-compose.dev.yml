@@ -1,0 +1,123 @@
+# QuickHowl — LOCAL development stack (your laptop only). See DEVELOPMENT.md.
+#
+# Start:  docker compose -f docker-compose.dev.yml up --build
+# Stop:   docker compose -f docker-compose.dev.yml down
+# Wipe local data:  docker compose -f docker-compose.dev.yml down -v
+#
+# Uses its own Postgres/Redis/MinIO, never the live Supabase database.
+# Secrets live in backend/.env.dev and agent/.env.dev (gitignored).
+
+name: quickhowl-dev
+
+x-backend: &backend
+  build:
+    context: ./backend
+  env_file: ./backend/.env.dev
+  environment: &backend-env
+    ENVIRONMENT: development
+    DOCS_ENABLED: "true"
+    DEBUG: "false"
+    DATABASE_URL: postgresql://motm:dev@postgres:5432/quickhowl_dev
+    DB_SSL_REQUIRED: "false"
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    MINIO_ENDPOINT: minio:9000
+    MINIO_SECURE: "false"
+    STORAGE_BACKEND: minio
+    CORS_ORIGINS: '["http://localhost:5173"]'
+    BACKEND_INTERNAL_URL: http://api:8000
+    # Different name from live ("voice-call-agent"): calls placed from this laptop
+    # only reach the laptop's agent, and the laptop agent never takes live calls.
+    LIVEKIT_AGENT_NAME: voice-call-agent-dev
+    PYTHONUNBUFFERED: "1"
+    # File-change events don't cross from Windows into Docker; poll instead.
+    WATCHFILES_FORCE_POLLING: "true"
+  volumes:
+    - ./backend:/app
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_started
+
+services:
+
+  api:
+    <<: *backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *backend
+    command: celery -A app.workers.celery_app worker --concurrency 2 --loglevel info --queues calls,campaigns,exports,default
+    healthcheck:
+      disable: true
+
+  beat:
+    <<: *backend
+    command: celery -A app.workers.celery_app beat --loglevel info --schedule /tmp/celerybeat-schedule
+    healthcheck:
+      disable: true
+
+  agent:
+    build:
+      context: ./agent
+    env_file: ./agent/.env.dev
+    environment:
+      LIVEKIT_AGENT_NAME: voice-call-agent-dev
+      BACKEND_INTERNAL_URL: http://api:8000
+      PYTHONUNBUFFERED: "1"
+      WATCHFILES_FORCE_POLLING: "true"
+    # "dev" mode restarts the agent when its code changes.
+    command: python -u agent.py dev
+    volumes:
+      - ./agent:/app
+    depends_on:
+      - api
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: motm
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: quickhowl_dev
+    # 5433 on the laptop so it doesn't clash with the test-suite Postgres on 5432.
+    ports:
+      - "5433:5432"
+    volumes:
+      - dev_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "motm", "-d", "quickhowl_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    volumes:
+      - dev_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    # minio/minio is no longer pullable from Docker Hub; Chainguard publishes a free build.
+    image: cgr.dev/chainguard/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin-dev
+    volumes:
+      - dev_minio:/data
+
+volumes:
+  dev_postgres:
+  dev_redis:
+  dev_minio:
