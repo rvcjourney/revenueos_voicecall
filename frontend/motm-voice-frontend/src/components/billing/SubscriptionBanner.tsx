@@ -1,17 +1,18 @@
 import { Link, useLocation } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
-import { useBillingCurrent } from "@/lib/hooks";
+import { useBillingCurrent, useBillingEnabled } from "@/lib/hooks";
 
 // Shown across the authed app whenever the org has no active Razorpay
 // subscription yet (brand-new self-serve org that skipped payment, or a
 // subscription that lapsed/was halted) — org.is_active is enforced
 // server-side (campaign launch, etc.), this is just the visible nudge.
 export function SubscriptionBanner() {
-  const billing = useBillingCurrent();
+  const billingEnabled = useBillingEnabled();
+  const billing = useBillingCurrent(billingEnabled);
   const location = useLocation();
 
   const needsAttention = billing.isError || (billing.data && !billing.data.org_active);
-  if (!needsAttention || location.pathname === "/billing") return null;
+  if (!billingEnabled || !needsAttention || location.pathname === "/billing") return null;
 
   return (
     <Link

@@ -19,6 +19,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useBillingEnabled } from "@/lib/hooks";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RoleBadge } from "@/components/shared/StatusBadge";
 import { Logo, LogoMark } from "@/components/shared/Logo";
@@ -51,6 +52,7 @@ function readStoredCollapsed(): boolean {
 
 export function Sidebar() {
   const { user, isAdmin, logout } = useAuth();
+  const billingEnabled = useBillingEnabled();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(readStoredCollapsed);
 
@@ -101,7 +103,7 @@ export function Sidebar() {
         )}
 
         <div className="space-y-1">
-          <NavItem to="/billing" label="Billing" icon={CreditCard} collapsed={collapsed} />
+          {billingEnabled && <NavItem to="/billing" label="Billing" icon={CreditCard} collapsed={collapsed} />}
           <NavItem to="/settings" label="Settings" icon={Settings} collapsed={collapsed} />
         </div>
       </nav>

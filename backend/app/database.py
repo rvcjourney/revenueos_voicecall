@@ -73,7 +73,12 @@ async def _connect_with_retry(*args: Any, **kwargs: Any) -> asyncpg.Connection:
     last_exc: OSError | None = None
     for attempt in range(_CONNECT_RETRIES):
         try:
-            return await asyncpg.connect(*args, **kwargs)
+            conn = await asyncpg.connect(*args, **kwargs)
+            if settings.DB_SCHEMA:
+                # Our tables live in their own schema (shared database). Run on
+                # the connection itself, so it holds for every session on it.
+                await conn.execute(f'SET search_path TO "{settings.DB_SCHEMA}"')
+            return conn
         except OSError as exc:
             last_exc = exc
             if attempt < _CONNECT_RETRIES - 1:

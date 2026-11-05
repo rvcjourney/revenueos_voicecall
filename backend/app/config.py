@@ -24,6 +24,7 @@ _SECRET_FIELDS = frozenset({
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
     "OPENAI_API_KEY", "GOOGLE_CLIENT_SECRET",
+    "REVENUEOS_API_KEY",
 })
 
 
@@ -61,6 +62,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(...)
     DB_ECHO: bool = False
     DB_SSL_REQUIRED: bool = True
+    # Postgres schema holding this app's tables. Blank = the default (public).
+    # Set it when the database is shared with another app that already owns
+    # tables such as "campaigns" or "leads" in public. Every connection runs
+    # SET search_path to it, so this needs a session-mode connection (Supabase
+    # session pooler, port 5432), not the transaction pooler.
+    DB_SCHEMA: str = ""
 
     # ── Supabase ───────────────────────────────────────────────────────────────
     SUPABASE_URL: str = ""
@@ -149,6 +156,25 @@ class Settings(BaseSettings):
     # reactivates it and pushes current_period_end forward again either way.
     BILLING_GRACE_PERIOD_DAYS: int = 3
 
+    # Platform-wide switch for credits and payments. False = no org is ever
+    # blocked for credits or an unpaid subscription: new sign-ups start active,
+    # has_credits_remaining() (app/core/credits.py) always allows the call, and
+    # the Razorpay reconcile/expiry beat tasks do nothing. Call minutes are
+    # still counted. A superadmin suspending an org (is_active) still applies.
+    BILLING_ENABLED: bool = True
+
+    # ── RevenueOS Brain integration (app/api/revenueos.py) ────────────────────
+    # Shared secret Brain sends in the X-RevenueOS-Key header. Blank = every
+    # RevenueOS route answers 503.
+    REVENUEOS_API_KEY: str = ""
+    # Lets the key create accounts, numbers, agents and campaigns (as drafts).
+    REVENUEOS_LAUNCH_ENABLED: bool = False
+    # Lets a launch with auto_start=true begin dialling real people with no
+    # person reviewing it. Needs REVENUEOS_LAUNCH_ENABLED as well.
+    REVENUEOS_AUTO_START_ENABLED: bool = False
+    # Most contacts accepted in one launch request.
+    REVENUEOS_MAX_CONTACTS: int = 500
+
     # ── Storage ───────────────────────────────────────────────────────────────
     STORAGE_BACKEND: Literal["minio", "s3"] = "minio"
 
@@ -229,6 +255,22 @@ class Settings(BaseSettings):
     # phone rang (seen in Vobiz logs as "Cancelled" after exactly 30 s).
     SIP_RINGING_TIMEOUT_SECONDS: int = 55
 
+    @field_validator("REVENUEOS_API_KEY")
+    @classmethod
+    def _validate_revenueos_key(cls, v: str) -> str:
+        if v and len(v) < 32:
+            raise ValueError("REVENUEOS_API_KEY must be at least 32 characters (or blank to disable)")
+        return v
+
+    @field_validator("DB_SCHEMA")
+    @classmethod
+    def _validate_db_schema(cls, v: str) -> str:
+        v = v.strip()
+        import re
+        if v and not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", v):
+            raise ValueError("DB_SCHEMA must be a plain lowercase name, e.g. voice")
+        return v
+
     @field_validator("STORAGE_SSE_C_KEY_B64")
     @classmethod
     def _validate_sse_key(cls, v: str) -> str:
@@ -252,6 +294,12 @@ class Settings(BaseSettings):
                 raise ValueError("DEBUG must be False in production")
             if self.DOCS_ENABLED:
                 raise ValueError("DOCS_ENABLED must be False in production")
+            # .env.example's placeholders are long enough to pass the length
+            # checks above, and they are public — anyone could sign a login
+            # token or an agent report with them.
+            for name in ("SECRET_KEY", "AGENT_WEBHOOK_SECRET", "FERNET_KEY"):
+                if getattr(self, name).upper().startswith("CHANGE_ME"):
+                    raise ValueError(f"{name} is still the .env.example placeholder — set a real value")
             if not self.SENTRY_DSN:
                 warnings.warn(
                     "SENTRY_DSN is not configured in production — errors will not be tracked",

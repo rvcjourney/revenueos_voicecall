@@ -70,6 +70,11 @@ async def _run_async_migrations() -> None:
         echo=False,
         connect_args=_connect_args(),
     )
+    if settings.DB_SCHEMA:
+        # The schema must exist before the first migration (and alembic_version)
+        # is written into it. Every connection already uses it as search_path.
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{settings.DB_SCHEMA}"')
     async with engine.connect() as conn:
         await conn.run_sync(_run_sync_migrations)
     await engine.dispose()

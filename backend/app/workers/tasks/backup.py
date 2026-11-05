@@ -73,6 +73,9 @@ def _pg_dump_to_file(dest_path: Path) -> None:
         "-Fc",  # custom format: compressed, restorable with pg_restore, supports selective restore
         "-f", str(dest_path),
     ]
+    if settings.DB_SCHEMA:
+        # Shared database: back up only this app's schema, never the other app's data.
+        cmd += ["-n", settings.DB_SCHEMA]
     result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=1800)
     if result.returncode != 0:
         raise RuntimeError(f"pg_dump failed (exit {result.returncode}): {result.stderr[-2000:]}")

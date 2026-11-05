@@ -16,3 +16,4 @@ from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.cloned_voice import ClonedVoice  # noqa: F401
 from app.models.invoice import Invoice, InvoiceCounter  # noqa: F401
 from app.models.lead import Lead, LeadActivity  # noqa: F401
+from app.models.revenueos import RevenueOSClient, RevenueOSLaunch  # noqa: F401

@@ -37,6 +37,11 @@ COPY --from=builder /install /usr/local
 # Non-root user with a home directory
 RUN useradd -r -m -s /bin/false motm
 
+# Celery beat keeps its schedule file here (a named volume in
+# docker-compose.yml). A new volume takes this directory's ownership, so it
+# must belong to the non-root user or beat cannot write its schedule.
+RUN mkdir -p /var/lib/celerybeat && chown motm:motm /var/lib/celerybeat
+
 COPY --chown=motm:motm . .
 
 USER motm

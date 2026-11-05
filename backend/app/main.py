@@ -126,13 +126,21 @@ def _register_exception_handlers(app: FastAPI) -> None:
     async def pydantic_validation_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # "ctx" can hold the raised ValueError itself, which isn't JSON-serialisable.
+        errors = [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()]
+        if request.url.path.startswith("/api/integrations/"):
+            # These requests carry a password and a Vobiz token. Pydantic's
+            # errors repeat the rejected input, so keep only where and why.
+            errors = [
+                {"field": ".".join(str(p) for p in e.get("loc", ()) if p != "body"), "message": e.get("msg", "")}
+                for e in errors
+            ]
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "detail": "Request validation failed.",
                 "code": "VALIDATION_ERROR",
-                # "ctx" can hold the raised ValueError itself, which isn't JSON-serialisable.
-                "errors": [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()],
+                "errors": errors,
             },
         )
 
@@ -288,6 +296,7 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.calls import router as calls_router
     from app.api.analytics import router as analytics_router
     from app.api.webhooks import router as webhooks_router
+    from app.api.revenueos import router as revenueos_router
     from app.api.admin import router as admin_router
     from app.api.sip_trunks import router as sip_trunks_router
     from app.api.platform import router as platform_router
@@ -312,6 +321,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(calendar_router,    prefix="/api/calendar",    tags=["calendar"])
     app.include_router(analytics_router,   prefix="/api/analytics",   tags=["analytics"])
     app.include_router(webhooks_router,    prefix="/webhooks",        tags=["webhooks"])
+    app.include_router(revenueos_router,   prefix="/api/integrations/revenueos", tags=["revenueos"])
     app.include_router(sip_trunks_router,  prefix="/api/sip-trunks",  tags=["sip-trunks"])
     app.include_router(plans_router,       prefix="/api/plans",       tags=["plans"])
     app.include_router(billing_router,     prefix="/api/billing",     tags=["billing"])

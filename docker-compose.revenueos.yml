@@ -1,0 +1,61 @@
+# RevenueOS deployment overrides (revenueoscall.b2botix.ai).
+#
+# Layered on top of docker-compose.yml so that file stays identical to the
+# main repo. Enable it on the server with a repo-root .env containing:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.revenueos.yml
+#
+# then `docker compose up -d --build` as usual. Needs Docker Compose 2.24+
+# (for !override).
+#
+# Why each override exists:
+#   - names / network: this stack runs beside the original MOTMVoice stack on
+#     the same VPS, which already uses the motm-* names and 10.60.0.0/24.
+#   - domain: CORS and the dashboard's API URL point at our own domain.
+#   - landing: not used here; the "landing" profile keeps it from starting.
+#   - minio: MinIO's public images and binaries were withdrawn, so the same
+#     release is built from source (minio/Dockerfile).
+
+services:
+  api:
+    image: revenueos-voice-api
+    container_name: revenueos-voice-api
+    environment:
+      - 'CORS_ORIGINS=["https://revenueoscall.b2botix.ai"]'
+
+  worker:
+    image: revenueos-voice-worker
+    container_name: revenueos-voice-worker
+
+  beat:
+    image: revenueos-voice-beat
+    container_name: revenueos-voice-beat
+
+  frontend:
+    image: revenueos-voice-frontend
+    container_name: revenueos-voice-frontend
+    build:
+      args:
+        VITE_API_URL: https://revenueoscall.b2botix.ai
+
+  landing:
+    profiles: ["landing"]
+
+  agent:
+    image: revenueos-voice-agent
+
+  redis:
+    container_name: revenueos-voice-redis
+
+  minio:
+    build:
+      context: ./minio
+      dockerfile: Dockerfile
+    image: revenueos-voice-minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: revenueos-voice-minio
+
+networks:
+  motm:
+    ipam: !override
+      config:
+        - subnet: 10.130.0.0/24

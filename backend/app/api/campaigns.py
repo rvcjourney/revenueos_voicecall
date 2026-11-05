@@ -326,16 +326,17 @@ async def upload_contacts(
     return {"count": len(contacts), "duplicates_skipped": duplicates, "message": message}
 
 
-@router.post("/{campaign_id}/launch", response_model=CampaignOut)
-async def launch_campaign(
-    campaign_id: UUID,
-    token: TokenPayload = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    campaign = await db.get(Campaign, campaign_id)
-    _check_campaign_access(campaign, token)
-
-    org = await db.get(Organization, token.org_id)
+async def start_campaign(
+    db: AsyncSession, campaign: Campaign, *, org_id: UUID, user_id: UUID, role: str
+) -> Campaign:
+    """
+    Every check a launch must pass, then mark the campaign RUNNING and hand it
+    to the dispatcher. Shared by POST /{campaign_id}/launch below and the
+    RevenueOS integration (app/integrations/revenueos.py) so there is one set
+    of launch rules. The caller has already confirmed access to the campaign.
+    """
+    campaign_id = campaign.id
+    org = await db.get(Organization, org_id)
     if org and not org.is_active:
         raise PermissionDeniedError(
             "Your organization's subscription is inactive — visit Billing to reactivate before launching campaigns."
@@ -343,7 +344,7 @@ async def launch_campaign(
 
     from app.core.credits import has_credits_remaining
 
-    if not await has_credits_remaining(db, token.org_id):
+    if not await has_credits_remaining(db, org_id):
         raise QuotaExceededError(
             "Your organization has used all its available call credits. Visit Billing to add more before launching this campaign."
         )
@@ -364,12 +365,12 @@ async def launch_campaign(
             r = await get_redis()
             if await r.exists(lock_key):
                 await db.refresh(campaign)
-                return _to_out(campaign)  # dispatcher already running — nothing to do
+                return campaign  # dispatcher already running — nothing to do
         except Exception:
             pass  # Redis unreachable — fail open to the old always-requeue behavior
         run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
         await db.refresh(campaign)
-        return _to_out(campaign)
+        return campaign
 
     if campaign.status not in (CampaignStatus.DRAFT, CampaignStatus.PAUSED):
         raise CampaignStateError(f"Campaign is '{campaign.status}', cannot be launched")
@@ -388,10 +389,10 @@ async def launch_campaign(
         raise AppValidationError("Campaign has no pending contacts to call", errors=[])
 
     # Non-admin users may run up to 5 campaigns simultaneously
-    if token.role != "admin":
+    if role != "admin":
         running_count = await db.scalar(
             select(func.count()).where(
-                Campaign.created_by_id == token.user_id,
+                Campaign.created_by_id == user_id,
                 Campaign.status == CampaignStatus.RUNNING,
                 Campaign.deleted_at.is_(None),
             )
@@ -403,7 +404,7 @@ async def launch_campaign(
     # already at its concurrent-call cap (from other already-running
     # campaigns), rather than starting this one and letting its calls queue
     # silently behind the others.
-    usage = await get_current_usage(db, token.org_id)
+    usage = await get_current_usage(db, org_id)
     if usage["in_use"] >= usage["max"]:
         raise CampaignStateError(
             f"{usage['max']} calls are already running for your organisation. Try again in some time."
@@ -426,6 +427,20 @@ async def launch_campaign(
     # Dispatch to Celery worker (campaigns queue)
     run_campaign.apply_async(args=[str(campaign_id)], queue="campaigns")
 
+    return campaign
+
+
+@router.post("/{campaign_id}/launch", response_model=CampaignOut)
+async def launch_campaign(
+    campaign_id: UUID,
+    token: TokenPayload = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    campaign = await db.get(Campaign, campaign_id)
+    _check_campaign_access(campaign, token)
+    campaign = await start_campaign(
+        db, campaign, org_id=token.org_id, user_id=token.user_id, role=token.role
+    )
     return _to_out(campaign)
 
 
