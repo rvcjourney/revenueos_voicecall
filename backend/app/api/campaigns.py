@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.concurrency import get_current_usage
@@ -286,8 +286,14 @@ async def upload_contacts(
     campaign = await db.get(Campaign, campaign_id)
     if not campaign or campaign.org_id != token.org_id or campaign.deleted_at:
         raise NotFoundError("Campaign not found")
+    if campaign.status != CampaignStatus.DRAFT:
+        raise CampaignStateError("Contacts can only be uploaded before the campaign is launched")
 
-    rows = parse_contacts_file(await file.read(), file.filename or "")
+    parsed = parse_contacts_file(await file.read(), file.filename or "")
+    # Same number twice in the file would be called twice: keep its first row only.
+    seen: set[str] = set()
+    rows = [r for r in parsed if not (r["phone"] in seen or seen.add(r["phone"]))]
+    duplicates = len(parsed) - len(rows)
     contacts = [
         CampaignContact(
             org_id=campaign.org_id,
@@ -305,6 +311,8 @@ async def upload_contacts(
     if not contacts:
         raise AppValidationError("No valid contacts found in file", errors=[])
 
+    # A re-upload replaces the draft's list; adding to it would call earlier numbers again.
+    await db.execute(delete(CampaignContact).where(CampaignContact.campaign_id == campaign_id))
     db.add_all(contacts)
     await db.execute(
         update(Campaign)
@@ -312,7 +320,10 @@ async def upload_contacts(
         .values(total_contacts=len(contacts))
     )
     await db.commit()
-    return {"count": len(contacts), "message": f"Uploaded {len(contacts)} contacts"}
+    message = f"Uploaded {len(contacts)} contacts"
+    if duplicates:
+        message += f" ({duplicates} duplicate number{'s' if duplicates > 1 else ''} skipped)"
+    return {"count": len(contacts), "duplicates_skipped": duplicates, "message": message}
 
 
 @router.post("/{campaign_id}/launch", response_model=CampaignOut)

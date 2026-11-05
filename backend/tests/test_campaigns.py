@@ -304,3 +304,43 @@ async def test_calling_hours_saved_on_create_and_edit_and_validated(client, db):
     # End before the saved start is refused
     assert (await client.patch(f"/api/campaigns/{c['id']}", json={"calling_window_end": "08:00"},
                                headers=headers)).status_code in (400, 422)
+
+
+async def test_upload_skips_duplicate_numbers_and_replaces_draft_list(client, db):
+    org, user, campaign = await _make_campaign_with_contacts(db, contact_count=2)
+    headers = {"Authorization": f"Bearer {create_access_token(str(user.id), str(user.org_id), user.role)}"}
+    csv = b"phone,name\n9876543210,Asha\n+91 98765 43210,Asha again\n9123456789,Ravi\n"
+
+    resp = await client.post(f"/api/campaigns/{campaign.id}/contacts",
+                             files={"file": ("c.csv", csv, "text/csv")}, headers=headers)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["count"] == 2 and resp.json()["duplicates_skipped"] == 1
+
+    phones = (await db.execute(
+        select(CampaignContact.phone).where(CampaignContact.campaign_id == campaign.id)
+    )).scalars().all()
+    # The 2 contacts the draft had before the upload are gone, not called as well
+    assert sorted(phones) == ["+919123456789", "+919876543210"]
+
+
+async def test_upload_rejected_after_launch(client, db):
+    org, user, campaign = await _make_campaign_with_contacts(db)
+    campaign.status = CampaignStatus.RUNNING
+    await db.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(str(user.id), str(user.org_id), user.role)}"}
+
+    resp = await client.post(f"/api/campaigns/{campaign.id}/contacts",
+                             files={"file": ("c.csv", b"phone\n9876543210\n", "text/csv")}, headers=headers)
+    assert resp.status_code == 409
+
+
+async def test_dnc_add_validates_phone(client, db):
+    org, user, _ = await _make_campaign_with_contacts(db)
+    headers = {"Authorization": f"Bearer {create_access_token(str(user.id), str(user.org_id), user.role)}"}
+
+    for bad in ("12345", "abcdefghij", "98765432101"):
+        resp = await client.post("/api/admin/dnc", json={"phone_number": bad}, headers=headers)
+        assert resp.status_code == 422, (bad, resp.text)
+
+    ok = await client.post("/api/admin/dnc", json={"phone_number": "98765 43210"}, headers=headers)
+    assert ok.status_code == 201 and ok.json()["phone_number"] == "+919876543210"

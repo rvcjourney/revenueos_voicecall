@@ -6,7 +6,9 @@ Shared by campaign contact upload (app/api/campaigns.py) and lead import
 """
 from __future__ import annotations
 
+import csv
 import io
+import re
 
 import pandas as pd
 
@@ -33,18 +35,67 @@ _PHONE_FALLBACK_COLUMNS = (
 
 
 def normalize_phone(raw: str) -> str:
-    """E.164: strip spaces/dashes, add +91 if no country code."""
-    phone = raw.strip().replace(" ", "").replace("-", "")
-    if not phone.startswith("+"):
-        phone = "+91" + phone.lstrip("0")
+    """E.164: strip spaces/dashes/brackets/dots, add +91 if no country code."""
+    phone = re.sub(r"[\s\-().]", "", raw)
+    if phone.startswith("00"):
+        phone = "+" + phone[2:]
+    elif not phone.startswith("+"):
+        phone = phone.lstrip("0")
+        # "919876543210" already carries India's code — don't make it +91919876543210
+        phone = "+" + phone if len(phone) == 12 and phone.startswith("91") else "+91" + phone
     return phone
+
+
+# India: a 10-digit mobile (starts 6-9). Elsewhere: any E.164 number.
+_INDIAN_MOBILE_RE = re.compile(r"^\+91[6-9]\d{9}$")
+_E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
+
+
+def is_valid_phone(phone: str) -> bool:
+    """phone must already be normalize_phone()'d."""
+    if phone.startswith("+91"):
+        return bool(_INDIAN_MOBILE_RE.match(phone))
+    return bool(_E164_RE.match(phone))
+
+
+def _check_csv_structure(contents: bytes) -> None:
+    """pandas silently pads short rows and swallows lines inside a stray quote;
+    reject those files with the offending line instead of importing garbage."""
+    try:
+        text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise AppValidationError(
+            "The file isn't plain CSV text. In Excel use File → Save As → 'CSV UTF-8' and upload again.",
+            errors=[],
+        )
+    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
+    try:
+        header = next(reader, None)
+        for row in reader:
+            if not any(cell.strip() for cell in row):
+                continue  # blank line
+            if header is not None and len(row) != len(header):
+                raise AppValidationError(
+                    f"Line {reader.line_num} has {len(row)} columns but the header has {len(header)}. "
+                    "Check for missing or extra commas on that line.",
+                    errors=[],
+                )
+    except csv.Error:
+        raise AppValidationError(
+            f"Line {reader.line_num} has a broken quotation mark (\"). "
+            "Fix or remove the quote on that line and upload again.",
+            errors=[],
+        )
 
 
 def parse_contacts_file(contents: bytes, filename: str) -> list[dict]:
     """Rows of {name, phone, email, company, custom_fields}. name is None when
     the file has no name for that row. Every column but phone is kept in
-    custom_fields (agent placeholders like {userName} are filled from them)."""
+    custom_fields (agent placeholders like {userName} are filled from them).
+    Raises if the CSV is malformed or any phone number is invalid."""
     fname = (filename or "").lower()
+    if not fname.endswith((".xlsx", ".xls")):
+        _check_csv_structure(contents)
     try:
         if fname.endswith((".xlsx", ".xls")):
             df = pd.read_excel(io.BytesIO(contents))
@@ -71,7 +122,8 @@ def parse_contacts_file(contents: bytes, filename: str) -> list[dict]:
     company_col = next((c for c in df.columns if "company" in c), None)
 
     rows = []
-    for _, row in df.iterrows():
+    bad: list[str] = []
+    for i, (_, row) in enumerate(df.iterrows()):
         phone_val = row[phone_col]
         if pd.isna(phone_val) if isinstance(phone_val, float) else phone_val is None:
             continue
@@ -83,11 +135,23 @@ def parse_contacts_file(contents: bytes, filename: str) -> list[dict]:
         if not raw_phone or raw_phone in ("nan", "None", ""):
             continue
 
+        phone = normalize_phone(raw_phone)
+        if not is_valid_phone(phone):
+            bad.append(f"row {i + 2} ({raw_phone[:20]})")  # +2: header is row 1
+            continue
+
         rows.append({
-            "phone": normalize_phone(raw_phone),
+            "phone": phone,
             "name": str(row[name_col]).strip() if name_col and pd.notna(row.get(name_col)) else None,
             "email": str(row[email_col]).strip() if email_col and pd.notna(row.get(email_col)) else None,
             "company": str(row[company_col]).strip() if company_col and pd.notna(row.get(company_col)) else None,
             "custom_fields": {c: str(row[c]) for c in df.columns if c != phone_col and pd.notna(row.get(c))},
         })
+    if bad:
+        more = f" and {len(bad) - 5} more" if len(bad) > 5 else ""
+        raise AppValidationError(
+            f"{len(bad)} invalid phone number(s): {', '.join(bad[:5])}{more}. "
+            "Use a 10-digit Indian mobile number (e.g. 9876543210) or a full international number starting with +.",
+            errors=[],
+        )
     return rows

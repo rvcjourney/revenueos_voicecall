@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core import webhook_delivery as wd
+from app.core.contacts_file import is_valid_phone, normalize_phone
 from app.core.crypto import decrypt_value, encrypt_value
 from app.core.deps import TokenPayload, require_admin
 from app.core.email_sender import PORT_FOR_SECURITY, EmailSendError, org_smtp_config, send_email, smtp_configured
@@ -674,9 +675,12 @@ async def add_dnc(
     db: AsyncSession = Depends(get_db),
 ):
     """Manually add a phone number to the org DNC list."""
-    phone = body.phone_number.strip().replace(" ", "").replace("-", "")
-    if not phone.startswith("+"):
-        phone = "+91" + phone.lstrip("0")
+    phone = normalize_phone(body.phone_number)
+    if not is_valid_phone(phone):
+        raise AppValidationError(
+            "Enter a valid 10-digit Indian mobile number (e.g. 9876543210) or a full international number starting with +",
+            errors=[],
+        )
 
     existing = await db.scalar(
         select(DoNotCallEntry.id).where(
