@@ -2,6 +2,8 @@
 
 For whoever builds the requests Brain sends. Base URL: `https://revenueoscall.b2botix.ai`.
 
+Status: v2 passes the platform's automated tests (7 November 2026) but has not yet placed a live call. This line will be updated after the first live test.
+
 **v2 (November 2026)** follows the main voice platform's redesign: calls run on Sarvam only, and the per-contact script comes from `{placeholders}` in the agent instead of Prime Calling. Compared with v1:
 
 - **Removed:** `company_profile`, `prime`, `agent.voice_provider`, and `script_personalised` / `script_error` in call results. Sending `company_profile` or `prime` is refused with 422.
@@ -118,6 +120,7 @@ Notes:
 
 - **The `user` block is required on every request.** Its `email` must match the account; `password` is only used when the account is first created.
 - **An agent is reused** when its name, language, voice, greeting, instructions, variables, pace, call length and transfer number all match an earlier one.
+- **The webhook can only change together with a launch.** There is no separate endpoint; send `webhook_url` with the next campaign.
 - **What counts as "content" for 409:** `agent`, `campaign`, `schedule` and `contacts`. Not counted: `user`, `phone_number`, `webhook_url`, `auto_start`.
 
 ## Field reference
@@ -209,6 +212,25 @@ All need `X-RevenueOS-Key`. `{reference}` is the campaign's `reference`; `client
 | POST | `/api/integrations/revenueos/campaigns/{reference}/pause?client_reference=…` | Stop placing new calls |
 
 The calls answer ends with `next_since`; pass it back as `since` to get only what changed. There is no resume endpoint: send the original launch again with `auto_start: true`.
+
+### Call result fields
+
+Each item in the calls answer (and each webhook event) carries:
+
+| Field | Meaning |
+|---|---|
+| `status` | The call itself: `initiated`, `ringing`, `connected`, `completed`, `no_answer`, `busy`, `failed`, `cancelled` |
+| `outcome` | The verdict on the conversation: `interested`, `not_interested`, `callback_requested`, `wrong_number`, `do_not_call`, `voicemail`, `no_answer`, `call_dropped`, or `pending` until classified |
+| `summary` | A short written summary of the conversation |
+| `duration_seconds`, `started_at`, `answered_at`, `ended_at` | Timing (the webhook has no `answered_at`) |
+| `extracted_data` | Details the agent collected, such as an email or a meeting time |
+| `transcript` | Lines with `speaker` (`agent` or `user`) and `text` |
+| `finished` | Calls answer only: `true` once the call will not change again |
+| `has_recording` / `recording_url` | Whether a recording exists (calls answer) / its address (webhook) |
+
+`call_dropped` means the line cut off mid-conversation without a clear answer either way; treat it as worth retrying by hand, not as a refusal.
+
+The campaign `status` is one of `draft`, `scheduled`, `running`, `paused`, `completed`, `failed`. A campaign can also be paused by the platform itself, for example when the platform owner switches off a language.
 
 ## `start_status`
 
