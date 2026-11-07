@@ -22,6 +22,7 @@ python-multipart==0.0.18
 # ── Cache / Queue ──────────────────────────────────────────────────────────────
 redis[hiredis]==5.2.1
 celery[redis]==5.4.0
+kombu==5.4.2           # celery 5.4's own pairing; newer kombu refuses redis-py < 6.1 (pinned above)
 
 # ── Storage (boto3 works with both MinIO and AWS S3 via S3-compatible API) ─────
 boto3==1.35.80
