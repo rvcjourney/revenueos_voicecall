@@ -322,6 +322,7 @@ function TaxInvoiceHistoryCard() {
                       day: "numeric",
                       month: "short",
                       year: "numeric",
+                      timeZone: "Asia/Kolkata", // same date as printed on the PDF
                     })}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">{inv.invoice_number}</span>
