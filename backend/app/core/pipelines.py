@@ -113,8 +113,7 @@ SARVAM_VOICE_ONLY = ("hindi", "english")
 # ELEVENLABS_REGIONAL_ENABLED (off since 2026-10-26) gates only the regional languages, not these
 ELEVENLABS_ALWAYS_ALLOWED = ("hinglish",)
 # Used until the owner saves a list for the language; saving an empty list puts it back on Sarvam.
-# shortcut: gender guessed (only picks the voice after a mid-call language switch) — confirm with the founder.
-DEFAULT_ELEVENLABS_VOICES = {"hinglish": (Voice("XO3tSLyh5E7dEilRBQJG", "Default", "female"),)}
+DEFAULT_ELEVENLABS_VOICES = {"hinglish": (Voice("XO3tSLyh5E7dEilRBQJG", "Anshika", "female"),)}
 
 # Fixed lines the sarvam engine speaks itself (agent/sarvam_pipeline.py):
 # (empty-reply "please repeat", mid-call failure apology). Native script,
