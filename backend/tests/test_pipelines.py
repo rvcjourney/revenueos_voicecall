@@ -97,7 +97,20 @@ def test_regional_language_uses_elevenlabs_only_once_the_owner_adds_voices():
     assert [v.id for v in p.voices_for("gujarati", EL)] == ["9BWtsMINqrJLrRacOk9x"]
 
 
-def test_hindi_hinglish_english_never_use_elevenlabs():
+def test_hinglish_uses_elevenlabs_once_voices_are_added_even_with_regional_off(monkeypatch):
+    monkeypatch.setattr(p.app_settings, "ELEVENLABS_REGIONAL_ENABLED", False)
+    hl = p.OwnerSettings(language_overrides={"hinglish": {"elevenlabs": {"voices": [
+        {"id": "9BWtsMINqrJLrRacOk9x", "name": "Aria", "gender": "female"}]}}})
+    assert p.tts_engine("hinglish", ON) == p.SARVAM
+    assert p.tts_engine("hinglish", hl) == p.ELEVENLABS
+    assert [v.id for v in p.voices_for("hinglish", hl)] == ["9BWtsMINqrJLrRacOk9x"]
+    cfg = p.sarvam_call_config("hinglish", "9BWtsMINqrJLrRacOk9x", hl, cloned=False)
+    assert cfg["languages"]["hinglish"]["engine"] == p.ELEVENLABS
+    assert cfg["languages"]["hinglish"]["eleven_code"] == "hi"
+    assert cfg["languages"]["hinglish"]["sarvam_voice"] in {v.id for v in p.sarvam_voices("hinglish", hl)}
+
+
+def test_hindi_english_never_use_elevenlabs():
     only = {k: {"elevenlabs": {"voices": [{"id": "9BWtsMINqrJLrRacOk9x", "name": "x", "gender": "male"}]}}
             for k in p.SARVAM_VOICE_ONLY}
     s = p.OwnerSettings(language_overrides=only)

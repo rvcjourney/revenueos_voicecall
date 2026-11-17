@@ -106,10 +106,12 @@ LANGUAGES: dict[str, Language] = {
 
 DEFAULT_LANGUAGE = "hinglish"
 
-# Regional languages are voiced by ElevenLabs once the owner has added voices for them
-# (platform "Languages & voices"); Sarvam keeps STT and the LLM for every call.
+# Hinglish and the regional languages are voiced by ElevenLabs once the owner has added voices
+# for them (platform "Languages & voices"); Sarvam keeps STT and the LLM for every call.
 ELEVENLABS = "elevenlabs"
-SARVAM_VOICE_ONLY = ("hinglish", "hindi", "english")
+SARVAM_VOICE_ONLY = ("hindi", "english")
+# ELEVENLABS_REGIONAL_ENABLED (off since 2026-10-26) gates only the regional languages, not these
+ELEVENLABS_ALWAYS_ALLOWED = ("hinglish",)
 
 # Fixed lines the sarvam engine speaks itself (agent/sarvam_pipeline.py):
 # (empty-reply "please repeat", mid-call failure apology). Native script,
@@ -207,8 +209,10 @@ def _el_override(settings: OwnerSettings, language: str) -> dict:
 
 
 def elevenlabs_voices(language: str, settings: OwnerSettings) -> tuple[Voice, ...]:
-    """The owner's ElevenLabs shortlist for a regional language ((), for Hindi/Hinglish/English)."""
-    if not app_settings.ELEVENLABS_REGIONAL_ENABLED or language in SARVAM_VOICE_ONLY or language not in LANGUAGES:
+    """The owner's ElevenLabs shortlist for Hinglish or a regional language ((), for Hindi/English)."""
+    if language in SARVAM_VOICE_ONLY or language not in LANGUAGES:
+        return ()
+    if not app_settings.ELEVENLABS_REGIONAL_ENABLED and language not in ELEVENLABS_ALWAYS_ALLOWED:
         return ()
     return tuple(Voice(str(v["id"]), str(v.get("name") or v["id"]), str(v.get("gender") or "female"))
                  for v in _el_override(settings, language).get("voices") or [] if v.get("id"))

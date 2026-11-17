@@ -814,7 +814,7 @@ async def update_engines(
                 cell["voices"] = list(patch["voices"])
             if "eleven_voices" in patch:
                 if lang in pipelines.SARVAM_VOICE_ONLY:
-                    raise AppValidationError("ElevenLabs voices are only for regional languages", errors=[])
+                    raise AppValidationError("Hindi and English are spoken by Sarvam voices only", errors=[])
                 el_cell = overrides[lang].setdefault(pipelines.ELEVENLABS, {})
                 el_before = list(el_cell.get("voices") or [])
                 el_cell["voices"] = _clean_eleven_voices(patch["eleven_voices"])

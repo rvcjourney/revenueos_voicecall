@@ -118,7 +118,7 @@ class EngineLanguageOut(BaseModel):
     default_tts_model: str
     voices: list[dict] = []     # every valid voice for the TTS model
     shortlist: list[str] = []   # owner-picked subset offered to customers ([] = all)
-    regional: bool = False      # can be voiced by ElevenLabs (not Hindi/Hinglish/English)
+    regional: bool = False      # can be voiced by ElevenLabs (not Hindi/English)
     engine: str = "sarvam"      # who speaks it now: "elevenlabs" once eleven_voices has entries
     eleven_voices: list[dict] = []  # owner-added ElevenLabs voices: {id, name, gender}
 
