@@ -617,3 +617,18 @@ def test_hinglish_replies_are_asked_for_in_devanagari():
     assert "Devanagari" in out
     assert "Devanagari" not in agent_mod.build_instructions("Ananya", _state("tamil", "ritu"))
 
+
+
+
+def test_speed_slider_reaches_the_elevenlabs_voice_within_its_range(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    built = {}
+
+    class _Eleven(_Fake):
+        def on(self, *_):
+            pass
+
+    monkeypatch.setattr(sp.elevenlabs, "TTS", lambda **kw: built.update(kw) or _Eleven())
+    for pace, speed in ((0.85, 0.85), (1.5, 1.2), (0.5, 0.7)):  # ElevenLabs takes 0.7-1.2
+        sp.build_eleven(sp.parse_meta({**_el_meta(), "speech_pace": pace}))
+        assert built["voice_settings"].speed == speed

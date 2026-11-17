@@ -212,7 +212,8 @@ def build_eleven(state: SarvamCallState):
     eleven = elevenlabs.TTS(
         voice_id=voice, model=start["eleven_model"], language=start["eleven_code"],
         api_key=ELEVENLABS_API_KEY, encoding=f"pcm_{SARVAM_PIPELINE_TTS_SAMPLE_RATE}",
-        voice_settings=elevenlabs.VoiceSettings(stability=ELEVEN_STABILITY, similarity_boost=0.75),
+        voice_settings=elevenlabs.VoiceSettings(stability=ELEVEN_STABILITY, similarity_boost=0.75,
+                                                speed=eleven_speed(state.pace)),
     )
 
     def _on_error(ev) -> None:
@@ -232,6 +233,12 @@ ELEVEN_FIRST_AUDIO_TIMEOUT: float | None = None
 # eleven_v3 takes 0.0 (creative), 0.5 (natural) or 1.0 (robust). Creative/natural let the timbre
 # drift from one sentence to the next, which callers hear as a second voice; robust keeps it steady.
 ELEVEN_STABILITY = 1.0
+# ElevenLabs accepts speed 0.7-1.2 (the agent's Speed slider goes to 1.5); eleven_v3 ignores it,
+# so Hinglish runs on eleven_multilingual_v2 (backend ELEVENLABS_TTS_MODEL).
+def eleven_speed(pace: float) -> float:
+    return min(1.2, max(0.7, pace))
+
+
 # Tries per utterance when ElevenLabs fails before any sound.
 ELEVEN_ATTEMPTS = 2
 
