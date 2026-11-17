@@ -86,6 +86,14 @@ async def check_voice_choice(db: AsyncSession, org_id: UUID, *, language: str, v
     from app.core import pipelines
     from app.core.exceptions import ValidationError as AppValidationError
 
+    settings = await pipelines.get_owner_settings(db)
+    # A voice on the language's list is fine as is, even if an old clone row shares its id
+    # (the default Hinglish voice was once cloned by another org on ElevenLabs).
+    listed = (pipelines.voices_for(language, settings)
+              if language in pipelines.LANGUAGES and pipelines.language_enabled(language, settings) else ())
+    if voice_id and voice_id in {v.id for v in listed}:
+        return
+
     cloned = None
     if voice_id:
         cloned = await db.scalar(
@@ -103,7 +111,6 @@ async def check_voice_choice(db: AsyncSession, org_id: UUID, *, language: str, v
         if cloned is not None and cloned.provider != pipelines.SARVAM:
             raise AppValidationError("This cloned voice is no longer supported. Pick another voice.", errors=[])
 
-    settings = await pipelines.get_owner_settings(db)
     try:
         pipelines.validate(language, voice_id, settings, cloned=cloned is not None)
     except pipelines.PipelineValidationError as exc:

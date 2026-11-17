@@ -208,6 +208,16 @@ async def test_cloned_voice_isolation_between_orgs(client, db):
     assert r.status_code == 403
 
 
+
+async def test_listed_voice_saves_even_if_another_org_once_cloned_that_id(client, db):
+    other, _ = await _org_admin(db)
+    db.add(ClonedVoice(org_id=other.id, name="Anshika", elevenlabs_voice_id="XO3tSLyh5E7dEilRBQJG", provider="elevenlabs"))
+    await db.commit()
+    _, h = await _org_admin(db)
+    r = await client.post("/api/agents", json={"name": "A", "language": "hinglish",
+                                               "voice_id": "XO3tSLyh5E7dEilRBQJG"}, headers=h)
+    assert r.status_code == 201, r.text
+
 async def test_campaign_language_and_voice_are_validated(client, db):
     org, h = await _org_admin(db)
     tmpl = AgentTemplate(org_id=org.id, name="T", language="hindi")
