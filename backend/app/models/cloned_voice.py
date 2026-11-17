@@ -1,11 +1,12 @@
 """
 app/models/cloned_voice.py — ClonedVoice model.
 
-A Premium-plan feature: an org's voice sample is cloned on Sarvam once the
-owner approves the request (app/api/platform.py). The returned voice id is
-stored here and can be used as AgentTemplate.voice_id or Campaign.voice_id —
-see app/core/plan_features.py check_voice_choice. Rows with provider
-"elevenlabs" predate the Sarvam-only change and are no longer usable.
+A Premium-plan feature: an org's voice sample is cloned once the owner approves
+the request (app/api/platform.py) — on ElevenLabs when it was recorded in Hinglish,
+on Sarvam otherwise (pipelines.clone_provider). The returned voice id is stored here
+and can be used as AgentTemplate.voice_id or Campaign.voice_id — see
+app/core/plan_features.py check_voice_choice. Rows with provider "elevenlabs" and no
+language predate the Sarvam-only change and are no longer usable.
 """
 from __future__ import annotations
 

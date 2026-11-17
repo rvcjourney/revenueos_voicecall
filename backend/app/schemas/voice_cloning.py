@@ -12,6 +12,7 @@ class ClonedVoiceOut(BaseModel):
     status: str  # "ready" | "failed" | "pending" | "rejected"
     rejection_reason: str | None = None
     language: str | None = None
+    hinglish_only: bool = False  # True: offered for Hinglish only; False: for every other language
     created_at: datetime
 
 

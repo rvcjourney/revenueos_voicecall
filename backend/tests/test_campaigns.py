@@ -225,7 +225,9 @@ async def test_campaign_voice_override_is_saved_validated_and_copied(client, db)
     db.add(other_org)
     await db.flush()
 
-    my_voice = ClonedVoice(org_id=org.id, name="My Voice", elevenlabs_voice_id="voice-mine-123", provider="sarvam")
+    # The template speaks Hinglish, so its own clone is a Hinglish (ElevenLabs) one
+    my_voice = ClonedVoice(org_id=org.id, name="My Voice", elevenlabs_voice_id="voice-mine-123",
+                           provider="elevenlabs", language="hinglish")
     other_voice = ClonedVoice(org_id=other_org.id, name="Their Voice", elevenlabs_voice_id="voice-theirs-456", provider="sarvam")
     db.add_all([my_voice, other_voice])
     await db.commit()

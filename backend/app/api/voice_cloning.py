@@ -10,8 +10,10 @@ ClonedVoice row) or rejects it with a reason the org admin can see here.
 Only an approved request's voice id can be used as an agent's or campaign's
 voice — see check_voice_choice in app/core/plan_features.py.
 
-Cloned voices made on ElevenLabs before the Sarvam-only change are hidden
-here and no longer count towards the org's limit.
+Where a voice is cloned depends on the sample's language (pipelines.clone_provider):
+Hinglish on ElevenLabs, every other language on Sarvam. Hinglish clones are offered
+for Hinglish agents only, Sarvam clones for every other language. ElevenLabs clones
+made before the Sarvam-only change (no language) stay hidden and don't count.
 """
 from __future__ import annotations
 
@@ -25,13 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.config import settings
-from app.core import pipelines, sarvam_voice
+from app.core import elevenlabs_voice, pipelines, sarvam_voice
 from app.core.deps import TokenPayload, get_current_user, require_admin
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.plan_features import (
     MAX_CLONED_VOICES_PER_ORG,
     has_voice_clone_capacity,
     is_voice_cloning_allowed,
+    usable_clone,
 )
 from app.database import get_db
 from app.models.cloned_voice import ClonedVoice
@@ -57,6 +60,7 @@ def _voice_out(v: ClonedVoice) -> ClonedVoiceOut:
         voice_id=v.elevenlabs_voice_id,
         status=v.status,
         language=v.language,
+        hinglish_only=v.provider == pipelines.ELEVENLABS,
         created_at=v.created_at,
     )
 
@@ -68,6 +72,7 @@ def _request_out(r: VoiceCloneRequest) -> ClonedVoiceOut:
         status=r.status,
         rejection_reason=r.rejection_reason,
         language=r.language,
+        hinglish_only=r.provider == pipelines.ELEVENLABS,
         created_at=r.created_at,
     )
 
@@ -80,7 +85,7 @@ async def list_cloned_voices(
     voices = (await db.execute(
         select(ClonedVoice).where(
             ClonedVoice.org_id == token.org_id,
-            ClonedVoice.provider == pipelines.SARVAM,
+            usable_clone(ClonedVoice),
             ClonedVoice.deleted_at.is_(None),
         )
     )).scalars().all()
@@ -91,7 +96,7 @@ async def list_cloned_voices(
     requests = (await db.execute(
         select(VoiceCloneRequest).where(
             VoiceCloneRequest.org_id == token.org_id,
-            VoiceCloneRequest.provider == pipelines.SARVAM,
+            usable_clone(VoiceCloneRequest),
             VoiceCloneRequest.status.in_(("pending", "rejected")),
         )
     )).scalars().all()
@@ -166,7 +171,7 @@ async def create_voice_clone_request(
         org_id=token.org_id,
         created_by_id=token.user_id,
         name=name,
-        provider=pipelines.SARVAM,
+        provider=pipelines.clone_provider(language),
         language=language,
         audio_sample_key=audio_key,
         audio_sample_file_name=file.filename or "",
@@ -192,7 +197,7 @@ async def delete_cloned_voice(
         cloned.deleted_at = datetime.now(timezone.utc)
         await db.commit()
 
-        await _delete_sarvam_voice(db, cloned)
+        await _delete_clone(db, cloned)
         return
 
     # Not a ClonedVoice — allow withdrawing a still-pending request, or
@@ -208,18 +213,22 @@ async def delete_cloned_voice(
     await db.commit()
 
 
-async def _delete_sarvam_voice(db: AsyncSession, cloned: ClonedVoice) -> None:
-    """Remove the voice from Sarvam and its stored reference audio. The consent
-    video is kept as proof of authorization. A Sarvam failure is logged (the
-    voice is already unusable here) rather than failing the customer's delete."""
+async def _delete_clone(db: AsyncSession, cloned: ClonedVoice) -> None:
+    """Remove the voice from its provider (Sarvam, or ElevenLabs for Hinglish) and its stored
+    reference audio. The consent video is kept as proof of authorization. A provider failure
+    is logged (the voice is already unusable here) rather than failing the customer's delete."""
     try:
-        await sarvam_voice.delete_voice(cloned.elevenlabs_voice_id)
-    except sarvam_voice.SarvamVoiceError as exc:
-        log.error("sarvam_voice_delete_failed", cloned_voice_id=str(cloned.id),
-                  status=exc.status, request_id=exc.request_id, error=str(exc))
+        if cloned.provider == pipelines.ELEVENLABS:
+            await elevenlabs_voice.delete_voice(cloned.elevenlabs_voice_id)
+        else:
+            await sarvam_voice.delete_voice(cloned.elevenlabs_voice_id)
+    except (sarvam_voice.SarvamVoiceError, elevenlabs_voice.ElevenLabsVoiceError) as exc:
+        log.error("cloned_voice_provider_delete_failed", cloned_voice_id=str(cloned.id), provider=cloned.provider,
+                  status=exc.status, request_id=getattr(exc, "request_id", None), error=str(exc))
     req = await db.scalar(select(VoiceCloneRequest).where(VoiceCloneRequest.cloned_voice_id == cloned.id))
     if req is not None:
         try:
             await get_storage().delete(settings.BUCKET_VOICE_CONSENT, req.audio_sample_key)
         except Exception:
-            log.exception("sarvam_reference_audio_delete_failed", cloned_voice_id=str(cloned.id))
+            log.exception("clone_reference_audio_delete_failed", cloned_voice_id=str(cloned.id))
+

@@ -23,7 +23,7 @@ _SECRET_FIELDS = frozenset({
     "FERNET_KEY",
     "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET",
     "OFFSITE_BACKUP_SECRET_KEY", "STORAGE_SSE_C_KEY_B64", "SARVAM_API_KEY",
-    "OPENAI_API_KEY", "GOOGLE_CLIENT_SECRET",
+    "OPENAI_API_KEY", "GOOGLE_CLIENT_SECRET", "ELEVENLABS_API_KEY",
 })
 
 
@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     # ElevenLabs; the agent holds the key (agent/.env), the backend only names the model.
     # eleven_v3_conversational / eleven_v4_turbo started speaking faster in a 2026-10-26 test.
     ELEVENLABS_TTS_MODEL: str = "eleven_v3"
+    # Hinglish voice cloning (app/core/elevenlabs_voice.py); same key as agent/.env. Empty = off.
+    ELEVENLABS_API_KEY: str = ""
     # Off (2026-10-26): ElevenLabs' voice drifted between replies, so every language is on Sarvam
     # again. The owner's saved ElevenLabs voices are kept; set true to use them again.
     ELEVENLABS_REGIONAL_ENABLED: bool = False

@@ -45,8 +45,9 @@ export function VoiceSelect({
   if (!entry) {
     return <p className="text-xs text-muted-foreground">{langs.isLoading ? "Loading voices…" : "Pick a language first."}</p>;
   }
+  // Hinglish offers the voices cloned for Hinglish; every other language the rest
   const mine = entry.cloned_voices
-    ? (cloned.data ?? []).filter((v) => v.status === "ready" && v.voice_id)
+    ? (cloned.data ?? []).filter((v) => v.status === "ready" && v.voice_id && v.hinglish_only === (language === "hinglish"))
     : [];
   return (
     <Select value={value || "default"} onValueChange={(v) => onChange(v === "default" ? "" : v)}>

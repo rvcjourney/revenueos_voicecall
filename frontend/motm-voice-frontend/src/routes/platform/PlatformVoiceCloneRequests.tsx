@@ -140,7 +140,11 @@ function RequestCard({ request }: { request: PlatformVoiceCloneRequest }) {
             <p className="font-heading text-lg font-semibold">{request.name}</p>
             <p className="text-sm text-muted-foreground">
               {request.org_name} &middot; {request.user_name ?? "Unknown user"} &middot;{" "}
-              {request.provider === "sarvam" ? `Sarvam${request.language ? `, sample in ${request.language}` : ""}` : "ElevenLabs (no longer supported — reject)"}
+              {request.provider === "sarvam"
+                ? `Sarvam${request.language ? `, sample in ${request.language}` : ""}`
+                : request.language === "hinglish"
+                  ? "ElevenLabs, Hinglish sample"
+                  : "ElevenLabs (no longer supported — reject)"}
               {request.user_email ? ` (${request.user_email})` : ""}
             </p>
             <p className="text-xs text-muted-foreground">Submitted {formatDate(request.created_at)}</p>

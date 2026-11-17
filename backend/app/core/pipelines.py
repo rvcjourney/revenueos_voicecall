@@ -113,6 +113,22 @@ SARVAM_VOICE_ONLY = ("hindi", "english")
 # ELEVENLABS_REGIONAL_ENABLED (off since 2026-10-26) gates only the regional languages, not these
 ELEVENLABS_ALWAYS_ALLOWED = ("hinglish",)
 # Used until the owner saves a list for the language; saving an empty list puts it back on Sarvam.
+CLONE_ON_ELEVENLABS = "hinglish"
+
+
+def clone_provider(language: str) -> str:
+    """Where a voice recorded for this language is cloned: Hinglish on ElevenLabs, the rest on Sarvam."""
+    return ELEVENLABS if language == CLONE_ON_ELEVENLABS else SARVAM
+
+
+def clone_fits(provider: str, clone_language: str | None, language: str) -> bool:
+    """Whether a clone can be picked for an agent/campaign in `language`. ElevenLabs clones
+    without a language predate the Sarvam switch (2026-10) and stay unusable."""
+    if provider == ELEVENLABS:
+        return clone_language == CLONE_ON_ELEVENLABS and language == CLONE_ON_ELEVENLABS
+    return provider == SARVAM and language != CLONE_ON_ELEVENLABS
+
+
 DEFAULT_ELEVENLABS_VOICES = {"hinglish": (Voice("XO3tSLyh5E7dEilRBQJG", "Anshika", "female"),)}
 
 # Fixed lines the sarvam engine speaks itself (agent/sarvam_pipeline.py):
@@ -268,9 +284,12 @@ def validate(language: str, voice_id: str | None, settings: OwnerSettings, *, cl
 
 
 # ── What the agent needs for a call (goes into job metadata) ──────────────────
-def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSettings, *, cloned: bool) -> dict:
+def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSettings, *, cloned: bool,
+                       eleven_clone: bool = False) -> dict:
     """Everything the agent needs, including every enabled language's
-    codes/model/default voices so a mid-call switch needs no lookup."""
+    codes/model/default voices so a mid-call switch needs no lookup.
+    eleven_clone: voice_id is the org's ElevenLabs (Hinglish) clone; to the agent it's
+    just another ElevenLabs voice ("cloned" means a Sarvam clone there)."""
     langs = {}
     for key, lang in LANGUAGES.items():
         if not language_enabled(key, settings):
@@ -292,6 +311,10 @@ def sarvam_call_config(language: str, voice_id: str | None, settings: OwnerSetti
             "repeat_line": SPOKEN_LINES[key][0],
             "failure_line": SPOKEN_LINES[key][1],
         }
+    if eleven_clone:
+        lang_cfg = langs[language]
+        lang_cfg["engine"] = ELEVENLABS
+        lang_cfg["voices"] = [{"id": voice_id, "gender": ""}, *lang_cfg["voices"]]  # no gender: a switch takes the first voice
     return {
         "language": language,
         "voice_id": voice_id or default_voice(language, settings),
@@ -315,12 +338,18 @@ async def call_meta(db, *, org_id, language: str, voice_id: str | None) -> dict:
         cloned = await db.scalar(select(ClonedVoice).where(
             ClonedVoice.elevenlabs_voice_id == voice_id,
             ClonedVoice.org_id == org_id,
-            ClonedVoice.provider == SARVAM,
+            ClonedVoice.provider.in_((SARVAM, ELEVENLABS)),
             ClonedVoice.deleted_at.is_(None),
         ))
-    is_clone = cloned is not None and str(cloned.status) == "ready" and LANGUAGES[language].clone_supported
+    ready = cloned is not None and str(cloned.status) == "ready"
+    eleven_clone = ready and cloned.provider == ELEVENLABS and clone_fits(cloned.provider, cloned.language, language)
+    # Sarvam clones stay valid in any clone language here, so agents saved before Hinglish
+    # clones moved to ElevenLabs keep their voice; the picker only offers them elsewhere.
+    is_clone = ready and cloned.provider == SARVAM and LANGUAGES[language].clone_supported
     stock_ok = voice_id in {v.id for v in voices_for(language, settings)}
-    return {"sarvam": sarvam_call_config(language, voice_id if (is_clone or stock_ok) else None, settings, cloned=is_clone)}
+    keep = is_clone or eleven_clone or stock_ok
+    return {"sarvam": sarvam_call_config(language, voice_id if keep else None, settings,
+                                         cloned=is_clone, eleven_clone=eleven_clone)}
 
 
 def languages_for(settings: OwnerSettings) -> list[dict]:
