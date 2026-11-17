@@ -384,7 +384,11 @@ async def update_agent(
 ):
     agent = await _editable_agent(db, agent_id, token)
 
-    if body.voice_id is not None or body.language is not None:
+    # Only a changed choice is checked: a voice saved before a language's voice list changed
+    # (e.g. Sarvam Hinglish voices) must not block other edits; calls fall back to the default voice.
+    voice_changed = body.voice_id is not None and body.voice_id != agent.voice_id
+    language_changed = body.language is not None and body.language.lower() != str(agent.language).lower()
+    if voice_changed or language_changed:
         await check_voice_choice(
             db,
             token.org_id,
