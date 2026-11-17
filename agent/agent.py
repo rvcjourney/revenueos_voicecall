@@ -160,6 +160,7 @@ _BACKCHANNEL_WORDS = frozenset({
 _BACKCHANNEL_MAX_WORDS = 6
 _LLM_FIRST_TOKEN_TIMEOUT_S = 8.0  # no first word by now: say the "repeat" line instead of silence
 _GOODBYE_TIMEOUT_S = 20.0 # hang up anyway if the closing statement never finishes playing
+_BARGE_IN_S = 1.0         # caller talking this long over the agent stops it ("haan"/"hmm" are shorter)
 _GOODBYE_MAX_S = 60.0     # ...but a goodbye still being spoken gets this long before we cut it
 _TRANSFER_RING_S = 30     # how long transfer_call rings the team member before giving up
 _TRANSFER_MAX_S = 3600    # a bridged call still ends after an hour (it outlives max_duration)
@@ -705,7 +706,17 @@ class VoiceAgent(Agent):
         # LLM replies to. "haan" after the agent finished (answering its question)
         # is untouched: current_speech is done by then.
         logged = False
+        barge_in: asyncio.TimerHandle | None = None
         async for ev in Agent.default.stt_node(self, audio, model_settings):
+            # Sarvam sends no words until the caller stops, and the SDK only stops the agent
+            # on words, so a caller cutting in was talked over to the end of their sentence.
+            if isinstance(ev, stt.SpeechEvent) and ev.type in (
+                    stt.SpeechEventType.START_OF_SPEECH, stt.SpeechEventType.END_OF_SPEECH):
+                if barge_in:
+                    barge_in.cancel()
+                    barge_in = None
+                if ev.type == stt.SpeechEventType.START_OF_SPEECH and self._agent_mid_speech():
+                    barge_in = asyncio.get_running_loop().call_later(_BARGE_IN_S, self._barge_in)
             rid = getattr(ev, "request_id", None)
             if rid and not logged:
                 logged = True
@@ -724,6 +735,13 @@ class VoiceAgent(Agent):
                 logger.info("Backchannel ignored while agent speaking: %r", ev.alternatives[0].text)
                 continue
             yield ev
+
+    def _barge_in(self) -> None:
+        speech = self.session.current_speech
+        if speech is not None and speech.allow_interruptions and not speech.interrupted and not speech.done():
+            logger.info("Caller talking over the agent for %.1fs — stopping its speech (turn %d)",
+                        _BARGE_IN_S, self._turn_count)
+            speech.interrupt()
 
     def _agent_mid_speech(self) -> bool:
         # current_speech stays set (not interrupted, not done) while its audio is
