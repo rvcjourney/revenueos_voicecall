@@ -354,6 +354,7 @@ export interface ConcurrencyUsage {
   max: number;
   queued: number;
   my_queued: number;
+  live: number; // in_use plus test calls in progress
 }
 
 export interface ClonedVoice {

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Bot, Headset, Loader2, Lock, Pencil, Phone, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 import { useAgents, useDeleteAgent, useRequestAgentAccess, useMyTrunks } from "@/lib/hooks";
-import { agentsApi, apiErrorMessage } from "@/lib/api";
+import { agentsApi, apiErrorMessage, callsApi } from "@/lib/api";
 import { languageLabel } from "@/lib/languages";
 import { formatDate } from "@/lib/utils";
 import type { AgentTemplate } from "@/lib/types";
@@ -170,12 +171,26 @@ function AgentCard({
   );
 }
 
+// "Ringing" isn't reported separately: the call reads "Calling" until it's answered.
+const LIVE_STATUS: Record<string, string> = { initiated: "Calling…", ringing: "Ringing…", connected: "Connected" };
+const ENDED_STATUS: Record<string, string> = {
+  completed: "Call ended", no_answer: "No answer", busy: "Line busy", failed: "Call failed", cancelled: "Call cancelled",
+};
+
 export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate | null; onOpenChange: () => void }) {
   const [phone, setPhone] = useState("+91");
   const [trunkId, setTrunkId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [callId, setCallId] = useState<string | null>(null);
   const trunks = useMyTrunks();
+  const live = useQuery({
+    queryKey: ["call", callId],
+    queryFn: () => callsApi.get(callId!).then((r) => r.data),
+    enabled: !!callId,
+    refetchInterval: (q) => (q.state.data && !(q.state.data.status in LIVE_STATUS) ? false : 2000),
+  });
+  const status = live.data?.status ?? "initiated";
 
   const trunkOptions = trunks.data ?? [];
   const selectedTrunk = trunkOptions.find((t) => t.id === trunkId) ?? trunkOptions[0];
@@ -185,9 +200,8 @@ export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate |
     setLoading(true);
     setError(null);
     try {
-      await agentsApi.testCall(agent.id, phone, selectedTrunk?.id);
-      toast.success("Test call started — it should ring shortly");
-      onOpenChange();
+      const { data } = await agentsApi.testCall(agent.id, phone, selectedTrunk?.id);
+      setCallId(data.call_id);
     } catch (err) {
       // Shown inline (not just as a toast) since a toast can be missed while
       // the dialog stays open, and errors here (e.g. "call already in progress",
@@ -199,11 +213,21 @@ export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate |
   }
 
   return (
-    <Dialog open={!!agent} onOpenChange={(v) => !v && onOpenChange()}>
+    <Dialog open={!!agent} onOpenChange={(v) => { if (!v) { setCallId(null); onOpenChange(); } }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Test call — {agent?.name}</DialogTitle>
         </DialogHeader>
+        {callId ? (
+          <div className="flex flex-col items-center gap-3 py-6 text-center" aria-live="polite">
+            {status in LIVE_STATUS && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+            <p className="font-heading text-xl font-semibold">{LIVE_STATUS[status] ?? ENDED_STATUS[status] ?? "Call ended"}</p>
+            <p className="font-mono text-sm text-muted-foreground">{phone}</p>
+            {!(status in LIVE_STATUS) && (
+              <Link to={`/calls/${callId}`} className="text-sm text-primary hover:underline">View call details</Link>
+            )}
+          </div>
+        ) : (<>
         <div className="space-y-1.5">
           <Label>From</Label>
           {trunks.isLoading ? (
@@ -236,6 +260,7 @@ export function TestCallDialog({ agent, onOpenChange }: { agent: AgentTemplate |
             Place test call
           </Button>
         </DialogFooter>
+        </>)}
       </DialogContent>
     </Dialog>
   );
