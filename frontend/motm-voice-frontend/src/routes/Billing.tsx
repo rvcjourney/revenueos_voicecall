@@ -183,13 +183,14 @@ function ActivePlanBilling({ billing }: { billing: ReturnType<typeof useBillingC
               )}
             </div>
             {credits.isLoading || !credits.data ? <Skeleton className="h-2 w-full" /> : <Progress value={pct} />}
-            {credits.data && credits.data.overage_minutes > 0 && (
-              <p className="text-xs text-warning">
-                {credits.data.overage_minutes.toLocaleString()} overage minute
-                {credits.data.overage_minutes === 1 ? "" : "s"} this period
+            {credits.data && credits.data.used >= credits.data.allotted && (
+              <p className="text-xs text-destructive">
+                Credit limit reached — new calls are paused until you renew or upgrade.
+                {credits.data.overage_minutes > 0 &&
+                  ` Calls already running when the limit was hit used ${credits.data.overage_minutes.toLocaleString()} extra minute${credits.data.overage_minutes === 1 ? "" : "s"}.`}
               </p>
             )}
-            {credits.data && credits.data.overage_minutes === 0 && creditsNear && (
+            {credits.data && credits.data.used < credits.data.allotted && creditsNear && (
               <p className="text-xs text-warning">Approaching credit limit — {Math.round(pct)}% used. Add credits before you run out.</p>
             )}
           </div>
