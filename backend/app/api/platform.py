@@ -55,6 +55,7 @@ from app.models.voice_clone_request import VoiceCloneRequest
 from app.schemas.billing import TaxInvoiceListOut, TaxInvoiceOut
 from app.schemas.platform import (
     CreditAdjustRequest,
+    CreditAddRequest,
     CreditAdjustResponse,
     OrgDetailOut,
     OrgListItemOut,
@@ -484,6 +485,47 @@ async def adjust_org_credits(
     )
 
 
+@router.post("/orgs/{org_id}/credits/add", response_model=CreditAdjustResponse)
+async def add_org_minutes(
+    org_id: UUID,
+    body: CreditAddRequest,
+    admin: PlatformAdmin = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Raise an org's allowance for the current billing period by `minutes` (top-up / goodwill)."""
+    org = await db.get(Organization, org_id)
+    if not org or org.deleted_at:
+        raise NotFoundError("Organization not found")
+
+    await reset_credit_period_if_stale(db, org)
+    before = org.bonus_credits_this_period
+    org.bonus_credits_this_period = before + body.minutes
+
+    db.add(AuditLog(
+        actor_type="platform_admin",
+        actor_id=admin.id,
+        org_id=org.id,
+        action="credits.add",
+        target_type="organization",
+        target_id=org.id,
+        audit_metadata={
+            "minutes": body.minutes,
+            "reason": body.reason,
+            "bonus_from": before,
+            "bonus_to": org.bonus_credits_this_period,
+        },
+    ))
+
+    await db.commit()
+    await db.refresh(org)
+    credits_per_month = await resolve_org_credits_per_month(db, org.id)
+    return CreditAdjustResponse(
+        org_id=str(org.id),
+        credits_used_this_period=org.credits_used_this_period,
+        credits_per_month=credits_per_month,
+    )
+
+
 @router.post("/orgs/{org_id}/credits/reset", response_model=CreditAdjustResponse)
 async def reset_org_credits(
     org_id: UUID,
@@ -497,6 +539,7 @@ async def reset_org_credits(
 
     before = org.credits_used_this_period
     org.credits_used_this_period = 0
+    org.bonus_credits_this_period = 0
     org.last_credit_reset_at = datetime.now(timezone.utc)
 
     sub = await _active_subscription(db, org.id)

@@ -4,7 +4,7 @@ app/schemas/platform.py — Pydantic schemas for the SuperAdmin (platform) API.
 from __future__ import annotations
 
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class PlatformLoginRequest(BaseModel):
@@ -177,6 +177,12 @@ class CreditAdjustRequest(BaseModel):
     # clamped at a minimum of 0 — usage can't go negative.
     delta: int
     reason: str
+
+
+class CreditAddRequest(BaseModel):
+    # Extra minutes for the current billing period, on top of the plan.
+    minutes: int = Field(gt=0, le=100_000)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class CreditAdjustResponse(BaseModel):

@@ -310,6 +310,41 @@ async def test_credit_adjust_endpoint_clamps_at_zero(client, db):
     assert resp.json()["credits_used_this_period"] == 0
 
 
+async def test_credit_add_endpoint_raises_allowance_until_period_reset(client, db):
+    admin = PlatformAdmin(
+        email="super-credits5@motmvoice.com", hashed_password=hash_password("pw-super-5"),
+        full_name="Super Admin", is_active=True,
+    )
+    db.add(admin)
+    await db.flush()
+    org = await _make_org(db, credits_per_month=120)
+    org.credits_used_this_period = 123  # already over the plan
+    await db.commit()
+    headers = {"Authorization": f"Bearer {create_platform_token(str(admin.id))}"}
+    assert not await has_credits_remaining(db, org.id)
+
+    resp = await client.post(
+        f"/api/platform/orgs/{org.id}/credits/add",
+        json={"minutes": 200, "reason": "top-up paid by bank transfer"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"org_id": str(org.id), "credits_used_this_period": 123, "credits_per_month": 320}
+    await db.refresh(org)
+    assert await has_credits_remaining(db, org.id)
+
+    bad = await client.post(
+        f"/api/platform/orgs/{org.id}/credits/add", json={"minutes": 0, "reason": "x"}, headers=headers,
+    )
+    assert bad.status_code == 422
+
+    # A new billing period drops the bonus back to the plan's 120.
+    await client.post(f"/api/platform/orgs/{org.id}/credits/reset", headers=headers)
+    await db.refresh(org)
+    assert org.bonus_credits_this_period == 0
+    assert await resolve_org_credits_per_month(db, org.id) == 120
+
+
 async def test_credit_reset_endpoint_zeroes_usage(client, db):
     admin = PlatformAdmin(
         email="super-credits4@motmvoice.com", hashed_password=hash_password("pw-super-4"),

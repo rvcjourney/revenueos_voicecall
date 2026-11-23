@@ -70,6 +70,18 @@ export function useAdjustPlatformOrgCredits() {
   });
 }
 
+export function useAddPlatformOrgMinutes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { minutes: number; reason: string } }) =>
+      platformOrgsApi.addMinutes(id, data),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["platform-org", vars.id] });
+      qc.invalidateQueries({ queryKey: ["platform-orgs"] });
+    },
+  });
+}
+
 export function useResetPlatformOrgCredits() {
   const qc = useQueryClient();
   return useMutation({
