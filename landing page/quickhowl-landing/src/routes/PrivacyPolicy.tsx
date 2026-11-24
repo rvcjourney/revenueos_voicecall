@@ -2,7 +2,7 @@ import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { PlatformTabProvider } from "@/lib/platformTab";
 
-const LAST_UPDATED = "17 August 2026";
+const LAST_UPDATED = "24 November 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -178,7 +178,7 @@ export default function PrivacyPolicy() {
                 <li>Withdraw consent previously given (for example, for a cloned voice) — though this may limit or end related features.</li>
                 <li>Lodge a complaint with us, or with the relevant data protection authority.</li>
               </ul>
-              <p>To exercise any of these rights, contact us using the details in Section 13.</p>
+              <p>To exercise any of these rights, contact us using the details in Section 14.</p>
             </Section>
 
             <Section title="10. Children's Privacy">
@@ -193,7 +193,47 @@ export default function PrivacyPolicy() {
               </p>
             </Section>
 
-            <Section title="12. Changes to This Policy">
+            <Section title="12. Google and YouTube Data">
+              <p>
+                QuickHowl uses <strong className="text-foreground">YouTube API Services</strong> to publish and
+                manage videos on YouTube channels whose owners have signed in with Google and authorized QuickHowl.
+                By connecting a YouTube account you agree to be bound by the 
+                <a href="https://www.youtube.com/t/terms" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">YouTube Terms of Service</a>, and your data is also
+                handled under the 
+                <a href="https://policies.google.com/privacy" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">Google Privacy Policy</a>.
+              </p>
+              <p>
+                <strong className="text-foreground">What we access.</strong> Only what the permissions you approve
+                allow: the connected channel's basic details (name and ID), the videos we upload for you and their
+                titles, descriptions, thumbnails, and publishing status, and the access tokens Google issues so we
+                can act on your behalf.
+              </p>
+              <p>
+                <strong className="text-foreground">How we use and store it.</strong> We use this data only to
+                upload, schedule, and update videos on your channel as you instruct. Access tokens are stored
+                encrypted on our servers. We do not sell this data, use it for advertising, or share it with anyone
+                except the infrastructure providers listed in Section 5 that host our service.
+              </p>
+              <p>
+                <strong className="text-foreground">Limited Use.</strong> QuickHowl's use and transfer of
+                information received from Google APIs adheres to the 
+                <a href="https://developers.google.com/terms/api-services-user-data-policy" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                  Google API Services User Data Policy
+                </a>
+                , including the Limited Use requirements.
+              </p>
+              <p>
+                <strong className="text-foreground">Removing access.</strong> You can revoke QuickHowl's access at
+                any time from your 
+                <a href="https://security.google.com/settings/security/permissions" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                  Google security settings
+                </a>
+                . When access is revoked, or if you ask us at the address in Section 14, we delete the stored tokens
+                and YouTube data we hold within 30 days. Videos already published stay on YouTube under your control.
+              </p>
+            </Section>
+
+            <Section title="13. Changes to This Policy">
               <p>
                 We may update this Privacy Policy from time to time. Material changes will be reflected by updating
                 the "Last updated" date above; continued use of QuickHowl after a change means you accept the
@@ -201,7 +241,7 @@ export default function PrivacyPolicy() {
               </p>
             </Section>
 
-            <Section title="13. Contact Us / Grievance Officer">
+            <Section title="14. Contact Us / Grievance Officer">
               <p>
                 For any questions about this policy, to exercise your data rights, or to raise a grievance, contact
                 us at:
