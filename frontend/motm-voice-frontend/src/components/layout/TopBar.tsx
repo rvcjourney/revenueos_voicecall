@@ -15,7 +15,7 @@ export function TopBar() {
     day: "numeric",
   });
 
-  const liveCalls = concurrency.data?.in_use ?? 0;
+  const liveCalls = concurrency.data?.live ?? 0;
   const isLive = liveCalls > 0;
 
   return (

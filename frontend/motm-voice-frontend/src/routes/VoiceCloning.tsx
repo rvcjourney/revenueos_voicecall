@@ -307,7 +307,9 @@ export default function VoiceCloning() {
                   </Select>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Use 10–15 seconds of calm, clear speech from one person. The voice can then speak any supported language.
+                  {sampleLanguage === "hinglish"
+                    ? "Use 1–2 minutes of calm, clear speech from one person. This voice is offered for Hinglish agents."
+                    : "Use 10–15 seconds of calm, clear speech from one person. This voice is offered for every language except Hinglish."}
                 </p>
           </div>
 
@@ -457,6 +459,7 @@ export default function VoiceCloning() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Used for</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -466,6 +469,7 @@ export default function VoiceCloning() {
                 {clonedVoices.data.map((v) => (
                   <TableRow key={v.id}>
                     <TableCell className="font-medium">{v.name}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{v.hinglish_only ? "Hinglish calls" : "Other languages"}</TableCell>
                     <TableCell>
                       <div className="space-y-1">
                         <Badge variant={STATUS_VARIANTS[v.status] ?? "destructive"}>

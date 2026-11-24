@@ -354,6 +354,7 @@ export interface ConcurrencyUsage {
   max: number;
   queued: number;
   my_queued: number;
+  live: number; // in_use plus test calls in progress
 }
 
 export interface ClonedVoice {
@@ -363,6 +364,7 @@ export interface ClonedVoice {
   status: "ready" | "failed" | "pending" | "rejected";
   rejection_reason?: string | null;
   language?: string | null;
+  hinglish_only: boolean; // offered for Hinglish only; otherwise for every other language
   created_at: string;
 }
 

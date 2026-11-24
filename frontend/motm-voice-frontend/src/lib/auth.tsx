@@ -53,6 +53,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
+  // Tabs share one stored session: after a sign-in/out in another tab this tab would keep
+  // showing the old user while sending the new user's token ("Admin access required").
+  const userId = user?.id;
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== USER_KEY && e.key !== null) return; // token refreshes don't change who's signed in
+      if (readStoredUser()?.id !== userId) window.location.reload();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [userId]);
+
   const persistSession = useCallback((res: { access_token: string; refresh_token: string; user: User }) => {
     localStorage.setItem(TOKEN_KEY, res.access_token);
     localStorage.setItem(REFRESH_TOKEN_KEY, res.refresh_token);

@@ -232,6 +232,22 @@ async def test_create_rejects_duplicate_and_bad_phone(client, db):
     assert 400 <= (await client.post("/api/leads", json={"phone": "abcde"}, headers=h)).status_code < 500
 
 
+async def test_add_lead_rejects_bad_mobile_and_email(client, db):
+    _, _, h = await _org(db)
+
+    async def add(**body):
+        return (await client.post("/api/leads", json=body, headers=h)).status_code
+
+    for phone in ("12345", "987654321012", "5812345678"):  # short, 12 digits, starts with 5
+        assert 400 <= await add(phone=phone) < 500, phone
+    for email in ("test123@", "invalidemail"):
+        assert 400 <= await add(phone="9812345671", email=email) < 500, email
+    assert await add(phone="9812345671", email="asha@acme.in") == 201
+    lead_id = (await client.get("/api/leads", headers=h)).json()["items"][0]["id"]
+    r = await client.patch(f"/api/leads/{lead_id}", json={"email": "nope@"}, headers=h)
+    assert 400 <= r.status_code < 500
+
+
 async def test_deleted_lead_disappears_and_returns_when_called(client, db):
     org, _, h = await _org(db)
     await _report(client, (await _campaign_call(db, org)).id)

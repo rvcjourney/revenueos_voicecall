@@ -18,7 +18,7 @@ Everything is off until these are set in `backend/.env`. Restart the API after c
 
 `PUBLIC_BASE_URL` must already be set, as it is for connecting a number in the dashboard.
 
-Migration `0053_revenueos_integration` must be applied first. It adds two new tables and changes no existing one.
+Migration `0054_revenueos_integration` must be applied first. It adds two new tables and changes no existing one.
 
 `DB_SCHEMA` (optional) puts all of this app's tables in their own Postgres schema, for a database shared with another app. RevenueOS uses `DB_SCHEMA=voice` in RevenueOSDatabase.
 

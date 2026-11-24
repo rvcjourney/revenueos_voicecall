@@ -19,7 +19,7 @@ changed since this specific historical charge.
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from jinja2 import Template
@@ -48,6 +48,7 @@ from app.models.user import Organization
 from app.storage.backend import get_storage
 
 log = structlog.get_logger(__name__)
+IST = timezone(timedelta(hours=5, minutes=30))  # India has no daylight saving
 
 _ONES = [
     "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
@@ -251,7 +252,9 @@ async def generate_invoice_for_charge(
         igst_minor = tax_minor
 
     now = datetime.now(timezone.utc)
-    invoice_number, receipt_number = await _next_invoice_number(db, now.year)
+    # GST invoices are dated in India time; the UTC date is a day behind before 05:30 IST
+    now_ist = now.astimezone(IST)
+    invoice_number, receipt_number = await _next_invoice_number(db, now_ist.year)
     place_of_supply = state_with_code(customer_state) if customer_state in GST_STATE_CODES else customer_state
 
     pdf_bytes = _render_invoice_pdf(
@@ -262,7 +265,7 @@ async def generate_invoice_for_charge(
         seller_support_email=SELLER_SUPPORT_EMAIL,
         invoice_number=invoice_number,
         receipt_number=receipt_number,
-        date_paid=now.strftime("%d %B %Y"),
+        date_paid=now_ist.strftime("%d %B %Y"),
         customer_name=org.name,
         customer_address_line=org.billing_address_line,
         customer_city=org.billing_city,

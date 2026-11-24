@@ -52,15 +52,18 @@ async def resolve_org_credits_per_month(db: AsyncSession, org_id: UUID) -> int:
     Effective monthly credit allotment for the org's *current* period: the
     plan's credits_per_month, unless a mid-period plan change left a prorated
     blend on the subscription (Subscription.prorated_credits_override — see
-    app/core/billing.py:compute_blended_monthly_credits).
+    app/core/billing.py:compute_blended_monthly_credits). Plus any minutes a
+    SuperAdmin added this period (Organization.bonus_credits_this_period).
     """
+    org = await db.get(Organization, org_id)
+    bonus = org.bonus_credits_this_period if org else 0
     sub = await _active_subscription(db, org_id)
     if not sub:
-        return DEFAULT_CREDITS_PER_MONTH
+        return DEFAULT_CREDITS_PER_MONTH + bonus
     if sub.prorated_credits_override is not None:
-        return sub.prorated_credits_override
+        return sub.prorated_credits_override + bonus
     plan = await db.get(Plan, sub.plan_id)
-    return plan.credits_per_month if plan else DEFAULT_CREDITS_PER_MONTH
+    return (plan.credits_per_month if plan else DEFAULT_CREDITS_PER_MONTH) + bonus
 
 
 async def resolve_org_credit_price_cents(db: AsyncSession, org_id: UUID) -> int:
@@ -86,6 +89,7 @@ async def reset_credit_period(db: AsyncSession, org: Organization, *, now: datet
     """
     now = now or datetime.now(timezone.utc)
     org.credits_used_this_period = 0
+    org.bonus_credits_this_period = 0
     org.last_credit_reset_at = now
 
     sub = await _active_subscription(db, org.id)

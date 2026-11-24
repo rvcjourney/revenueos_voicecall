@@ -160,6 +160,8 @@ _BACKCHANNEL_WORDS = frozenset({
 _BACKCHANNEL_MAX_WORDS = 6
 _LLM_FIRST_TOKEN_TIMEOUT_S = 8.0  # no first word by now: say the "repeat" line instead of silence
 _GOODBYE_TIMEOUT_S = 20.0 # hang up anyway if the closing statement never finishes playing
+_BARGE_IN_S = 1.0         # caller talking this long over the agent stops it ("haan"/"hmm" are shorter)
+_GOODBYE_MAX_S = 60.0     # ...but a goodbye still being spoken gets this long before we cut it
 _TRANSFER_RING_S = 30     # how long transfer_call rings the team member before giving up
 _TRANSFER_MAX_S = 3600    # a bridged call still ends after an hour (it outlives max_duration)
 # Splits on anything but letters/digits/Devanagari. The explicit Devanagari
@@ -365,10 +367,10 @@ class VoiceAgent(Agent):
     # ── Tools ─────────────────────────────────────────────────────────────────
     @function_tool
     async def end_interaction(self, ctx: RunContext, end_message: str = "") -> None:
-        """Use this tool when you want to end the conversation gracefully: when the conversation reaches a natural end, when the instructions say to end it, or when the user asks to end the call. Always pass a short closing statement in end_message, in the current language of the conversation. Only put the spoken message in end_message and do not write anything as normal text output.
+        """Use this tool when you want to end the conversation gracefully: when the conversation reaches a natural end, when the instructions say to end it, or when the user clearly says goodbye or that they are not interested. Never end the call while the user is mid-sentence, asking something, or asking about the offer: answer them instead. Always pass a short closing statement in end_message, in the current language of the conversation. Only put the spoken message in end_message and do not write anything as normal text output.
 
         Args:
-            end_message: The closing statement spoken to the user before the call ends.
+            end_message: One short sentence (under 15 words) of thanks and goodbye. No summary, no pitch.
         """
         if self._ending:
             return None
@@ -385,9 +387,18 @@ class VoiceAgent(Agent):
         # itself): hang up from its done-callback, with a timer as a safety net.
         goodbye = self.session.say(message, allow_interruptions=False)
         goodbye.add_done_callback(lambda _: _safe_task(self._hangup_after_goodbye(), "end-interaction"))
-        asyncio.get_running_loop().call_later(
-            _GOODBYE_TIMEOUT_S, lambda: _safe_task(self._hangup_after_goodbye(), "end-interaction-timeout"))
+        asyncio.get_running_loop().call_later(_GOODBYE_TIMEOUT_S, self._goodbye_timeout, _GOODBYE_TIMEOUT_S)
         return None
+
+    def _goodbye_timeout(self, waited: float) -> None:
+        """Safety net for a goodbye that never plays. One still being spoken is left to finish
+        (a 21 s goodbye was cut mid-word by a flat 20 s timer), up to _GOODBYE_MAX_S."""
+        if self._hung_up:
+            return
+        if not self._speaking_done.is_set() and waited < _GOODBYE_MAX_S:
+            asyncio.get_running_loop().call_later(5.0, self._goodbye_timeout, waited + 5.0)
+            return
+        _safe_task(self._hangup_after_goodbye(), "end-interaction-timeout")
 
     async def _hangup_after_goodbye(self) -> None:
         if self._hung_up:
@@ -695,7 +706,17 @@ class VoiceAgent(Agent):
         # LLM replies to. "haan" after the agent finished (answering its question)
         # is untouched: current_speech is done by then.
         logged = False
+        barge_in: asyncio.TimerHandle | None = None
         async for ev in Agent.default.stt_node(self, audio, model_settings):
+            # Sarvam sends no words until the caller stops, and the SDK only stops the agent
+            # on words, so a caller cutting in was talked over to the end of their sentence.
+            if isinstance(ev, stt.SpeechEvent) and ev.type in (
+                    stt.SpeechEventType.START_OF_SPEECH, stt.SpeechEventType.END_OF_SPEECH):
+                if barge_in:
+                    barge_in.cancel()
+                    barge_in = None
+                if ev.type == stt.SpeechEventType.START_OF_SPEECH and self._agent_mid_speech():
+                    barge_in = asyncio.get_running_loop().call_later(_BARGE_IN_S, self._barge_in)
             rid = getattr(ev, "request_id", None)
             if rid and not logged:
                 logged = True
@@ -714,6 +735,13 @@ class VoiceAgent(Agent):
                 logger.info("Backchannel ignored while agent speaking: %r", ev.alternatives[0].text)
                 continue
             yield ev
+
+    def _barge_in(self) -> None:
+        speech = self.session.current_speech
+        if speech is not None and speech.allow_interruptions and not speech.interrupted and not speech.done():
+            logger.info("Caller talking over the agent for %.1fs — stopping its speech (turn %d)",
+                        _BARGE_IN_S, self._turn_count)
+            speech.interrupt()
 
     def _agent_mid_speech(self) -> bool:
         # current_speech stays set (not interrupted, not done) while its audio is

@@ -9,16 +9,16 @@ Only adds two new tables; no existing table or row is changed.
 
 RLS enabled on both with no policies, same reasoning as 0025/0033.
 
-Revision ID: 0053
-Revises: 0052
+Revision ID: 0054
+Revises: 0053
 Create Date: 2026-11-05
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0053"
-down_revision = "0052"
+revision = "0054"
+down_revision = "0053"
 branch_labels = None
 depends_on = None
 

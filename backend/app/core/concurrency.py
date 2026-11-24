@@ -10,6 +10,8 @@ app/workers/tasks/campaign.py — it's a worker-only concern with no read API.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -228,4 +230,13 @@ async def get_current_usage(session: AsyncSession, org_id: UUID, user_id: UUID |
             my_queued = await get_user_queued(user_id)
     except Exception:
         pass
-    return {"in_use": in_use, "max": max_concurrent, "queued": queued, "my_queued": my_queued}
+    # Test calls don't take a plan slot, but the top bar's live count should still show them.
+    from app.models.call import Call, CallStatus
+    live_tests = await session.scalar(select(func.count()).select_from(Call).where(
+        Call.org_id == org_id,
+        Call.livekit_room_name.like("test-%"),
+        Call.status.in_([CallStatus.INITIATED, CallStatus.RINGING, CallStatus.CONNECTED]),
+        Call.started_at > datetime.now(timezone.utc) - timedelta(minutes=15),  # a test call lasts 11 min at most
+    )) or 0
+    return {"in_use": in_use, "max": max_concurrent, "queued": queued, "my_queued": my_queued,
+            "live": in_use + live_tests}

@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.contacts_file import normalize_phone, parse_contacts_file
+from app.core.contacts_file import is_valid_phone, normalize_phone, parse_contacts_file
 from app.core.deps import TokenPayload, get_current_user
 from app.core.email_sender import EmailSendError, org_smtp_config, send_email, smtp_configured
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError as AppValidationError
@@ -45,7 +45,7 @@ FollowUpLit = Literal["due_today", "overdue", "upcoming"]
 
 _IST = ZoneInfo("Asia/Kolkata")  # "today" for follow-ups and date ranges
 
-_PHONE_RE = re.compile(r"^\+\d{6,15}$")
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", re.IGNORECASE)
 _MAX_IMPORT_ROWS = 5000
 
 
@@ -104,9 +104,14 @@ def _activity(lead: Lead, type_: str, payload: dict, user_id: UUID | None) -> Le
 
 def _clean_phone(raw: str) -> str:
     phone = normalize_phone(raw)
-    if not _PHONE_RE.match(phone):
-        raise AppValidationError("Enter a valid phone number, e.g. +919876543210", errors=[])
+    if not is_valid_phone(phone):
+        raise AppValidationError("Enter a valid 10-digit mobile number (starting 6-9), or +country code for other countries", errors=[])
     return phone
+
+
+def _check_email(email: str | None) -> None:
+    if email and email.strip() and not _EMAIL_RE.fullmatch(email.strip()):
+        raise AppValidationError("Enter a valid email address, e.g. name@company.com", errors=[])
 
 
 def _check_custom_fields(fields: dict[str, str]) -> None:
@@ -290,6 +295,7 @@ class LeadCreate(BaseModel):
 @router.post("", status_code=201)
 async def create_lead(body: LeadCreate, token: TokenPayload = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     phone = _clean_phone(body.phone)
+    _check_email(body.email)
     _check_custom_fields(body.custom_fields)
     members = await _members(db, token.org_id)
     if body.owner_id and body.owner_id not in members:
@@ -334,7 +340,7 @@ async def import_leads(
 
     created = updated = 0
     for phone, r in by_phone.items():
-        if not _PHONE_RE.match(phone):
+        if not is_valid_phone(phone):
             continue
         lead = existing.get(phone)
         is_new = lead is None
@@ -343,7 +349,7 @@ async def import_leads(
             db.add(lead)
         lead.deleted_at = None
         lead.name = r["name"] or lead.name
-        lead.email = r["email"] or lead.email
+        lead.email = r["email"] if r["email"] and _EMAIL_RE.fullmatch(r["email"].strip()) else lead.email
         lead.company = r["company"] or lead.company
         lead.custom_fields = {**(lead.custom_fields or {}), **r["custom_fields"]}
         await db.flush()
@@ -416,8 +422,7 @@ async def update_lead(
         _check_custom_fields(changes["custom_fields"])
     if "tags" in changes:
         changes["tags"] = [t.strip()[:40] for t in changes["tags"] if t.strip()]
-    if changes.get("email") and "@" not in changes["email"]:
-        raise AppValidationError("Enter a valid email address", errors=[])
+    _check_email(changes.get("email"))
 
     edited: dict = {}
     for field, new in changes.items():

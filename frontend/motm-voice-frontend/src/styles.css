@@ -170,8 +170,9 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-heading: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  /* Inter/Manrope have no Indic letters; the Noto fonts keep Hindi and regional transcripts in one style */
+  --font-sans: "Inter", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Tamil", "Noto Sans Telugu", "Noto Sans Gujarati", "Noto Sans Kannada", "Noto Sans Gurmukhi", "Noto Sans Malayalam", "Noto Sans Oriya", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Manrope", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Tamil", "Noto Sans Telugu", "Noto Sans Gujarati", "Noto Sans Kannada", "Noto Sans Gurmukhi", "Noto Sans Malayalam", "Noto Sans Oriya", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
   --animate-fade-up: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;

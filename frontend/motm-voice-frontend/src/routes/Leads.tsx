@@ -116,7 +116,8 @@ export default function Leads() {
 
   async function handleExport() {
     try {
-      await leadsApi.exportCsv(filters);
+      // Ticked rows only, when any are ticked; otherwise everything matching the filters.
+      await leadsApi.exportCsv(filters, selected.size ? [...selected] : undefined);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Export failed");
     }

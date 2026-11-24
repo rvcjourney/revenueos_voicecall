@@ -38,7 +38,7 @@ export default function PlatformEngines() {
     <div className="space-y-6">
       <PageHeader
         title="Languages & voices"
-        description="Speech recognition and the AI always run on Sarvam. Hindi, Hinglish and English are spoken by Sarvam (Bulbul); a regional language is spoken by ElevenLabs once you add voices for it. Changes apply to the next call; calls in progress finish unchanged."
+        description="Speech recognition and the AI always run on Sarvam. Hindi and English are spoken by Sarvam (Bulbul); Hinglish (and a regional language, when ElevenLabs is switched on for them) is spoken by ElevenLabs once you add voices for it. Changes apply to the next call; calls in progress finish unchanged."
       />
 
       <Card>
@@ -139,7 +139,7 @@ function LatencyCard() {
   );
 }
 
-/** Owner-managed ElevenLabs voices for a regional language: copy a voice ID from
+/** Owner-managed ElevenLabs voices for Hinglish or a regional language: copy a voice ID from
  * ElevenLabs, name it and tag its gender; customers pick from this list. Remove
  * them all and the language goes back to Sarvam voices. */
 function ElevenVoices({ lang, disabled, onSave }: {

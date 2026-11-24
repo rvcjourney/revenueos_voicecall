@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformCallsChart, PlatformCreditsChart } from "@/components/charts/PlatformUsageCharts";
 import {
+  useAddPlatformOrgMinutes,
   useAdjustPlatformOrgCredits,
   useDeletePlatformOrg,
   usePlatformOrg,
@@ -335,7 +336,11 @@ function CreditsCard({ id }: { id: string }) {
   const [reason, setReason] = useState("");
   const [adjustConfirmOpen, setAdjustConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [addMinutes, setAddMinutes] = useState("");
+  const [addReason, setAddReason] = useState("");
+  const [addConfirmOpen, setAddConfirmOpen] = useState(false);
 
+  const add = useAddPlatformOrgMinutes();
   const adjust = useAdjustPlatformOrgCredits();
   const reset = useResetPlatformOrgCredits();
 
@@ -352,6 +357,21 @@ function CreditsCard({ id }: { id: string }) {
       setAdjustConfirmOpen(false);
     } catch (err) {
       toast.error(platformApiErrorMessage(err, "Couldn't adjust credits"));
+    }
+  }
+
+  const parsedAdd = Number(addMinutes);
+  const canSubmitAdd = Number.isInteger(parsedAdd) && parsedAdd > 0 && addReason.trim().length > 0;
+
+  async function handleAddConfirm() {
+    try {
+      await add.mutateAsync({ id, data: { minutes: parsedAdd, reason: addReason.trim() } });
+      toast.success(`${parsedAdd.toLocaleString()} minutes added`);
+      setAddMinutes("");
+      setAddReason("");
+      setAddConfirmOpen(false);
+    } catch (err) {
+      toast.error(platformApiErrorMessage(err, "Couldn't add minutes"));
     }
   }
 
@@ -375,6 +395,41 @@ function CreditsCard({ id }: { id: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5 pt-0">
+        <div className="space-y-3 rounded-lg border border-border p-4">
+          <div>
+            <p className="text-sm font-medium">Add minutes</p>
+            <p className="text-xs text-muted-foreground">
+              Raises this organization's limit for the current billing period. Extra minutes end when the period
+              renews or is reset.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
+            <div className="space-y-1.5">
+              <Label>Minutes</Label>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                placeholder="e.g. 100"
+                value={addMinutes}
+                onChange={(e) => setAddMinutes(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Reason (required)</Label>
+              <Input
+                placeholder="e.g. Top-up paid by bank transfer"
+                value={addReason}
+                onChange={(e) => setAddReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <Button variant="gradient" onClick={() => setAddConfirmOpen(true)} disabled={!canSubmitAdd}>
+            Add minutes
+          </Button>
+        </div>
+
+        <p className="text-sm font-medium">Correct usage</p>
         <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
           <div className="space-y-1.5">
             <Label>Delta</Label>
@@ -403,6 +458,16 @@ function CreditsCard({ id }: { id: string }) {
           </Button>
         </div>
       </CardContent>
+
+      <ConfirmDialog
+        open={addConfirmOpen}
+        onOpenChange={setAddConfirmOpen}
+        title="Add minutes?"
+        description={`This adds ${canSubmitAdd ? parsedAdd.toLocaleString() : 0} minutes to this organization's limit for the current billing period. Reason: "${addReason.trim()}"`}
+        confirmLabel="Add minutes"
+        loading={add.isPending}
+        onConfirm={handleAddConfirm}
+      />
 
       <ConfirmDialog
         open={adjustConfirmOpen}

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import PermissionDeniedError
@@ -52,6 +52,12 @@ async def is_voice_cloning_allowed(db: AsyncSession, org_id: UUID) -> bool:
     return bool(plan.features["voice_cloning"])
 
 
+def usable_clone(model):
+    """SQL filter for clones that count and can be listed: Sarvam ones, and ElevenLabs ones
+    made for Hinglish. Older ElevenLabs clones (no language) are unusable and hidden."""
+    return or_(model.provider == "sarvam", and_(model.provider == "elevenlabs", model.language == "hinglish"))
+
+
 async def count_org_voice_clone_slots_used(db: AsyncSession, org_id: UUID) -> int:
     """
     Active ClonedVoice rows + still-pending VoiceCloneRequest rows. A pending
@@ -60,15 +66,14 @@ async def count_org_voice_clone_slots_used(db: AsyncSession, org_id: UUID) -> in
     and have them all approved at once. Rejected requests never count (they
     never became, and never will become, a real voice).
     """
-    # Only Sarvam voices count: older ElevenLabs clones are unusable and hidden.
     active = await db.scalar(
         select(func.count(ClonedVoice.id)).where(
-            ClonedVoice.org_id == org_id, ClonedVoice.provider == "sarvam", ClonedVoice.deleted_at.is_(None)
+            ClonedVoice.org_id == org_id, usable_clone(ClonedVoice), ClonedVoice.deleted_at.is_(None)
         )
     )
     pending = await db.scalar(
         select(func.count(VoiceCloneRequest.id)).where(
-            VoiceCloneRequest.org_id == org_id, VoiceCloneRequest.provider == "sarvam",
+            VoiceCloneRequest.org_id == org_id, usable_clone(VoiceCloneRequest),
             VoiceCloneRequest.status == "pending",
         )
     )
@@ -86,6 +91,14 @@ async def check_voice_choice(db: AsyncSession, org_id: UUID, *, language: str, v
     from app.core import pipelines
     from app.core.exceptions import ValidationError as AppValidationError
 
+    settings = await pipelines.get_owner_settings(db)
+    # A voice on the language's list is fine as is, even if an old clone row shares its id
+    # (the default Hinglish voice was once cloned by another org on ElevenLabs).
+    listed = (pipelines.voices_for(language, settings)
+              if language in pipelines.LANGUAGES and pipelines.language_enabled(language, settings) else ())
+    if voice_id and voice_id in {v.id for v in listed}:
+        return
+
     cloned = None
     if voice_id:
         cloned = await db.scalar(
@@ -100,10 +113,13 @@ async def check_voice_choice(db: AsyncSession, org_id: UUID, *, language: str, v
             raise PermissionDeniedError(
                 "Your plan does not include voice cloning. Upgrade to Premium to use this voice."
             )
-        if cloned is not None and cloned.provider != pipelines.SARVAM:
-            raise AppValidationError("This cloned voice is no longer supported. Pick another voice.", errors=[])
+        if cloned is not None and not pipelines.clone_fits(cloned.provider, cloned.language, language):
+            raise AppValidationError(
+                "This cloned voice can't be used in this language — Hinglish uses voices cloned for Hinglish, "
+                "other languages use voices cloned in another language. Pick another voice.",
+                errors=[],
+            )
 
-    settings = await pipelines.get_owner_settings(db)
     try:
         pipelines.validate(language, voice_id, settings, cloned=cloned is not None)
     except pipelines.PipelineValidationError as exc:

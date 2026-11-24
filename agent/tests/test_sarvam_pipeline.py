@@ -543,6 +543,29 @@ async def test_end_interaction_hangs_up_once_even_if_the_timer_also_fires(monkey
         del agent_mod.VoiceAgent.session
 
 
+async def test_goodbye_timer_waits_for_a_long_goodbye_still_playing(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    later = []
+    monkeypatch.setattr(agent_mod.asyncio, "get_running_loop",
+                        lambda: SimpleNamespace(call_later=lambda d, cb, *a: later.append((cb, a))))
+    va._speaking_done.clear()  # goodbye still being spoken at the 20 s mark
+    va._goodbye_timeout(20.0)
+    await _drain()
+    assert order == [] and later[-1][1] == (25.0,)
+    va._speaking_done.set()  # finished speaking but no done-callback: hang up now
+    va._goodbye_timeout(25.0)
+    await _drain()
+    assert order == ["report", "disconnect"]
+
+
+async def test_goodbye_timer_still_cuts_a_goodbye_that_never_ends(monkeypatch):
+    va, order = _ending_agent(monkeypatch)
+    va._speaking_done.clear()
+    va._goodbye_timeout(agent_mod._GOODBYE_MAX_S)
+    await _drain()
+    assert order == ["report", "disconnect"]
+
+
 async def test_end_interaction_does_not_double_a_goodbye_the_model_already_spoke(monkeypatch):
     va, order = _ending_agent(monkeypatch)
     said = []
@@ -617,3 +640,18 @@ def test_hinglish_replies_are_asked_for_in_devanagari():
     assert "Devanagari" in out
     assert "Devanagari" not in agent_mod.build_instructions("Ananya", _state("tamil", "ritu"))
 
+
+
+
+def test_speed_slider_reaches_the_elevenlabs_voice_within_its_range(monkeypatch):
+    monkeypatch.setattr(sp, "ELEVENLABS_API_KEY", "k")
+    built = {}
+
+    class _Eleven(_Fake):
+        def on(self, *_):
+            pass
+
+    monkeypatch.setattr(sp.elevenlabs, "TTS", lambda **kw: built.update(kw) or _Eleven())
+    for pace, speed in ((0.85, 0.85), (1.5, 1.2), (0.5, 0.7)):  # ElevenLabs takes 0.7-1.2
+        sp.build_eleven(sp.parse_meta({**_el_meta(), "speech_pace": pace}))
+        assert built["voice_settings"].speed == speed

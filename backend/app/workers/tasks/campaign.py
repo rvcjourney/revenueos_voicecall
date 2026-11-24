@@ -1360,6 +1360,11 @@ async def _run_test_call_body(
             # Celery queue), so it can be far earlier than the actual dial and
             # would otherwise inflate duration by however long the task sat queued.
             answered_at = datetime.now(timezone.utc)
+            # The test-call dialog polls this to show "Connected" while the call is live.
+            async with AsyncSessionLocal() as session:
+                await session.execute(update(Call).where(Call.id == _UUID(call_id))
+                                      .values(status=CallStatus.CONNECTED, answered_at=answered_at))
+                await session.commit()
             await _wait_for_room_empty(
                 http,
                 room_name=room_name,

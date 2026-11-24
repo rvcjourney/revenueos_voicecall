@@ -40,7 +40,9 @@ export function QuotaConcurrencyCard({ orgInfo, credits, concurrency, loading }:
             )}
           </div>
           {loading || !credits ? <Skeleton className="h-2 w-full" /> : <Progress value={creditsPct} />}
-          {creditsNear && <p className="text-xs text-warning">Approaching credit limit — {Math.round(creditsPct)}% used</p>}
+          {credits && credits.used >= credits.allotted ? (
+            <p className="text-xs text-destructive">Credit limit reached — new calls are paused until you renew or upgrade in Billing</p>
+          ) : creditsNear && <p className="text-xs text-warning">Approaching credit limit — {Math.round(creditsPct)}% used</p>}
         </div>
 
         <div className="space-y-2">

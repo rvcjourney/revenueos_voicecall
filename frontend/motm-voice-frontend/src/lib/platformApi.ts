@@ -92,6 +92,8 @@ export const platformOrgsApi = {
   delete: (id: string) => platformApi.delete<void>(`/api/platform/orgs/${id}`),
   adjustCredits: (id: string, data: { delta: number; reason: string }) =>
     platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/adjust`, data),
+  addMinutes: (id: string, data: { minutes: number; reason: string }) =>
+    platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/add`, data),
   resetCredits: (id: string) => platformApi.post<PlatformOrgDetail>(`/api/platform/orgs/${id}/credits/reset`),
   invoices: (id: string) => platformApi.get<{ invoices: PlatformOrgInvoice[] }>(`/api/platform/orgs/${id}/invoices`),
   downloadInvoice: (id: string, invoiceId: string) =>

@@ -97,7 +97,23 @@ def test_regional_language_uses_elevenlabs_only_once_the_owner_adds_voices():
     assert [v.id for v in p.voices_for("gujarati", EL)] == ["9BWtsMINqrJLrRacOk9x"]
 
 
-def test_hindi_hinglish_english_never_use_elevenlabs():
+def test_hinglish_uses_elevenlabs_by_default_even_with_regional_off(monkeypatch):
+    monkeypatch.setattr(p.app_settings, "ELEVENLABS_REGIONAL_ENABLED", False)
+    hl = p.OwnerSettings(language_overrides={"hinglish": {"elevenlabs": {"voices": [
+        {"id": "9BWtsMINqrJLrRacOk9x", "name": "Aria", "gender": "female"}]}}})
+    emptied = p.OwnerSettings(language_overrides={"hinglish": {"elevenlabs": {"voices": []}}})
+    assert p.tts_engine("hinglish", ON) == p.ELEVENLABS
+    assert p.default_voice("hinglish", ON) == "XO3tSLyh5E7dEilRBQJG"
+    assert p.tts_engine("hinglish", emptied) == p.SARVAM  # owner removed every voice
+    assert p.tts_engine("hinglish", hl) == p.ELEVENLABS
+    assert [v.id for v in p.voices_for("hinglish", hl)] == ["9BWtsMINqrJLrRacOk9x"]
+    cfg = p.sarvam_call_config("hinglish", "9BWtsMINqrJLrRacOk9x", hl, cloned=False)
+    assert cfg["languages"]["hinglish"]["engine"] == p.ELEVENLABS
+    assert cfg["languages"]["hinglish"]["eleven_code"] == "hi"
+    assert cfg["languages"]["hinglish"]["sarvam_voice"] in {v.id for v in p.sarvam_voices("hinglish", hl)}
+
+
+def test_hindi_english_never_use_elevenlabs():
     only = {k: {"elevenlabs": {"voices": [{"id": "9BWtsMINqrJLrRacOk9x", "name": "x", "gender": "male"}]}}
             for k in p.SARVAM_VOICE_ONLY}
     s = p.OwnerSettings(language_overrides=only)
@@ -191,6 +207,16 @@ async def test_cloned_voice_isolation_between_orgs(client, db):
     r = await client.post("/api/agents", json={"name": "A", "language": "hindi", "voice_id": "svc-theirs"}, headers=h)
     assert r.status_code == 403
 
+
+
+async def test_listed_voice_saves_even_if_another_org_once_cloned_that_id(client, db):
+    other, _ = await _org_admin(db)
+    db.add(ClonedVoice(org_id=other.id, name="Anshika", elevenlabs_voice_id="XO3tSLyh5E7dEilRBQJG", provider="elevenlabs"))
+    await db.commit()
+    _, h = await _org_admin(db)
+    r = await client.post("/api/agents", json={"name": "A", "language": "hinglish",
+                                               "voice_id": "XO3tSLyh5E7dEilRBQJG"}, headers=h)
+    assert r.status_code == 201, r.text
 
 async def test_campaign_language_and_voice_are_validated(client, db):
     org, h = await _org_admin(db)

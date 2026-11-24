@@ -101,6 +101,8 @@ class Organization(Base, TimestampMixin, SoftDeleteMixin):
     last_credit_reset_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Extra minutes a SuperAdmin added on top of the plan; cleared with the period.
+    bonus_credits_this_period: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
     # Owner-set in /ops: may this org request cloned voices?
     sarvam_cloning_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False)
 
